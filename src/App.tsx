@@ -1,10 +1,10 @@
 import { TextAttributes } from "@opentui/core"
 import { useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { Cause, Effect } from "effect"
+import { Cause, Effect, Schedule } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
-import { Fragment, useEffect, useMemo, useRef } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { config } from "./config.js"
 import type { CheckItem, PullRequestItem, PullRequestLabel } from "./domain.js"
 import { daysOpen, formatRelativeDate, formatShortDate, formatTimestamp } from "./date.js"
@@ -56,11 +56,40 @@ interface PreviewLine {
 	}>
 }
 
-const pullRequestReferencePattern = /(#[0-9]+)/g
+interface DetailPlaceholderContent {
+	readonly title: string
+	readonly hint: string
+}
 
+interface RetryProgress {
+	readonly attempt: number
+	readonly max: number
+}
+
+const pullRequestReferencePattern = /(#[0-9]+)/g
+const PR_FETCH_RETRIES = 6
+const DETAIL_PLACEHOLDER_ROWS = 4
+const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
+
+const retryProgressAtom = Atom.make<RetryProgress | null>(null).pipe(Atom.keepAlive)
 const pullRequestsAtom = githubRuntime.atom(
 	GitHubService.use((github) =>
-		github.listOpenPullRequests().pipe(Effect.map((data): PullRequestLoad => ({ data, fetchedAt: new Date() })))
+		Effect.gen(function*() {
+			yield* Atom.set(retryProgressAtom, null)
+			const data = yield* github.listOpenPullRequests().pipe(
+				Effect.tapError(() =>
+					Atom.update(retryProgressAtom, (current) => ({
+						attempt: Math.min((current?.attempt ?? 0) + 1, PR_FETCH_RETRIES),
+						max: PR_FETCH_RETRIES,
+					}))
+				),
+				Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2) }),
+				Effect.tapError(() => Atom.set(retryProgressAtom, null)),
+			)
+
+			yield* Atom.set(retryProgressAtom, null)
+			return { data, fetchedAt: new Date() } satisfies PullRequestLoad
+		})
 	),
 ).pipe(Atom.keepAlive)
 const selectedIndexAtom = Atom.make(0).pipe(Atom.keepAlive)
@@ -177,6 +206,12 @@ const groupNumberWidth = (pullRequests: readonly PullRequestItem[]) => {
 const fitCell = (text: string, width: number, align: "left" | "right" = "left") => {
 	const trimmed = text.length > width ? `${text.slice(0, Math.max(0, width - 1))}…` : text
 	return align === "right" ? trimmed.padStart(width, " ") : trimmed.padEnd(width, " ")
+}
+
+const centerCell = (text: string, width: number) => {
+	const trimmed = text.length > width ? `${text.slice(0, Math.max(0, width - 1))}…` : text
+	const left = Math.floor((width - trimmed.length) / 2)
+	return `${" ".repeat(Math.max(0, left))}${trimmed}`.padEnd(width, " ")
 }
 
 const Divider = ({ width, junctionAt, junctionChar }: { width: number; junctionAt?: number; junctionChar?: string }) => {
@@ -411,43 +446,101 @@ const SectionTitle = ({ title }: { title: string }) => (
 	</TextLine>
 )
 
-const FooterHints = ({ showFilterClear, detailFullView }: { showFilterClear: boolean; detailFullView: boolean }) => (
-	<TextLine>
-		<span fg={colors.count}>↑↓</span>
-		<span fg={colors.muted}> move  </span>
-		<span fg={colors.count}>/</span>
-		<span fg={colors.muted}> filter  </span>
-		{showFilterClear ? (
-			<>
-				<span fg={colors.count}>esc</span>
-				<span fg={colors.muted}> clear  </span>
-			</>
-		) : null}
-		{detailFullView ? (
-			<>
-				<span fg={colors.count}>esc</span>
-				<span fg={colors.muted}> back  </span>
-			</>
-		) : (
-			<>
+const FooterHints = ({
+	filterEditing,
+	showFilterClear,
+	detailFullView,
+	hasSelection,
+	hasError,
+	isLoading,
+	loadingIndicator,
+	retryProgress,
+}: {
+	filterEditing: boolean
+	showFilterClear: boolean
+	detailFullView: boolean
+	hasSelection: boolean
+	hasError: boolean
+	isLoading: boolean
+	loadingIndicator: string
+	retryProgress: RetryProgress | null
+}) => {
+	if (filterEditing) {
+		return (
+			<TextLine>
+				<span fg={colors.count}>search</span>
+				<span fg={colors.muted}> typing  </span>
+				<span fg={colors.count}>↑↓</span>
+				<span fg={colors.muted}> move  </span>
 				<span fg={colors.count}>enter</span>
-				<span fg={colors.muted}> expand  </span>
-			</>
-		)}
-		<span fg={colors.count}>r</span>
-		<span fg={colors.muted}> ref  </span>
-		<span fg={colors.count}>d</span>
-		<span fg={colors.muted}> draft  </span>
-		<span fg={colors.count}>l</span>
-		<span fg={colors.muted}> labels  </span>
-		<span fg={colors.count}>o</span>
-		<span fg={colors.muted}> open  </span>
-		<span fg={colors.count}>y</span>
-		<span fg={colors.muted}> copy  </span>
-		<span fg={colors.count}>q</span>
-		<span fg={colors.muted}> quit</span>
-	</TextLine>
-)
+				<span fg={colors.muted}> apply  </span>
+				<span fg={colors.count}>esc</span>
+				<span fg={colors.muted}> cancel  </span>
+				<span fg={colors.count}>ctrl-u</span>
+				<span fg={colors.muted}> clear  </span>
+				<span fg={colors.count}>ctrl-w</span>
+				<span fg={colors.muted}> word</span>
+			</TextLine>
+		)
+	}
+
+	return (
+		<TextLine>
+			<span fg={colors.count}>/</span>
+			<span fg={colors.muted}> filter  </span>
+			{showFilterClear ? (
+				<>
+					<span fg={colors.count}>esc</span>
+					<span fg={colors.muted}> clear  </span>
+				</>
+			) : null}
+			{retryProgress ? (
+				<>
+					<span fg={colors.status.pending}>retry</span>
+					<span fg={colors.muted}> {retryProgress.attempt}/{retryProgress.max}  </span>
+				</>
+			) : isLoading ? (
+				<>
+					<span fg={colors.status.pending}>{loadingIndicator}</span>
+					<span fg={colors.muted}> loading  </span>
+				</>
+			) : null}
+			<span fg={colors.count}>r</span>
+			<span fg={colors.muted}>{hasError ? " retry  " : " ref  "}</span>
+			{hasSelection ? (
+				<>
+					<span fg={colors.count}>↑↓</span>
+					<span fg={colors.muted}> move  </span>
+				</>
+			) : null}
+			{hasSelection && detailFullView ? (
+				<>
+					<span fg={colors.count}>esc</span>
+					<span fg={colors.muted}> back  </span>
+				</>
+			) : hasSelection ? (
+				<>
+					<span fg={colors.count}>enter</span>
+					<span fg={colors.muted}> expand  </span>
+				</>
+			) : null}
+			{hasSelection ? (
+				<>
+					<span fg={colors.count}>d</span>
+					<span fg={colors.muted}> draft  </span>
+					<span fg={colors.count}>l</span>
+					<span fg={colors.muted}> labels  </span>
+					<span fg={colors.count}>o</span>
+					<span fg={colors.muted}> open  </span>
+					<span fg={colors.count}>y</span>
+					<span fg={colors.muted}> copy  </span>
+				</>
+			) : null}
+			<span fg={colors.count}>q</span>
+			<span fg={colors.muted}> quit</span>
+		</TextLine>
+	)
+}
 
 const GroupTitle = ({ label, color, icon }: { label: string; color: string; icon: string }) => (
 	<TextLine>
@@ -757,16 +850,35 @@ const DetailBody = ({
 	)
 }
 
-const DetailPlaceholder = ({ text, paneWidth }: { text: string; paneWidth: number }) => (
-	<box flexDirection="column">
-		<box flexDirection="column" paddingLeft={1} paddingRight={1}>
-			<PlainLine text={text} fg={colors.muted} />
-			<BlankRow />
-			<BlankRow />
+const DetailPlaceholder = ({ content, paneWidth }: { content: DetailPlaceholderContent; paneWidth: number }) => {
+	const innerWidth = Math.max(1, paneWidth - 2)
+	const cardWidth = Math.min(innerWidth, Math.max(28, content.title.length + 4, content.hint.length + 4))
+	const offset = " ".repeat(Math.max(0, Math.floor((innerWidth - cardWidth) / 2)))
+	const cardInnerWidth = Math.max(1, cardWidth - 2)
+	const contentLine = (text: string, fg: string, bold = false) => (
+		<TextLine>
+			<span fg={colors.separator}>{offset}│</span>
+			{bold ? (
+				<span fg={fg} attributes={TextAttributes.BOLD}>{centerCell(text, cardInnerWidth)}</span>
+			) : (
+				<span fg={fg}>{centerCell(text, cardInnerWidth)}</span>
+			)}
+			<span fg={colors.separator}>│</span>
+		</TextLine>
+	)
+
+	return (
+		<box flexDirection="column">
+			<box flexDirection="column" paddingLeft={1} paddingRight={1}>
+				<PlainLine text={`${offset}┌${"─".repeat(cardInnerWidth)}┐`} fg={colors.separator} />
+				{contentLine(content.title, colors.count, true)}
+				{contentLine(content.hint, colors.muted)}
+				<PlainLine text={`${offset}└${"─".repeat(cardInnerWidth)}┘`} fg={colors.separator} />
+			</box>
+			<box height={1}><Divider width={paneWidth} /></box>
 		</box>
-		<box height={1}><Divider width={paneWidth} /></box>
-	</box>
-)
+	)
+}
 
 const DetailsPane = ({
 	pullRequest,
@@ -774,14 +886,14 @@ const DetailsPane = ({
 	bodyLines = DETAIL_BODY_LINES,
 	paneWidth = contentWidth + 2,
 	showChecks = false,
-	placeholderText = "Select a pull request with up/down.",
+	placeholderContent,
 }: {
 	pullRequest: PullRequestItem | null
 	contentWidth: number
 	bodyLines?: number
 	paneWidth?: number
 	showChecks?: boolean
-	placeholderText?: string
+	placeholderContent: DetailPlaceholderContent
 }) => {
 	const titleLines = pullRequest ? wrapText(pullRequest.title, Math.max(1, paneWidth - 2)).length : 1
 	const uniqueChecks = pullRequest ? deduplicateChecks(pullRequest.checks) : []
@@ -792,7 +904,7 @@ const DetailsPane = ({
 		() => (pullRequest ? bodyPreview(pullRequest.body, contentWidth, bodyLines) : []),
 		[pullRequest?.body, contentWidth, bodyLines],
 	)
-	const contentHeight = pullRequest ? titleLines + 2 + 1 + checksHeight + previewLines.length : bodyLines + 4
+	const contentHeight = pullRequest ? titleLines + 2 + 1 + checksHeight + previewLines.length : bodyLines + DETAIL_PLACEHOLDER_ROWS + 1
 
 	return (
 		<box flexDirection="column" height={contentHeight}>
@@ -803,7 +915,7 @@ const DetailsPane = ({
 				</>
 			) : (
 				<>
-					<DetailPlaceholder text={placeholderText} paneWidth={paneWidth} />
+					<DetailPlaceholder content={placeholderContent} paneWidth={paneWidth} />
 					<box flexDirection="column" paddingLeft={1} paddingRight={1}>
 						{Array.from({ length: bodyLines }, (_, index) => (
 							<BlankRow key={index} />
@@ -822,6 +934,7 @@ const LabelModal = ({
 	modalHeight,
 	offsetLeft,
 	offsetTop,
+	loadingIndicator,
 }: {
 	state: LabelModalState
 	currentLabels: readonly PullRequestLabel[]
@@ -829,19 +942,26 @@ const LabelModal = ({
 	modalHeight: number
 	offsetLeft: number
 	offsetTop: number
+	loadingIndicator: string
 }) => {
-	const contentWidth = modalWidth - 4
+	const contentWidth = Math.max(16, modalWidth - 2)
 	const currentNames = new Set(currentLabels.map((l) => l.name.toLowerCase()))
 	const filtered = state.availableLabels.filter((label) =>
 		state.query.length === 0 || label.name.toLowerCase().includes(state.query.toLowerCase()),
 	)
-	const maxVisible = Math.max(1, modalHeight - 5)
+	const maxVisible = Math.max(1, modalHeight - 6)
 	const selectedIndex = filtered.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, filtered.length - 1))
 	const scrollStart = Math.min(
 		Math.max(0, filtered.length - maxVisible),
 		Math.max(0, selectedIndex - maxVisible + 1),
 	)
 	const visibleLabels = filtered.slice(scrollStart, scrollStart + maxVisible)
+	const title = state.repository ? `Labels  ${shortRepoName(state.repository)}` : "Labels"
+	const countText = state.loading ? "loading" : `${filtered.length}/${state.availableLabels.length}`
+	const headerGap = Math.max(1, contentWidth - title.length - countText.length)
+	const queryText = state.query.length > 0 ? state.query : "type to filter labels"
+	const queryPrefix = state.query.length > 0 ? "/ " : "/ "
+	const queryWidth = Math.max(1, contentWidth - queryPrefix.length)
 
 	return (
 		<box
@@ -855,34 +975,42 @@ const LabelModal = ({
 		>
 			<box height={1} paddingLeft={1} paddingRight={1}>
 				<TextLine>
-					<span fg={colors.accent} attributes={TextAttributes.BOLD}>Labels</span>
-					{state.repository ? <span fg={colors.muted}> {state.repository}</span> : null}
+					<span fg={colors.accent} attributes={TextAttributes.BOLD}>{title}</span>
+					<span fg={colors.muted}>{" ".repeat(headerGap)}</span>
+					<span fg={colors.muted}>{countText}</span>
 				</TextLine>
 			</box>
 			<box height={1} paddingLeft={1} paddingRight={1}>
 				<TextLine>
-					<span fg={colors.count}>&gt; </span>
+					<span fg={colors.count}>{queryPrefix}</span>
 					<span fg={state.query.length > 0 ? colors.text : colors.muted}>
-						{state.query.length > 0 ? state.query : "type to filter..."}
+						{fitCell(queryText, queryWidth)}
 					</span>
 				</TextLine>
 			</box>
 			<Divider width={modalWidth} />
 			<box flexDirection="column" paddingLeft={1} paddingRight={1}>
 				{state.loading ? (
-					<PlainLine text="Loading labels..." fg={colors.muted} />
+					<PlainLine text={centerCell(`${loadingIndicator} Loading labels`, contentWidth)} fg={colors.muted} />
 				) : visibleLabels.length === 0 ? (
-					<PlainLine text={state.query.length > 0 ? "No matching labels." : "No labels found."} fg={colors.muted} />
+					<PlainLine text={centerCell(state.query.length > 0 ? "No matching labels" : "No labels found", contentWidth)} fg={colors.muted} />
 				) : (
 					visibleLabels.map((label, index) => {
 						const actualIndex = scrollStart + index
 						const isActive = currentNames.has(label.name.toLowerCase())
 						const isSelected = actualIndex === selectedIndex
+						const status = isActive ? "added" : ""
+						const nameWidth = Math.max(8, contentWidth - 10 - status.length)
+						const gap = Math.max(1, contentWidth - 8 - Math.min(label.name.length, nameWidth) - status.length)
 						return (
 							<box key={label.name} height={1}>
 								<TextLine bg={isSelected ? colors.selectedBg : undefined}>
-									<span fg={isActive ? colors.status.passing : colors.muted}>{isActive ? "✓ " : "  "}</span>
-									<span bg={labelColor(label)} fg={labelTextColor(labelColor(label))}> {fitCell(label.name, Math.min(label.name.length, contentWidth - 6))} </span>
+									<span fg={isSelected ? colors.accent : colors.muted}>{isSelected ? "›" : " "}</span>
+									<span fg={isActive ? colors.status.passing : colors.muted}>{isActive ? " ✓ " : "   "}</span>
+									<span bg={labelColor(label)}>  </span>
+									<span fg={isSelected ? colors.selectedText : colors.text}> {fitCell(label.name, nameWidth)}</span>
+									<span fg={colors.muted}>{" ".repeat(gap)}</span>
+									{status ? <span fg={colors.status.passing}>{status}</span> : null}
 								</TextLine>
 							</box>
 						)
@@ -893,8 +1021,12 @@ const LabelModal = ({
 			<Divider width={modalWidth} />
 			<box height={1} paddingLeft={1} paddingRight={1}>
 				<TextLine>
+					<span fg={colors.count}>↑↓</span>
+					<span fg={colors.muted}> move  </span>
 					<span fg={colors.count}>enter</span>
 					<span fg={colors.muted}> toggle  </span>
+					<span fg={colors.count}>/type</span>
+					<span fg={colors.muted}> filter  </span>
 					<span fg={colors.count}>esc</span>
 					<span fg={colors.muted}> close</span>
 					{filtered.length > maxVisible ? <span fg={colors.muted}>  {selectedIndex + 1}/{filtered.length}</span> : null}
@@ -919,6 +1051,8 @@ export const App = () => {
 	const [labelModal, setLabelModal] = useAtom(labelModalAtom)
 	const [labelCache, setLabelCache] = useAtom(labelCacheAtom)
 	const [pullRequestOverrides, setPullRequestOverrides] = useAtom(pullRequestOverridesAtom)
+	const retryProgress = useAtomValue(retryProgressAtom)
+	const [loadingFrame, setLoadingFrame] = useState(0)
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
 	const addPullRequestLabel = useAtomSet(addPullRequestLabelAtom, { mode: "promise" })
@@ -968,6 +1102,14 @@ export const App = () => {
 			: "ready"
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
+
+	useEffect(() => {
+		if (pullRequestStatus !== "loading") return
+		const interval = globalThis.setInterval(() => {
+			setLoadingFrame((current) => (current + 1) % LOADING_FRAMES.length)
+		}, 120)
+		return () => globalThis.clearInterval(interval)
+	}, [pullRequestStatus])
 
 	const effectiveFilterQuery = (filterMode ? filterDraft : filterQuery).trim().toLowerCase()
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
@@ -1029,15 +1171,31 @@ export const App = () => {
 	}, [visiblePullRequests.length])
 
 	const selectedPullRequest = visiblePullRequests[selectedIndex] ?? null
-	const detailPlaceholderText = pullRequestStatus === "loading"
-		? "Loading pull requests..."
+	const loadingIndicator = LOADING_FRAMES[loadingFrame % LOADING_FRAMES.length]!
+	const detailPlaceholderContent: DetailPlaceholderContent = pullRequestStatus === "loading"
+		? {
+			title: `${loadingIndicator} Loading pull requests`,
+			hint: retryProgress ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : "Fetching latest open PRs",
+		}
 		: pullRequestStatus === "error"
-			? pullRequestError ?? "Could not load pull requests."
+			? {
+				title: "Could not load pull requests",
+				hint: "Press r to retry",
+			}
 			: visiblePullRequests.length === 0 && visibleFilterText.length > 0
-				? "No matching pull requests."
+				? {
+					title: "No matching pull requests",
+					hint: "Press esc to clear the filter",
+				}
 				: visiblePullRequests.length === 0
-					? "No open pull requests."
-					: "Select a pull request with up/down."
+					? {
+						title: "No open pull requests",
+						hint: "Press r to refresh",
+					}
+					: {
+						title: "Select a pull request",
+						hint: "Use up/down to move",
+					}
 	const titleWrapWidth = Math.max(1, rightPaneWidth - 2) // account for paddingLeft/paddingRight in detail pane
 	const titleLines = selectedPullRequest ? wrapText(selectedPullRequest.title, titleWrapWidth).length : 1
 	const detailDividerRow = 1 + titleLines + 1 // info row + title lines + labels row
@@ -1045,7 +1203,9 @@ export const App = () => {
 	const checksRows = checksRowCount(detailChecks)
 	// checks heading (1) + grid rows + divider
 	const checksDividerRow = detailChecks.length > 0 ? detailDividerRow + 1 + checksRows + 1 : -1
-	const detailJunctions = detailChecks.length > 0 ? [detailDividerRow, checksDividerRow] : [detailDividerRow]
+	const detailJunctions = selectedPullRequest
+		? detailChecks.length > 0 ? [detailDividerRow, checksDividerRow] : [detailDividerRow]
+		: [DETAIL_PLACEHOLDER_ROWS]
 
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
@@ -1418,7 +1578,7 @@ export const App = () => {
 							bodyLines={fullscreenBodyLines}
 							paneWidth={contentWidth}
 							showChecks
-							placeholderText={detailPlaceholderText}
+							placeholderContent={detailPlaceholderContent}
 						/>
 					</scrollbox>
 				</box>
@@ -1439,7 +1599,7 @@ export const App = () => {
 								</scrollbox>
 							</>
 						) : (
-							<DetailPlaceholder text={detailPlaceholderText} paneWidth={rightPaneWidth} />
+							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
 						)}
 					</box>
 				</box>
@@ -1451,13 +1611,13 @@ export const App = () => {
 							contentWidth={fullscreenContentWidth}
 							bodyLines={fullscreenBodyLines}
 							paneWidth={contentWidth}
-							placeholderText={detailPlaceholderText}
+							placeholderContent={detailPlaceholderContent}
 						/>
 					</scrollbox>
 				</box>
 			) : (
 				<>
-					<DetailsPane pullRequest={selectedPullRequest} contentWidth={rightContentWidth} paneWidth={contentWidth} placeholderText={detailPlaceholderText} />
+					<DetailsPane pullRequest={selectedPullRequest} contentWidth={rightContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} />
 					<Divider width={contentWidth} />
 					<box flexGrow={1} flexDirection="column">
 						<scrollbox flexGrow={1}>
@@ -1475,7 +1635,20 @@ export const App = () => {
 				<Divider width={contentWidth} />
 			)}
 			<box paddingLeft={1} paddingRight={1}>
-				{footerNotice ? <PlainLine text={footerNotice} fg={colors.count} /> : <FooterHints showFilterClear={filterMode || filterQuery.length > 0} detailFullView={detailFullView} />}
+				{footerNotice ? (
+					<PlainLine text={footerNotice} fg={colors.count} />
+				) : (
+					<FooterHints
+						filterEditing={filterMode}
+						showFilterClear={filterMode || filterQuery.length > 0}
+						detailFullView={detailFullView}
+						hasSelection={selectedPullRequest !== null}
+						hasError={pullRequestStatus === "error"}
+						isLoading={pullRequestStatus === "loading"}
+						loadingIndicator={loadingIndicator}
+						retryProgress={retryProgress}
+					/>
+				)}
 			</box>
 			{labelModal.open ? (
 				<LabelModal
@@ -1485,6 +1658,7 @@ export const App = () => {
 					modalHeight={labelModalHeight}
 					offsetLeft={labelModalLeft}
 					offsetTop={labelModalTop}
+					loadingIndicator={loadingIndicator}
 				/>
 			) : null}
 		</box>
