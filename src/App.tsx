@@ -1,21 +1,24 @@
-import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect, Layer, Schedule } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { config } from "./config.js"
-import type { CheckItem, PullRequestItem, PullRequestLabel, PullRequestMergeAction } from "./domain.js"
-import { formatRelativeDate, formatShortDate, formatTimestamp } from "./date.js"
+import type { PullRequestItem, PullRequestLabel, PullRequestMergeAction } from "./domain.js"
+import { formatShortDate, formatTimestamp } from "./date.js"
+import { availableMergeActions, mergeInfoFromPullRequest } from "./mergeActions.js"
 import { Observability } from "./observability.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { colors } from "./ui/colors.js"
-import { diffStatText, diffSyntaxStyle, patchRenderableLineCount, pullRequestDiffKey, splitPatchFiles, type PullRequestDiffState } from "./ui/diff.js"
+import { pullRequestDiffKey, splitPatchFiles, type PullRequestDiffState } from "./ui/diff.js"
+import { DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailJunctionRows, LoadingPane, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
 import { FooterHints, type RetryProgress } from "./ui/FooterHints.js"
-import { centerCell, Divider, fitCell, PlainLine, SeparatorColumn, TextLine } from "./ui/primitives.js"
-import { initialLabelModalState, initialMergeModalState, LabelModal, MergeModal, mergeActionPastTense, mergeModalOptions } from "./ui/modals.js"
-import { groupBy, labelColor, labelTextColor, reviewLabel, shortRepoName, statusColor } from "./ui/pullRequests.js"
+import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
+import { initialLabelModalState, initialMergeModalState, LabelModal, MergeModal } from "./ui/modals.js"
+import { groupBy, reviewLabel } from "./ui/pullRequests.js"
+import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { PullRequestList } from "./ui/PullRequestList.js"
 
 const githubRuntime = Atom.runtime(GitHubService.layer.pipe(Layer.provideMerge(Observability.layer)))
@@ -27,19 +30,6 @@ interface PullRequestLoad {
 	readonly fetchedAt: Date | null
 }
 
-interface PreviewLine {
-	readonly segments: ReadonlyArray<{
-		readonly text: string
-		readonly fg: string
-		readonly bold?: boolean
-	}>
-}
-
-interface DetailPlaceholderContent {
-	readonly title: string
-	readonly hint: string
-}
-
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
 	readonly retryProgress: RetryProgress | null
@@ -48,9 +38,7 @@ interface DetailPlaceholderInput {
 	readonly filterText: string
 }
 
-const pullRequestReferencePattern = /(#[0-9]+)/g
 const PR_FETCH_RETRIES = 6
-const DETAIL_PLACEHOLDER_ROWS = 4
 const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 
 const retryProgressAtom = Atom.make<RetryProgress | null>(null).pipe(Atom.keepAlive)
@@ -123,101 +111,44 @@ const mergePullRequestAtom = githubRuntime.fn<{ readonly repository: string; rea
 	GitHubService.use((github) => github.mergePullRequest(input.repository, input.number, input.action))
 )
 
-const BlankRow = () => <box height={1} />
-const DETAIL_BODY_LINES = 6
-
-const wrapText = (text: string, width: number): string[] => {
-	if (text.length === 0 || width <= 0) return [""]
-	const words = text.split(/\s+/)
-	const lines: string[] = []
-	let current = ""
-	for (const word of words) {
-		const next = current.length > 0 ? `${current} ${word}` : word
-		if (next.length > width && current.length > 0) {
-			lines.push(current)
-			current = word
-		} else {
-			current = next
-		}
-	}
-	if (current.length > 0) lines.push(current)
-	return lines.length > 0 ? lines : [""]
-}
-
 const deleteLastWord = (value: string) => value.replace(/\s*\S+\s*$/, "")
-
-const parseInlineSegments = (text: string, fg: string, bold = false): PreviewLine["segments"] => {
-	const parts = text.split(/(`[^`]+`)/g).filter((part) => part.length > 0)
-	return parts.flatMap((part) => {
-		if (part.startsWith("`") && part.endsWith("`")) {
-			return [{ text: part.slice(1, -1), fg: colors.inlineCode, bold }]
-		}
-
-		return part
-			.split(pullRequestReferencePattern)
-			.filter((segment) => segment.length > 0)
-			.map((segment) => ({
-				text: segment,
-				fg: segment.match(/^#[0-9]+$/) ? colors.count : fg,
-				bold,
-			}))
-	})
-}
-
-const wrapPreviewSegments = (segments: PreviewLine["segments"], width: number, indent = ""): Array<PreviewLine> => {
-	const tokens = segments.flatMap((segment) =>
-		segment.text.split(/(\s+)/).filter((token) => token.length > 0).map((token) => ({ ...segment, text: token })),
-	)
-
-	const lines: Array<PreviewLine> = []
-	let current: Array<PreviewLine["segments"][number]> = []
-	let currentLength = 0
-
-	const pushLine = () => {
-		lines.push({ segments: current.length > 0 ? current : [{ text: "", fg: colors.muted }] })
-		current = indent.length > 0 ? [{ text: indent, fg: colors.muted }] : []
-		currentLength = indent.length
-	}
-
-	for (const token of tokens) {
-		const tokenLength = token.text.length
-		if (currentLength > 0 && currentLength + tokenLength > width) {
-			pushLine()
-		}
-		current.push(token)
-		currentLength += tokenLength
-	}
-
-	if (current.length > 0) {
-		lines.push({ segments: current })
-	}
-
-	return lines
-}
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)
 
-const DiffStats = ({ pullRequest }: { pullRequest: PullRequestItem }) => {
-	if (!pullRequest.detailLoaded) return <span fg={colors.muted}>loading details</span>
-	const files = pullRequest.changedFiles === 1 ? "1 file" : `${pullRequest.changedFiles} files`
-	type Part = { key: string; text: string; color: string }
-	const rawParts: Array<Part | null> = [
-		pullRequest.additions > 0 ? { key: "additions", text: `+${pullRequest.additions}`, color: colors.status.passing } : null,
-		pullRequest.deletions > 0 ? { key: "deletions", text: `-${pullRequest.deletions}`, color: colors.status.failing } : null,
-		{ key: "files", text: files, color: colors.muted },
+const copyPullRequestMetadata = async (pullRequest: PullRequestItem) => {
+	const lines = [
+		pullRequest.title,
+		`${pullRequest.repository} #${pullRequest.number}`,
+		pullRequest.url,
 	]
-	const parts = rawParts.filter((part): part is Part => part !== null)
 
-	return (
-		<>
-			{parts.map((part, index) => (
-				<Fragment key={part.key}>
-					{index > 0 ? <span fg={colors.muted}> </span> : null}
-					<span fg={part.color}>{part.text}</span>
-				</Fragment>
-			))}
-		</>
-	)
+	const review = reviewLabel(pullRequest)
+	if (review) {
+		lines.push(`review: ${review}`)
+	}
+	if (pullRequest.checkSummary) {
+		lines.push(pullRequest.checkSummary)
+	}
+
+	const proc = Bun.spawn({
+		cmd: ["pbcopy"],
+		stdin: "pipe",
+		stdout: "ignore",
+		stderr: "pipe",
+	})
+
+	if (!proc.stdin) {
+		throw new Error("Clipboard is not available")
+	}
+
+	proc.stdin.write(lines.join("\n"))
+	proc.stdin.end()
+
+	const exitCode = await proc.exited
+	if (exitCode !== 0) {
+		const stderr = await Bun.readableStreamToText(proc.stderr)
+		throw new Error(stderr.trim() || "Could not copy PR metadata")
+	}
 }
 
 const isShiftG = (key: { readonly name: string; readonly shift?: boolean }) => key.name === "G" || key.name === "g" && key.shift
@@ -261,534 +192,6 @@ const getDetailPlaceholderContent = ({
 		title: "Select a pull request",
 		hint: "Use up/down to move",
 	}
-}
-
-const bodyPreview = (body: string, width: number, limit = DETAIL_BODY_LINES): Array<PreviewLine> => {
-	const sourceLines = body.replace(/\r/g, "").split("\n")
-	const preview: Array<PreviewLine> = []
-	let inCodeBlock = false
-
-	for (const rawLine of sourceLines) {
-		if (preview.length >= limit) break
-
-		const line = rawLine.trim()
-		if (line.startsWith("```")) {
-			inCodeBlock = !inCodeBlock
-			continue
-		}
-		if (line.length === 0) continue
-
-		let text = line
-		let fg: string = colors.text
-		let bold = false
-		let indent = ""
-
-		if (!inCodeBlock && /^#{1,6}\s+/.test(line)) {
-			if (preview.length > 0) {
-				preview.push({ segments: [{ text: "", fg: colors.muted }] })
-				if (preview.length >= limit) break
-			}
-			text = line.replace(/^#{1,6}\s+/, "")
-			fg = colors.count
-			bold = true
-		} else if (!inCodeBlock && /^[-*+]\s+\[(x|X| )\]\s+/.test(line)) {
-			const checked = /^[-*+]\s+\[(x|X)\]\s+/.test(line)
-			text = `${checked ? "☑" : "☐"} ${line.replace(/^[-*+]\s+\[(x|X| )\]\s+/, "")}`
-			fg = checked ? colors.status.passing : colors.text
-			indent = "  "
-		} else if (!inCodeBlock && /^\[(x|X| )\]\s+/.test(line)) {
-			const checked = /^\[(x|X)\]\s+/.test(line)
-			text = `${checked ? "☑" : "☐"} ${line.replace(/^\[(x|X| )\]\s+/, "")}`
-			fg = checked ? colors.status.passing : colors.text
-			indent = "  "
-		} else if (!inCodeBlock && /^[-*+]\s+/.test(line)) {
-			text = `• ${line.replace(/^[-*+]\s+/, "")}`
-			indent = "  "
-		} else if (!inCodeBlock && /^\d+\.\s+/.test(line)) {
-			text = line
-			indent = "   "
-		} else if (!inCodeBlock && /^>\s+/.test(line)) {
-			text = `> ${line.replace(/^>\s+/, "")}`
-			fg = colors.muted
-			indent = "  "
-		} else if (inCodeBlock) {
-			fg = colors.muted
-		}
-
-		const wrapped = wrapPreviewSegments(parseInlineSegments(text, fg, bold), Math.max(16, width), indent)
-		for (const wrappedLine of wrapped) {
-			preview.push(wrappedLine)
-			if (preview.length >= limit) break
-		}
-	}
-
-	if (preview.length === 0) {
-		return [{ segments: [{ text: "No description.", fg: colors.muted }] }]
-	}
-
-	return preview.slice(0, limit)
-}
-
-const copyPullRequestMetadata = async (pullRequest: PullRequestItem) => {
-	const lines = [
-		pullRequest.title,
-		`${pullRequest.repository} #${pullRequest.number}`,
-		pullRequest.url,
-	]
-
-	const review = reviewLabel(pullRequest)
-	if (review) {
-		lines.push(`review: ${review}`)
-	}
-	if (pullRequest.checkSummary) {
-		lines.push(pullRequest.checkSummary)
-	}
-
-	const proc = Bun.spawn({
-		cmd: ["pbcopy"],
-		stdin: "pipe",
-		stdout: "ignore",
-		stderr: "pipe",
-	})
-
-	if (!proc.stdin) {
-		throw new Error("Clipboard is not available")
-	}
-
-	proc.stdin.write(lines.join("\n"))
-	proc.stdin.end()
-
-	const exitCode = await proc.exited
-	if (exitCode !== 0) {
-		const stderr = await Bun.readableStreamToText(proc.stderr)
-		throw new Error(stderr.trim() || "Could not copy PR metadata")
-	}
-}
-
-const deduplicateChecks = (checks: readonly CheckItem[]): CheckItem[] => {
-	const seen = new Map<string, CheckItem>()
-	for (const check of checks) {
-		const existing = seen.get(check.name)
-		if (!existing || (check.status === "completed" && existing.status !== "completed")) {
-			seen.set(check.name, check)
-		}
-	}
-	return [...seen.values()]
-}
-
-const checkIcon = (check: CheckItem) => {
-	if (check.status === "completed") {
-		if (check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped") return "✓"
-		if (check.conclusion === "failure") return "✗"
-		return "·"
-	}
-	if (check.status === "in_progress") return "●"
-	return "○"
-}
-
-const checkColor = (check: CheckItem) => {
-	if (check.status === "completed") {
-		if (check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped") return colors.status.passing
-		if (check.conclusion === "failure") return colors.status.failing
-		return colors.muted
-	}
-	if (check.status === "in_progress") return colors.status.pending
-	return colors.muted
-}
-
-const checksRowCount = (checks: readonly CheckItem[]) => {
-	const unique = deduplicateChecks(checks)
-	return Math.ceil(unique.length / 2)
-}
-
-const ChecksSection = ({ checks, contentWidth }: { checks: readonly CheckItem[]; contentWidth: number }) => {
-	const unique = deduplicateChecks(checks)
-	if (unique.length === 0) return null
-
-	const colWidth = Math.floor((contentWidth - 1) / 2) // -1 for gap between columns
-	const nameCol = Math.max(4, colWidth - 2) // -2 for icon + space
-	const rows = Math.ceil(unique.length / 2)
-
-	return (
-		<box flexDirection="column">
-			<TextLine>
-				<span fg={colors.count} attributes={TextAttributes.BOLD}>Checks</span>
-			</TextLine>
-			{Array.from({ length: rows }, (_, rowIndex) => {
-				const left = unique[rowIndex * 2]
-				const right = unique[rowIndex * 2 + 1]
-				return (
-					<TextLine key={rowIndex}>
-						{left ? (
-							<>
-								<span fg={checkColor(left)}>{checkIcon(left)} </span>
-								<span fg={colors.text}>{fitCell(left.name, nameCol)}</span>
-							</>
-						) : null}
-						{right ? (
-							<>
-								<span fg={colors.muted}> </span>
-								<span fg={checkColor(right)}>{checkIcon(right)} </span>
-								<span fg={colors.text}>{right.name}</span>
-							</>
-						) : null}
-					</TextLine>
-				)
-			})}
-		</box>
-	)
-}
-
-const DetailHeader = ({
-	pullRequest,
-	contentWidth,
-	paneWidth,
-	showChecks = false,
-}: {
-	pullRequest: PullRequestItem
-	contentWidth: number
-	paneWidth: number
-	showChecks?: boolean
-}) => {
-	const labels = pullRequest.labels
-	const wrappedTitle = wrapText(pullRequest.title, Math.max(1, paneWidth - 2))
-	const unique = deduplicateChecks(pullRequest.checks)
-	const checkRows = checksRowCount(unique)
-	const statsText = diffStatText(pullRequest)
-	const labelsWidth = !pullRequest.detailLoaded
-		? "loading details...".length
-		: labels.length > 0
-		? labels.reduce((total, label, index) => total + label.name.length + 2 + (index > 0 ? 1 : 0), 0)
-		: "no labels".length
-	const showStats = contentWidth - labelsWidth - statsText.length >= 2
-	const statsGap = Math.max(2, contentWidth - labelsWidth - statsText.length)
-
-	return (
-		<>
-			<box height={1} paddingLeft={1} paddingRight={1}>
-			{(() => {
-				const opened = formatRelativeDate(pullRequest.createdAt)
-				const repo = shortRepoName(pullRequest.repository)
-				const number = String(pullRequest.number)
-				const review = reviewLabel(pullRequest)
-				const checks = pullRequest.checkSummary?.replace(/^checks\s+/, "")
-				const statusParts = [review, checks].filter((part): part is string => Boolean(part))
-				const rightSide = statusParts.length > 0 ? `${statusParts.join(" ")} ${opened}` : opened
-				const leftWidth = 1 + number.length + 1 + repo.length
-				const gap = Math.max(2, contentWidth - leftWidth - rightSide.length)
-
-				return (
-					<TextLine>
-						<span fg={colors.count}>#{number}</span>
-						<span fg={colors.muted}> {repo}</span>
-						<span fg={colors.muted}>{" ".repeat(gap)}</span>
-						{review ? <span fg={statusColor(pullRequest.reviewStatus)}>{review}</span> : null}
-						{review && checks ? <span fg={colors.muted}> </span> : null}
-						{checks ? <span fg={statusColor(pullRequest.checkStatus)}>{checks}</span> : null}
-						{statusParts.length > 0 ? <span fg={colors.muted}> </span> : null}
-						<span fg={colors.muted}>{opened}</span>
-					</TextLine>
-				)
-			})()}
-			</box>
-			<box height={wrappedTitle.length} flexDirection="column" paddingLeft={1} paddingRight={1}>
-				{wrappedTitle.map((line, index) => (
-					<PlainLine key={index} text={line} bold />
-				))}
-			</box>
-			<box height={1} paddingLeft={1} paddingRight={1}>
-				<TextLine>
-					{!pullRequest.detailLoaded ? <span fg={colors.muted}>loading details...</span> : labels.length > 0 ? labels.map((label, index) => (
-						<Fragment key={label.name}>
-							{index > 0 ? <span fg={colors.muted}> </span> : null}
-							<span bg={labelColor(label)} fg={labelTextColor(labelColor(label))}> {label.name} </span>
-						</Fragment>
-					)) : <span fg={colors.muted}>no labels</span>}
-					{showStats ? (
-						<>
-							<span fg={colors.muted}>{" ".repeat(statsGap)}</span>
-							<DiffStats pullRequest={pullRequest} />
-						</>
-					) : null}
-				</TextLine>
-			</box>
-			<box height={1}><Divider width={paneWidth} /></box>
-			{showChecks && unique.length > 0 ? (
-				<>
-					<box height={checkRows + 1} paddingLeft={1} paddingRight={1}>
-						<ChecksSection checks={pullRequest.checks} contentWidth={contentWidth} />
-					</box>
-					<box height={1}><Divider width={paneWidth} /></box>
-				</>
-			) : null}
-		</>
-	)
-}
-
-const DetailBody = ({
-	pullRequest,
-	contentWidth,
-	bodyLines = DETAIL_BODY_LINES,
-	loadingIndicator,
-}: {
-	pullRequest: PullRequestItem
-	contentWidth: number
-	bodyLines?: number
-	loadingIndicator: string
-}) => {
-	const previewLines = useMemo(
-		() => bodyPreview(pullRequest.body, contentWidth, bodyLines),
-		[pullRequest.body, contentWidth, bodyLines],
-	)
-
-	if (!pullRequest.detailLoaded) {
-		const topRows = Math.max(0, Math.floor((bodyLines - 1) / 2))
-		const bottomRows = Math.max(0, bodyLines - topRows - 1)
-		return (
-			<box flexDirection="column" paddingLeft={1} paddingRight={1} height={bodyLines}>
-				{Array.from({ length: topRows }, (_, index) => <BlankRow key={`top-${index}`} />)}
-				<PlainLine text={centerCell(`${loadingIndicator} Loading pull request details`, contentWidth)} fg={colors.muted} />
-				{Array.from({ length: bottomRows }, (_, index) => <BlankRow key={`bottom-${index}`} />)}
-			</box>
-		)
-	}
-
-	return (
-		<box flexDirection="column" paddingLeft={1} paddingRight={1}>
-			{previewLines.map((line, index) => (
-				<TextLine key={`${pullRequest.url}-${index}`}>
-					{line.segments.map((segment, segmentIndex) => (
-						("bold" in segment && segment.bold === true) ? (
-							<span key={segmentIndex} fg={segment.fg} attributes={TextAttributes.BOLD}>
-								{segment.text}
-							</span>
-						) : (
-							<span key={segmentIndex} fg={segment.fg}>
-								{segment.text}
-							</span>
-						)
-					))}
-				</TextLine>
-			))}
-		</box>
-	)
-}
-
-const StatusCard = ({ content, width }: { content: DetailPlaceholderContent; width: number }) => {
-	const innerWidth = Math.max(1, width - 2)
-	const cardWidth = Math.min(innerWidth, Math.max(28, content.title.length + 4, content.hint.length + 4))
-	const offset = " ".repeat(Math.max(0, Math.floor((innerWidth - cardWidth) / 2)))
-	const cardInnerWidth = Math.max(1, cardWidth - 2)
-	const contentLine = (text: string, fg: string, bold = false) => (
-		<TextLine>
-			<span fg={colors.separator}>{offset}│</span>
-			{bold ? (
-				<span fg={fg} attributes={TextAttributes.BOLD}>{centerCell(text, cardInnerWidth)}</span>
-			) : (
-				<span fg={fg}>{centerCell(text, cardInnerWidth)}</span>
-			)}
-			<span fg={colors.separator}>│</span>
-		</TextLine>
-	)
-
-	return (
-		<box flexDirection="column" paddingLeft={1} paddingRight={1}>
-			<PlainLine text={`${offset}┌${"─".repeat(cardInnerWidth)}┐`} fg={colors.separator} />
-			{contentLine(content.title, colors.count, true)}
-			{contentLine(content.hint, colors.muted)}
-			<PlainLine text={`${offset}└${"─".repeat(cardInnerWidth)}┘`} fg={colors.separator} />
-		</box>
-	)
-}
-
-const DetailPlaceholder = ({ content, paneWidth }: { content: DetailPlaceholderContent; paneWidth: number }) => (
-	<box flexDirection="column">
-		<StatusCard content={content} width={paneWidth} />
-		<box height={1}><Divider width={paneWidth} /></box>
-	</box>
-)
-
-const LoadingPane = ({ content, width, height }: { content: DetailPlaceholderContent; width: number; height: number }) => {
-	const topRows = Math.max(0, Math.floor((height - DETAIL_PLACEHOLDER_ROWS) / 2))
-	const bottomRows = Math.max(0, height - topRows - DETAIL_PLACEHOLDER_ROWS)
-
-	return (
-		<box height={height} flexDirection="column">
-			{Array.from({ length: topRows }, (_, index) => <BlankRow key={`top-${index}`} />)}
-			<StatusCard content={content} width={width} />
-			{Array.from({ length: bottomRows }, (_, index) => <BlankRow key={`bottom-${index}`} />)}
-		</box>
-	)
-}
-
-const DetailsPane = ({
-	pullRequest,
-	contentWidth,
-	bodyLines = DETAIL_BODY_LINES,
-	paneWidth = contentWidth + 2,
-	showChecks = false,
-	placeholderContent,
-	loadingIndicator,
-}: {
-	pullRequest: PullRequestItem | null
-	contentWidth: number
-	bodyLines?: number
-	paneWidth?: number
-	showChecks?: boolean
-	placeholderContent: DetailPlaceholderContent
-	loadingIndicator: string
-}) => {
-	const titleLines = pullRequest ? wrapText(pullRequest.title, Math.max(1, paneWidth - 2)).length : 1
-	const uniqueChecks = pullRequest ? deduplicateChecks(pullRequest.checks) : []
-	const checkRows = checksRowCount(uniqueChecks)
-	// checks heading (1) + grid rows + divider (1)
-	const checksHeight = showChecks && uniqueChecks.length > 0 ? 1 + checkRows + 1 : 0
-	const previewLines = useMemo(
-		() => (pullRequest ? bodyPreview(pullRequest.body, contentWidth, bodyLines) : []),
-		[pullRequest?.body, contentWidth, bodyLines],
-	)
-	const bodyHeight = pullRequest && !pullRequest.detailLoaded ? bodyLines : previewLines.length
-	const contentHeight = pullRequest ? titleLines + 2 + 1 + checksHeight + bodyHeight : bodyLines + DETAIL_PLACEHOLDER_ROWS + 1
-
-	return (
-		<box flexDirection="column" height={contentHeight}>
-			{pullRequest ? (
-				<>
-					<DetailHeader pullRequest={pullRequest} contentWidth={contentWidth} paneWidth={paneWidth} showChecks={showChecks} />
-					<DetailBody pullRequest={pullRequest} contentWidth={contentWidth} bodyLines={bodyLines} loadingIndicator={loadingIndicator} />
-				</>
-			) : (
-				<>
-					<DetailPlaceholder content={placeholderContent} paneWidth={paneWidth} />
-					<box flexDirection="column" paddingLeft={1} paddingRight={1}>
-						{Array.from({ length: bodyLines }, (_, index) => (
-							<BlankRow key={index} />
-						))}
-					</box>
-				</>
-			)}
-		</box>
-	)
-}
-
-const PullRequestDiffPane = ({
-	pullRequest,
-	diffState,
-	fileIndex,
-	view,
-	wrapMode,
-	paneWidth,
-	height,
-	loadingIndicator,
-	scrollRef,
-}: {
-	pullRequest: PullRequestItem | null
-	diffState: PullRequestDiffState | undefined
-	fileIndex: number
-	view: "unified" | "split"
-	wrapMode: "none" | "word"
-	paneWidth: number
-	height: number
-	loadingIndicator: string
-	scrollRef: React.Ref<ScrollBoxRenderable>
-}) => {
-	const readyFiles = diffState?.status === "ready" ? diffState.files : []
-	const safeIndex = readyFiles.length > 0 ? Math.max(0, Math.min(fileIndex, readyFiles.length - 1)) : 0
-	const file = readyFiles[safeIndex] ?? null
-	const diffHeight = useMemo(
-		() => file ? patchRenderableLineCount(file.patch, view, wrapMode, paneWidth) : 1,
-		[file?.patch, view, wrapMode, paneWidth],
-	)
-
-	if (!pullRequest) {
-		return <LoadingPane content={{ title: "No pull request selected", hint: "Press esc to go back" }} width={paneWidth} height={height} />
-	}
-
-	const stats = diffStatText(pullRequest)
-	const headerWidth = Math.max(24, paneWidth - 2)
-	const leftHeader = `#${pullRequest.number} ${shortRepoName(pullRequest.repository)}`
-	const headerGap = Math.max(2, headerWidth - leftHeader.length - stats.length)
-
-	if (!diffState || diffState.status === "loading") {
-		return (
-			<box height={height} flexDirection="column">
-				<box height={1} paddingLeft={1} paddingRight={1}>
-					<TextLine>
-						<span fg={colors.count}>#{pullRequest.number}</span>
-						<span fg={colors.muted}> {shortRepoName(pullRequest.repository)}</span>
-						<span fg={colors.muted}>{" ".repeat(headerGap)}</span>
-						<DiffStats pullRequest={pullRequest} />
-					</TextLine>
-				</box>
-				<Divider width={paneWidth} />
-				<LoadingPane content={{ title: `${loadingIndicator} Loading diff`, hint: "Fetching patch from GitHub" }} width={paneWidth} height={Math.max(1, height - 2)} />
-			</box>
-		)
-	}
-
-	if (diffState.status === "error") {
-		return (
-			<box height={height} flexDirection="column">
-				<box height={1} paddingLeft={1} paddingRight={1}>
-					<PlainLine text={`#${pullRequest.number} ${shortRepoName(pullRequest.repository)} diff`} fg={colors.count} bold />
-				</box>
-				<Divider width={paneWidth} />
-				<StatusCard content={{ title: "Could not load diff", hint: diffState.error }} width={paneWidth} />
-			</box>
-		)
-	}
-
-	if (readyFiles.length === 0 || !file) {
-		return <LoadingPane content={{ title: "No diff", hint: "This PR has no patch contents" }} width={paneWidth} height={height} />
-	}
-
-	const fileCounter = `${safeIndex + 1}/${readyFiles.length}`
-	const fileNameWidth = Math.max(8, headerWidth - fileCounter.length - 2)
-
-	return (
-		<box height={height} flexDirection="column">
-			<box height={1} paddingLeft={1} paddingRight={1}>
-				<TextLine>
-					<span fg={colors.count}>#{pullRequest.number}</span>
-					<span fg={colors.muted}> {shortRepoName(pullRequest.repository)}</span>
-					<span fg={colors.muted}>{" ".repeat(headerGap)}</span>
-					<DiffStats pullRequest={pullRequest} />
-				</TextLine>
-			</box>
-			<box height={1} paddingLeft={1} paddingRight={1}>
-				<TextLine>
-					<span fg={colors.text}>{fitCell(file.name, fileNameWidth)}</span>
-					<span fg={colors.muted}>  {fileCounter}</span>
-				</TextLine>
-			</box>
-			<Divider width={paneWidth} />
-			<scrollbox ref={scrollRef} focused flexGrow={1} scrollY scrollX={false}>
-				<diff
-					key={`${pullRequest.url}-${safeIndex}-${view}-${wrapMode}`}
-					diff={file.patch}
-					view={view}
-					syncScroll
-					filetype={file.filetype ?? "text"}
-					syntaxStyle={diffSyntaxStyle}
-					showLineNumbers
-					wrapMode={wrapMode}
-					addedBg="#17351f"
-					removedBg="#3a1e22"
-					contextBg="transparent"
-					addedSignColor={colors.status.passing}
-					removedSignColor={colors.status.failing}
-					lineNumberFg={colors.muted}
-					lineNumberBg="#151515"
-					addedLineNumberBg="#12301a"
-					removedLineNumberBg="#35171b"
-					selectionBg={colors.selectedBg}
-					selectionFg={colors.selectedText}
-					height={diffHeight}
-					style={{ flexShrink: 0 }}
-				/>
-			</scrollbox>
-		</box>
-	)
 }
 
 export const App = () => {
@@ -982,16 +385,7 @@ export const App = () => {
 		visibleCount: visiblePullRequests.length,
 		filterText: visibleFilterText,
 	})
-	const titleWrapWidth = Math.max(1, rightPaneWidth - 2) // account for paddingLeft/paddingRight in detail pane
-	const titleLines = selectedPullRequest ? wrapText(selectedPullRequest.title, titleWrapWidth).length : 1
-	const detailDividerRow = 1 + titleLines + 1 // info row + title lines + labels row
-	const detailChecks = selectedPullRequest ? deduplicateChecks(selectedPullRequest.checks) : []
-	const checksRows = checksRowCount(detailChecks)
-	// checks heading (1) + grid rows + divider
-	const checksDividerRow = detailChecks.length > 0 ? detailDividerRow + 1 + checksRows + 1 : -1
-	const detailJunctions = selectedPullRequest
-		? detailChecks.length > 0 ? [detailDividerRow, checksDividerRow] : [detailDividerRow]
-		: [DETAIL_PLACEHOLDER_ROWS]
+	const detailJunctions = getDetailJunctionRows(selectedPullRequest, rightPaneWidth, true)
 
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
@@ -1076,6 +470,7 @@ export const App = () => {
 		if (!selectedPullRequest) return
 		const repository = selectedPullRequest.repository
 		const number = selectedPullRequest.number
+		const seededInfo = mergeInfoFromPullRequest(selectedPullRequest)
 		setLabelModal(initialLabelModalState)
 		setMergeModal({
 			open: true,
@@ -1084,7 +479,7 @@ export const App = () => {
 			selectedIndex: 0,
 			loading: true,
 			running: false,
-			info: null,
+			info: seededInfo,
 			error: null,
 		})
 		void getPullRequestMergeInfo({ repository, number })
@@ -1102,7 +497,7 @@ export const App = () => {
 
 	const confirmMergeAction = () => {
 		if (!mergeModal.info || mergeModal.loading || mergeModal.running) return
-		const options = mergeModalOptions(mergeModal.info)
+		const options = availableMergeActions(mergeModal.info)
 		const option = options[mergeModal.selectedIndex]
 		if (!option) return
 
@@ -1111,17 +506,11 @@ export const App = () => {
 		const previousPullRequest = targetPullRequest ?? null
 		const previousMergeInfo = mergeModal.info
 
-		if (targetPullRequest && option.action === "auto") {
-			updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, autoMergeEnabled: true }))
+		if (targetPullRequest && option.optimisticAutoMergeEnabled !== undefined) {
+			updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, autoMergeEnabled: option.optimisticAutoMergeEnabled! }))
 			setMergeModal((current) => ({
 				...current,
-				info: current.info ? { ...current.info, autoMergeEnabled: true } : current.info,
-			}))
-		} else if (targetPullRequest && option.action === "disable-auto") {
-			updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, autoMergeEnabled: false }))
-			setMergeModal((current) => ({
-				...current,
-				info: current.info ? { ...current.info, autoMergeEnabled: false } : current.info,
+				info: current.info ? { ...current.info, autoMergeEnabled: option.optimisticAutoMergeEnabled! } : current.info,
 			}))
 		}
 
@@ -1129,10 +518,10 @@ export const App = () => {
 		void mergePullRequest({ repository, number, action: option.action })
 			.then(() => {
 				setMergeModal(initialMergeModalState)
-				if (option.action === "squash" || option.action === "admin") {
-					refreshPullRequests(`${mergeActionPastTense(option.action)} #${number}`)
+				if (option.refreshOnSuccess) {
+					refreshPullRequests(`${option.pastTense} #${number}`)
 				} else {
-					flashNotice(`${mergeActionPastTense(option.action)} #${number}`)
+					flashNotice(`${option.pastTense} #${number}`)
 				}
 			})
 			.catch((error) => {
@@ -1193,7 +582,7 @@ export const App = () => {
 		}
 
 		if (mergeModal.open) {
-			const options = mergeModalOptions(mergeModal.info)
+			const options = availableMergeActions(mergeModal.info)
 			if (key.name === "escape") {
 				setMergeModal(initialMergeModalState)
 				return

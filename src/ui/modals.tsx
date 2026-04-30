@@ -1,5 +1,6 @@
 import { TextAttributes } from "@opentui/core"
-import type { PullRequestLabel, PullRequestMergeAction, PullRequestMergeInfo } from "../domain.js"
+import type { PullRequestLabel, PullRequestMergeInfo } from "../domain.js"
+import { availableMergeActions } from "../mergeActions.js"
 import { colors } from "./colors.js"
 import { centerCell, Divider, fitCell, ModalFrame, PlainLine, TextLine } from "./primitives.js"
 import { labelColor, shortRepoName } from "./pullRequests.js"
@@ -24,13 +25,6 @@ export interface MergeModalState {
 	readonly error: string | null
 }
 
-interface MergeModalOption {
-	readonly action: PullRequestMergeAction
-	readonly title: string
-	readonly description: string
-	readonly danger?: boolean
-}
-
 export const initialLabelModalState: LabelModalState = {
 	open: false,
 	repository: null,
@@ -51,68 +45,12 @@ export const initialMergeModalState: MergeModalState = {
 	error: null,
 }
 
-const isCleanlyMergeable = (info: PullRequestMergeInfo) =>
-	info.state === "open" &&
-	!info.isDraft &&
-	info.mergeable === "mergeable" &&
-	info.reviewStatus !== "changes" &&
-	info.reviewStatus !== "review" &&
-	info.checkStatus !== "pending" &&
-	info.checkStatus !== "failing"
-
-export const mergeModalOptions = (info: PullRequestMergeInfo | null): readonly MergeModalOption[] => {
-	if (!info || info.state !== "open") return []
-	const options: MergeModalOption[] = []
-
-	if (isCleanlyMergeable(info)) {
-		options.push({
-			action: "squash",
-			title: "Squash merge now",
-			description: "Merge this pull request and delete the branch.",
-		})
-	}
-
-	if (!info.autoMergeEnabled && !info.isDraft && info.mergeable !== "conflicting") {
-		options.push({
-			action: "auto",
-			title: "Enable auto-merge",
-			description: "Squash merge automatically after GitHub requirements pass.",
-		})
-	}
-
-	if (info.autoMergeEnabled) {
-		options.push({
-			action: "disable-auto",
-			title: "Disable auto-merge",
-			description: "Cancel the pending GitHub auto-merge request.",
-		})
-	}
-
-	if (!info.isDraft && info.mergeable !== "conflicting") {
-		options.push({
-			action: "admin",
-			title: "Admin override merge",
-			description: "Bypass unmet merge requirements with --admin.",
-			danger: true,
-		})
-	}
-
-	return options
-}
-
 const mergeUnavailableReason = (info: PullRequestMergeInfo | null) => {
 	if (!info) return "Loading merge status from GitHub."
 	if (info.state !== "open") return "This pull request is not open."
 	if (info.isDraft) return "Draft pull requests cannot be merged."
 	if (info.mergeable === "conflicting") return "This branch has merge conflicts."
 	return "No merge actions are currently available."
-}
-
-export const mergeActionPastTense = (action: PullRequestMergeAction) => {
-	if (action === "auto") return "Enabled auto-merge"
-	if (action === "disable-auto") return "Disabled auto-merge"
-	if (action === "admin") return "Admin merged"
-	return "Merged"
 }
 
 export const LabelModal = ({
@@ -134,11 +72,14 @@ export const LabelModal = ({
 }) => {
 	const innerWidth = Math.max(16, modalWidth - 2)
 	const contentWidth = Math.max(14, innerWidth - 2)
+	const rowWidth = innerWidth
 	const currentNames = new Set(currentLabels.map((l) => l.name.toLowerCase()))
 	const filtered = state.availableLabels.filter((label) =>
 		state.query.length === 0 || label.name.toLowerCase().includes(state.query.toLowerCase()),
 	)
-	const maxVisible = Math.max(1, modalHeight - 8)
+	const maxVisible = Math.max(1, modalHeight - 7)
+	const labelMessageTopRows = Math.max(0, Math.floor((maxVisible - 1) / 2))
+	const labelMessageBottomRows = Math.max(0, maxVisible - labelMessageTopRows - 1)
 	const selectedIndex = filtered.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, filtered.length - 1))
 	const scrollStart = Math.min(
 		Math.max(0, filtered.length - maxVisible),
@@ -168,18 +109,26 @@ export const LabelModal = ({
 				</TextLine>
 			</box>
 			<Divider width={innerWidth} />
-			<box flexDirection="column" paddingLeft={1} paddingRight={1}>
+			<box height={maxVisible} flexDirection="column">
 				{state.loading ? (
-					<PlainLine text={centerCell(`${loadingIndicator} Loading labels`, contentWidth)} fg={colors.muted} />
+					<>
+						{Array.from({ length: labelMessageTopRows }, (_, index) => <box key={`top-${index}`} height={1} />)}
+						<PlainLine text={centerCell(`${loadingIndicator} Loading labels`, rowWidth)} fg={colors.muted} />
+						{Array.from({ length: labelMessageBottomRows }, (_, index) => <box key={`bottom-${index}`} height={1} />)}
+					</>
 				) : visibleLabels.length === 0 ? (
-					<PlainLine text={centerCell(state.query.length > 0 ? "No matching labels" : "No labels found", contentWidth)} fg={colors.muted} />
+					<>
+						{Array.from({ length: labelMessageTopRows }, (_, index) => <box key={`top-${index}`} height={1} />)}
+						<PlainLine text={centerCell(state.query.length > 0 ? "No matching labels" : "No labels found", rowWidth)} fg={colors.muted} />
+						{Array.from({ length: labelMessageBottomRows }, (_, index) => <box key={`bottom-${index}`} height={1} />)}
+					</>
 				) : (
 					visibleLabels.map((label, index) => {
 						const actualIndex = scrollStart + index
 						const isActive = currentNames.has(label.name.toLowerCase())
 						const isSelected = actualIndex === selectedIndex
 						const marker = isActive ? "✓" : " "
-						const nameWidth = Math.max(1, contentWidth - 5)
+						const nameWidth = Math.max(1, rowWidth - 5)
 						return (
 							<box key={label.name} height={1}>
 								<TextLine bg={isSelected ? colors.selectedBg : undefined} fg={isSelected ? colors.selectedText : colors.text}>
@@ -193,7 +142,6 @@ export const LabelModal = ({
 					})
 				)}
 			</box>
-			<box flexGrow={1} />
 			<Divider width={innerWidth} />
 			<box height={1} paddingLeft={1} paddingRight={1}>
 				<TextLine>
@@ -225,7 +173,8 @@ export const MergeModal = ({
 }) => {
 	const innerWidth = Math.max(16, modalWidth - 2)
 	const contentWidth = Math.max(14, innerWidth - 2)
-	const options = mergeModalOptions(state.info)
+	const rowWidth = innerWidth
+	const options = availableMergeActions(state.info)
 	const selectedIndex = options.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, options.length - 1))
 	const title = state.info ? `Merge  #${state.info.number}` : state.number ? `Merge  #${state.number}` : "Merge"
 	const rightText = state.running ? "running" : state.loading ? "loading" : state.info?.autoMergeEnabled ? "auto on" : "manual"
@@ -234,8 +183,11 @@ export const MergeModal = ({
 	const statusLine = state.info
 		? `${shortRepoName(state.info.repository)}  ${state.info.mergeable}  ${state.info.reviewStatus}  ${state.info.checkSummary ?? state.info.checkStatus}`
 		: repo ? shortRepoName(repo) : ""
-	const optionRows = Math.max(1, Math.floor((modalHeight - 9) / 2))
+	const optionAreaHeight = Math.max(1, modalHeight - 7)
+	const optionRows = Math.max(1, Math.floor(optionAreaHeight / 2))
 	const visibleOptions = options.slice(0, optionRows)
+	const loadingTopRows = Math.max(0, Math.floor((optionAreaHeight - 1) / 2))
+	const loadingBottomRows = Math.max(0, optionAreaHeight - loadingTopRows - 1)
 
 	return (
 		<ModalFrame left={offsetLeft} top={offsetTop} width={modalWidth} height={modalHeight} junctionRows={[2, modalHeight - 4]}>
@@ -250,19 +202,23 @@ export const MergeModal = ({
 				<PlainLine text={fitCell(statusLine, contentWidth)} fg={colors.muted} />
 			</box>
 			<Divider width={innerWidth} />
-			<box flexDirection="column" paddingLeft={1} paddingRight={1}>
+			<box height={optionAreaHeight} flexDirection="column">
 				{state.loading ? (
-					<PlainLine text={centerCell(`${loadingIndicator} Loading merge status`, contentWidth)} fg={colors.muted} />
+					<>
+						{Array.from({ length: loadingTopRows }, (_, index) => <box key={`top-${index}`} height={1} />)}
+						<PlainLine text={centerCell(`${loadingIndicator} Loading merge status`, rowWidth)} fg={colors.muted} />
+						{Array.from({ length: loadingBottomRows }, (_, index) => <box key={`bottom-${index}`} height={1} />)}
+					</>
 				) : state.error ? (
-					<PlainLine text={centerCell(state.error, contentWidth)} fg={colors.error} />
+					<PlainLine text={centerCell(state.error, rowWidth)} fg={colors.error} />
 				) : visibleOptions.length === 0 ? (
-					<PlainLine text={centerCell(mergeUnavailableReason(state.info), contentWidth)} fg={colors.muted} />
+					<PlainLine text={centerCell(mergeUnavailableReason(state.info), rowWidth)} fg={colors.muted} />
 				) : (
 					visibleOptions.map((option, index) => {
 						const isSelected = index === selectedIndex
 						const titleColor = option.danger ? colors.error : isSelected ? colors.selectedText : colors.text
-						const titleWidth = Math.max(1, contentWidth - 1)
-						const descriptionWidth = Math.max(1, contentWidth - 1)
+						const titleWidth = Math.max(1, rowWidth - 1)
+						const descriptionWidth = Math.max(1, rowWidth - 1)
 
 						return (
 							<box key={option.action} height={2} flexDirection="column">
@@ -277,7 +233,6 @@ export const MergeModal = ({
 					})
 				)}
 			</box>
-			<box flexGrow={1} />
 			<Divider width={innerWidth} />
 			<box height={1} paddingLeft={1} paddingRight={1}>
 				<TextLine>

@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { config } from "../config.js"
 import type { CheckItem, PullRequestItem, PullRequestMergeAction, PullRequestMergeInfo } from "../domain.js"
+import { getMergeActionDefinition } from "../mergeActions.js"
 import { CommandRunner, type CommandError, type JsonParseError } from "./CommandRunner.js"
 
 interface GitHubPullRequestSummaryNode {
@@ -395,15 +396,7 @@ export class GitHubService extends Context.Service<GitHubService, {
 
 			const mergePullRequest = Effect.fn("GitHubService.mergePullRequest")(function*(repository: string, number: number, action: PullRequestMergeAction) {
 				const base = ["pr", "merge", String(number), "--repo", repository] as const
-				if (action === "disable-auto") {
-					yield* command.run("gh", [...base, "--disable-auto"])
-				} else if (action === "auto") {
-					yield* command.run("gh", [...base, "--squash", "--auto", "--delete-branch"])
-				} else if (action === "admin") {
-					yield* command.run("gh", [...base, "--squash", "--admin", "--delete-branch"])
-				} else {
-					yield* command.run("gh", [...base, "--squash", "--delete-branch"])
-				}
+				yield* command.run("gh", [...base, ...getMergeActionDefinition(action).cliArgs])
 			})
 
 			const toggleDraftStatus = Effect.fn("GitHubService.toggleDraftStatus")(function*(repository: string, number: number, isDraft: boolean) {
