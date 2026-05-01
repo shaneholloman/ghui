@@ -165,6 +165,88 @@ const usernameAtom = githubRuntime.atom(
 		: Effect.succeed(config.author.replace(/^@/, "")),
 ).pipe(Atom.keepAlive)
 
+const pullRequestLoadAtom = Atom.make((get) => {
+	const queueMode = get(queueModeAtom)
+	const cache = get(queueLoadCacheAtom)
+	const result = get(pullRequestsAtom)
+	const resolved = AsyncResult.getOrElse(result, () => null)
+	return cache[queueMode] ?? (resolved?.queueMode === queueMode ? resolved : null)
+})
+
+const isLoadingQueueModeAtom = Atom.make((get) => {
+	const queueMode = get(queueModeAtom)
+	const resolved = AsyncResult.getOrElse(get(pullRequestsAtom), () => null)
+	return resolved !== null && resolved.queueMode !== queueMode
+})
+
+const pullRequestStatusAtom = Atom.make((get): LoadStatus => {
+	const result = get(pullRequestsAtom)
+	const load = get(pullRequestLoadAtom)
+	const isLoadingQueue = get(isLoadingQueueModeAtom)
+	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
+	return AsyncResult.isFailure(result) ? "error" : "ready"
+})
+
+const displayedPullRequestsAtom = Atom.make((get) => {
+	const load = get(pullRequestLoadAtom)
+	const overrides = get(pullRequestOverridesAtom)
+	const recentlyCompleted = get(recentlyCompletedPullRequestsAtom)
+	const source = load?.data ?? []
+	const seenUrls = new Set<string>()
+	const open = source.map((pullRequest) => {
+		seenUrls.add(pullRequest.url)
+		return recentlyCompleted[pullRequest.url] ?? overrides[pullRequest.url] ?? pullRequest
+	})
+	return [
+		...open,
+		...Object.values(recentlyCompleted).filter((pullRequest) => !seenUrls.has(pullRequest.url)),
+	]
+})
+
+const effectiveFilterQueryAtom = Atom.make((get) =>
+	(get(filterModeAtom) ? get(filterDraftAtom) : get(filterQueryAtom)).trim().toLowerCase(),
+)
+
+const filteredPullRequestsAtom = Atom.make((get) => {
+	const pullRequests = get(displayedPullRequestsAtom)
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return pullRequests
+	return pullRequests.flatMap((pullRequest) => {
+		const score = pullRequestFilterScore(pullRequest, query)
+		return score === null ? [] : [{ pullRequest, score }]
+	}).sort((left, right) =>
+		left.score - right.score || right.pullRequest.createdAt.getTime() - left.pullRequest.createdAt.getTime()
+	).map(({ pullRequest }) => pullRequest)
+})
+
+const visibleRepoOrderAtom = Atom.make((get) => {
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return [] as readonly string[]
+	return [...new Set(get(filteredPullRequestsAtom).map((pullRequest) => pullRequest.repository))]
+})
+
+const visibleGroupsAtom = Atom.make((get) =>
+	groupBy(get(filteredPullRequestsAtom), (pullRequest) => pullRequest.repository, get(visibleRepoOrderAtom)),
+)
+
+const visiblePullRequestsAtom = Atom.make((get) => get(visibleGroupsAtom).flatMap(([, pullRequests]) => pullRequests))
+
+const groupStartsAtom = Atom.make((get) => {
+	const groups = get(visibleGroupsAtom)
+	const starts: number[] = []
+	for (let index = 0; index < groups.length; index++) {
+		if (index === 0) starts.push(0)
+		else starts.push(starts[index - 1]! + groups[index - 1]![1].length)
+	}
+	return starts
+})
+
+const selectedPullRequestAtom = Atom.make((get) => {
+	const pullRequests = get(visiblePullRequestsAtom)
+	const index = get(selectedIndexAtom)
+	return pullRequests[index] ?? null
+})
+
 const listRepoLabelsAtom = githubRuntime.fn<string>()((repository) =>
 	GitHubService.use((github) => github.listRepoLabels(repository))
 )
@@ -410,8 +492,8 @@ export const App = () => {
 	themeIdRef.current = themeId
 	themeModalRef.current = themeModal
 	const [labelCache, setLabelCache] = useAtom(labelCacheAtom)
-	const [pullRequestOverrides, setPullRequestOverrides] = useAtom(pullRequestOverridesAtom)
-	const [recentlyCompletedPullRequests, setRecentlyCompletedPullRequests] = useAtom(recentlyCompletedPullRequestsAtom)
+	const setPullRequestOverrides = useAtomSet(pullRequestOverridesAtom)
+	const setRecentlyCompletedPullRequests = useAtomSet(recentlyCompletedPullRequestsAtom)
 	const retryProgress = useAtomValue(retryProgressAtom)
 	const [loadingFrame, setLoadingFrame] = useState(0)
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
@@ -489,54 +571,19 @@ export const App = () => {
 		}
 	}, [])
 
-	const resolvedPullRequestLoad = AsyncResult.getOrElse(pullRequestResult, () => null)
-	const pullRequestLoad = queueLoadCache[queueMode] ?? (resolvedPullRequestLoad?.queueMode === queueMode ? resolvedPullRequestLoad : null)
-	const isLoadingQueueMode = resolvedPullRequestLoad !== null && resolvedPullRequestLoad.queueMode !== queueMode
-	const pullRequests = useMemo(() => {
-		const source = pullRequestLoad?.data ?? []
-		const seenUrls = new Set<string>()
-		const openPullRequests = source.map((pullRequest) => {
-			seenUrls.add(pullRequest.url)
-			return recentlyCompletedPullRequests[pullRequest.url] ?? pullRequestOverrides[pullRequest.url] ?? pullRequest
-		})
-
-		return [
-			...openPullRequests,
-			...Object.values(recentlyCompletedPullRequests).filter((pullRequest) => !seenUrls.has(pullRequest.url)),
-		]
-	}, [pullRequestLoad?.data, pullRequestOverrides, recentlyCompletedPullRequests])
-	const pullRequestStatus: LoadStatus = (pullRequestResult.waiting || isLoadingQueueMode) && pullRequestLoad === null
-		? "loading"
-		: AsyncResult.isFailure(pullRequestResult)
-			? "error"
-			: "ready"
+	const pullRequestLoad = useAtomValue(pullRequestLoadAtom)
+	const pullRequests = useAtomValue(displayedPullRequestsAtom)
+	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
 	const isInitialLoading = pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 
-	const effectiveFilterQuery = (filterMode ? filterDraft : filterQuery).trim().toLowerCase()
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
 
-	const filteredPullRequests = useMemo(() => {
-		if (effectiveFilterQuery.length === 0) return pullRequests
-		return pullRequests.flatMap((pullRequest) => {
-			const score = pullRequestFilterScore(pullRequest, effectiveFilterQuery)
-			return score === null ? [] : [{ pullRequest, score }]
-		}).sort((left, right) =>
-			left.score - right.score || right.pullRequest.createdAt.getTime() - left.pullRequest.createdAt.getTime()
-		).map(({ pullRequest }) => pullRequest)
-	}, [pullRequests, effectiveFilterQuery])
-
-	const visibleRepoOrder = useMemo(() => effectiveFilterQuery.length > 0
-		? [...new Set(filteredPullRequests.map((pullRequest) => pullRequest.repository))]
-		: [], [filteredPullRequests, effectiveFilterQuery.length])
-	const visibleGroups = useMemo(
-		() => groupBy(filteredPullRequests, (pullRequest) => pullRequest.repository, visibleRepoOrder),
-		[filteredPullRequests, visibleRepoOrder],
-	)
-	const visiblePullRequests = useMemo(() => visibleGroups.flatMap(([, pullRequests]) => pullRequests), [visibleGroups])
-	const selectedPullRequest = visiblePullRequests[selectedIndex] ?? null
+	const visibleGroups = useAtomValue(visibleGroupsAtom)
+	const visiblePullRequests = useAtomValue(visiblePullRequestsAtom)
+	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
 	const selectedDiffState = selectedPullRequest ? pullRequestDiffCache[pullRequestDiffKey(selectedPullRequest)] : undefined
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
 	const readyDiffFiles = selectedDiffState?._tag === "Ready" ? selectedDiffState.files : []
@@ -554,14 +601,7 @@ export const App = () => {
 		() => [...new Set(diffCommentAnchors.map((anchor) => anchor.renderLine))].sort((left, right) => left - right),
 		[diffCommentAnchors],
 	)
-	const groupStarts = useMemo(() => visibleGroups.reduce<Array<number>>((starts, [, pullRequests], index) => {
-		if (index === 0) {
-			starts.push(0)
-			return starts
-		}
-		starts.push(starts[index - 1]! + visibleGroups[index - 1]![1].length)
-		return starts
-	}, []), [visibleGroups])
+	const groupStarts = useAtomValue(groupStartsAtom)
 	const getCurrentGroupIndex = (current: number) => {
 		for (let index = groupStarts.length - 1; index >= 0; index--) {
 			if (groupStarts[index]! <= current) return index
