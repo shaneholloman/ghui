@@ -1,10 +1,14 @@
+import { Data } from "effect"
 import { colors } from "./colors.js"
 import { TextLine } from "./primitives.js"
 
-export interface RetryProgress {
-	readonly attempt: number
-	readonly max: number
-}
+export type RetryProgress = Data.TaggedEnum<{
+	Idle: {}
+	Retrying: { readonly attempt: number; readonly max: number }
+}>
+
+export const RetryProgress = Data.taggedEnum<RetryProgress>()
+export const initialRetryProgress: RetryProgress = RetryProgress.Idle()
 
 export const FooterHints = ({
 	filterEditing,
@@ -29,7 +33,7 @@ export const FooterHints = ({
 	hasError: boolean
 	isLoading: boolean
 	loadingIndicator: string
-	retryProgress: RetryProgress | null
+	retryProgress: RetryProgress
 }) => {
 	if (filterEditing) {
 		return (
@@ -148,7 +152,7 @@ export const FooterHints = ({
 					<span fg={colors.muted}> clear  </span>
 				</>
 			) : null}
-			{retryProgress ? (
+			{retryProgress._tag === "Retrying" ? (
 				<>
 					<span fg={colors.status.pending}>retry</span>
 					<span fg={colors.muted}> {retryProgress.attempt}/{retryProgress.max}  </span>

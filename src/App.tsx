@@ -16,7 +16,7 @@ import { colors, filterThemeDefinitions, setActiveTheme, themeDefinitions, type 
 import { backspace as editorBackspace, deleteForward as editorDeleteForward, deleteToLineEnd, deleteToLineStart, deleteWordBackward, deleteWordForward, insertText, moveLeft as editorMoveLeft, moveLineEnd, moveLineStart, moveRight as editorMoveRight, moveVertically, moveWordBackward, moveWordForward, type CommentEditorValue } from "./ui/commentEditor.js"
 import { buildStackedDiffFiles, diffCommentAnchorKey, diffCommentLocationKey, getStackedDiffCommentAnchors, nearestDiffCommentAnchorIndex, PullRequestDiffState, pullRequestDiffKey, safeDiffFileIndex, scrollTopForVisibleLine, splitPatchFiles, type DiffCommentAnchor, type StackedDiffCommentAnchor } from "./ui/diff.js"
 import { DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailBodyHeight, getDetailHeaderHeight, getDetailJunctionRows, getDetailsPaneHeight, LoadingPane, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
-import { FooterHints, type RetryProgress } from "./ui/FooterHints.js"
+import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CloseModal, CommentModal, CommentThreadModal, initialCloseModalState, initialCommentModalState, initialCommentThreadModalState, initialLabelModalState, initialMergeModalState, initialModal, initialThemeModalState, LabelModal, MergeModal, Modal, ThemeModal, type CloseModalState, type CommentModalState, type CommentThreadModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type ThemeModalState } from "./ui/modals.js"
 import { groupBy, reviewLabel } from "./ui/pullRequests.js"
@@ -37,7 +37,7 @@ interface PullRequestLoad {
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
-	readonly retryProgress: RetryProgress | null
+	readonly retryProgress: RetryProgress
 	readonly loadingIndicator: string
 	readonly visibleCount: number
 	readonly filterText: string
@@ -95,7 +95,7 @@ const mergeCachedDetails = (fresh: readonly PullRequestItem[], cached: readonly 
 	})
 }
 
-const retryProgressAtom = Atom.make<RetryProgress | null>(null).pipe(Atom.keepAlive)
+const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
 const queueModeAtom = Atom.make<PullRequestQueueMode>("authored").pipe(Atom.keepAlive)
 const queueLoadCacheAtom = Atom.make<Partial<Record<PullRequestQueueMode, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
 const queueSelectionAtom = Atom.make<Partial<Record<PullRequestQueueMode, number>>>({}).pipe(Atom.keepAlive)
@@ -103,19 +103,19 @@ const pullRequestsAtom = githubRuntime.atom(
 	GitHubService.use((github) =>
 		Effect.gen(function*() {
 			const queueMode = yield* Atom.get(queueModeAtom)
-			yield* Atom.set(retryProgressAtom, null)
+			yield* Atom.set(retryProgressAtom, RetryProgress.Idle())
 			const data = yield* github.listOpenPullRequests(queueMode).pipe(
 				Effect.tapError(() =>
-					Atom.update(retryProgressAtom, (current) => ({
-						attempt: Math.min((current?.attempt ?? 0) + 1, PR_FETCH_RETRIES),
+					Atom.update(retryProgressAtom, (current) => RetryProgress.Retrying({
+						attempt: Math.min((current._tag === "Retrying" ? current.attempt : 0) + 1, PR_FETCH_RETRIES),
 						max: PR_FETCH_RETRIES,
 					}))
 				),
 				Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2) }),
-				Effect.tapError(() => Atom.set(retryProgressAtom, null)),
+				Effect.tapError(() => Atom.set(retryProgressAtom, RetryProgress.Idle())),
 			)
 
-			yield* Atom.set(retryProgressAtom, null)
+			yield* Atom.set(retryProgressAtom, RetryProgress.Idle())
 			const cache = yield* Atom.get(queueLoadCacheAtom)
 			const load = {
 				queueMode,
@@ -347,7 +347,7 @@ const getDetailPlaceholderContent = ({
 	if (status === "loading") {
 		return {
 			title: `${loadingIndicator} Loading pull requests`,
-			hint: retryProgress ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : "Fetching latest open PRs",
+			hint: retryProgress._tag === "Retrying" ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : "Fetching latest open PRs",
 		}
 	}
 
