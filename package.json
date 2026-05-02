@@ -42,19 +42,26 @@
 		"start": "bun run src/index.tsx",
 		"start:mock": "GHUI_MOCK_PR_COUNT=400 GHUI_MOCK_REPO_COUNT=4 bun run src/index.tsx",
 		"test": "bun test test",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"lint": "oxlint --tsconfig tsconfig.json src/ test/",
+		"format": "oxfmt src/ test/",
+		"format:check": "oxfmt --check src/ test/"
 	},
 	"dependencies": {
-		"@effect/atom-react": "4.0.0-beta.47",
-		"@opentui/core": "0.1.97",
-		"@opentui/react": "0.1.97",
-		"effect": "4.0.0-beta.47",
+		"@effect/atom-react": "4.0.0-beta.59",
+		"@opentui/core": "0.2.1",
+		"@opentui/keymap": "0.2.1",
+		"@opentui/react": "0.2.1",
+		"effect": "4.0.0-beta.59",
 		"react": "19.2.5",
 		"scheduler": "0.27.0"
 	},
 	"devDependencies": {
+		"@effect/language-service": "0.85.1",
 		"@types/bun": "1.3.12",
 		"@types/react": "19.2.14",
+		"oxfmt": "0.47.0",
+		"oxlint": "1.62.0",
 		"typescript": "6.0.2"
 	}
 }
