@@ -109,6 +109,7 @@ const DIFF_STICKY_HEADER_LINES = 2
 const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
 const LOAD_MORE_SELECTION_THRESHOLD = 8
+const LOAD_MORE_SCROLL_THRESHOLD = 3
 const DETAIL_PREFETCH_BEHIND = 1
 const DETAIL_PREFETCH_AHEAD = 3
 const DETAIL_PREFETCH_CONCURRENCY = 3
@@ -904,6 +905,20 @@ export const App = () => {
 		const thresholdIndex = Math.max(0, visiblePullRequests.length - LOAD_MORE_SELECTION_THRESHOLD)
 		if (selectedIndex >= thresholdIndex) loadMorePullRequests()
 	}, [selectedIndex, visiblePullRequests.length, filterMode, filterQuery, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
+
+	useEffect(() => {
+		if (filterMode || filterQuery.length > 0 || visiblePullRequests.length === 0 || detailFullView || diffFullView) return
+		if (!hasMorePullRequests || isLoadingMorePullRequests) return
+		const checkScroll = () => {
+			const scroll = prListScrollRef.current
+			if (!scroll || scroll.viewport.height <= 0) return
+			const bottom = scroll.scrollTop + scroll.viewport.height
+			if (bottom >= scroll.scrollHeight - LOAD_MORE_SCROLL_THRESHOLD) loadMorePullRequests()
+		}
+		checkScroll()
+		const interval = globalThis.setInterval(checkScroll, 120)
+		return () => globalThis.clearInterval(interval)
+	}, [visiblePullRequests.length, filterMode, filterQuery, detailFullView, diffFullView, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
 
 	useEffect(() => {
 		const scroll = prListScrollRef.current
