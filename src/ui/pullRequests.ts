@@ -1,31 +1,36 @@
-import type { PullRequestItem, PullRequestLabel } from "../domain.js"
+import type { PullRequestItem, PullRequestLabel, ReviewStatus } from "../domain.js"
 import { colors } from "./colors.js"
 
 export const shortRepoName = (repository: string) => repository.split("/")[1] ?? repository
 
 export const repoColor = (repository: string) => colors.repos[shortRepoName(repository) as keyof typeof colors.repos] ?? colors.repos.default
 
-export const reviewLabel = (pullRequest: PullRequestItem) => {
-	if (pullRequest.reviewStatus === "draft") return "draft"
-	if (pullRequest.reviewStatus === "approved") return "approved"
-	if (pullRequest.reviewStatus === "changes") return "changes"
-	if (pullRequest.reviewStatus === "review") return "review"
-	return null
+const REVIEW_LABEL: Partial<Record<ReviewStatus, string>> = {
+	draft: "draft",
+	approved: "approved",
+	changes: "changes",
+	review: "review",
 }
+
+export const reviewLabel = (pullRequest: PullRequestItem) => REVIEW_LABEL[pullRequest.reviewStatus] ?? null
 
 export const checkLabel = (pullRequest: PullRequestItem) => pullRequest.checkSummary
 
 export const statusColor = (status: PullRequestItem["reviewStatus"] | PullRequestItem["checkStatus"]) => colors.status[status]
 
+const REVIEW_ICON: Record<ReviewStatus, string> = {
+	draft: "◌",
+	approved: "✓",
+	changes: "!",
+	review: "◐",
+	none: "·",
+}
+
 export const reviewIcon = (pullRequest: PullRequestItem) => {
 	if (pullRequest.state === "merged") return "✓"
 	if (pullRequest.state === "closed") return "×"
 	if (pullRequest.autoMergeEnabled) return "↻"
-	if (pullRequest.reviewStatus === "draft") return "◌"
-	if (pullRequest.reviewStatus === "approved") return "✓"
-	if (pullRequest.reviewStatus === "changes") return "!"
-	if (pullRequest.reviewStatus === "review") return "◐"
-	return "·"
+	return REVIEW_ICON[pullRequest.reviewStatus]
 }
 
 const fallbackLabelColor = (name: string) => {

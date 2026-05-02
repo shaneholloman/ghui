@@ -195,25 +195,29 @@ const deduplicateChecks = (checks: readonly CheckItem[]): CheckItem[] => {
 	return [...seen.values()]
 }
 
-const checkIcon = (check: CheckItem) => {
-	if (check.status === "completed") {
-		if (check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped") return "✓"
-		if (check.conclusion === "failure") return "✗"
-		return "·"
-	}
-	if (check.status === "in_progress") return "●"
-	return "○"
+type CheckKind = "passing" | "failing" | "in-progress" | "queued" | "missing"
+
+const CHECK_DISPLAY: Record<CheckKind, { icon: string; color: string }> = {
+	passing: { icon: "✓", color: colors.status.passing },
+	failing: { icon: "✗", color: colors.status.failing },
+	"in-progress": { icon: "●", color: colors.status.pending },
+	queued: { icon: "○", color: colors.muted },
+	missing: { icon: "·", color: colors.muted },
 }
 
-const checkColor = (check: CheckItem) => {
+const checkKind = (check: CheckItem): CheckKind => {
 	if (check.status === "completed") {
-		if (check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped") return colors.status.passing
-		if (check.conclusion === "failure") return colors.status.failing
-		return colors.muted
+		if (check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped") return "passing"
+		if (check.conclusion === "failure") return "failing"
+		return "missing"
 	}
-	if (check.status === "in_progress") return colors.status.pending
-	return colors.muted
+	if (check.status === "in_progress") return "in-progress"
+	return "queued"
 }
+
+const checkIcon = (check: CheckItem) => CHECK_DISPLAY[checkKind(check)].icon
+
+const checkColor = (check: CheckItem) => CHECK_DISPLAY[checkKind(check)].color
 
 const checksRowCount = (checks: readonly CheckItem[]) => {
 	const unique = deduplicateChecks(checks)
