@@ -1932,6 +1932,44 @@ export const App = () => {
 		],
 	}), [])
 
+	// CommentModal: full text editor — escape, submit, all the cursor/edit bindings.
+	const commentModalActiveRef = useRef(false)
+	commentModalActiveRef.current = commentModalActive
+	const commentModalCtxRef = useRef({ submitDiffComment, editComment })
+	commentModalCtxRef.current = { submitDiffComment, editComment }
+	const editComm = (transform: Parameters<typeof editComment>[0]) => commentModalCtxRef.current.editComment(transform)
+	useBindings(() => ({
+		enabled: () => commentModalActiveRef.current,
+		bindings: [
+			{ key: "escape", cmd: () => closeActiveModalRef.current() },
+			{ key: "ctrl+s", cmd: () => commentModalCtxRef.current.submitDiffComment() },
+			{ key: "ctrl+a", cmd: () => editComm(moveLineStart) },
+			{ key: "ctrl+e", cmd: () => editComm(moveLineEnd) },
+			{ key: "ctrl+b", cmd: () => editComm(editorMoveLeft) },
+			{ key: "ctrl+f", cmd: () => editComm(editorMoveRight) },
+			{ key: "ctrl+w", cmd: () => editComm(deleteWordBackward) },
+			{ key: "ctrl+u", cmd: () => editComm(deleteToLineStart) },
+			{ key: "ctrl+k", cmd: () => editComm(deleteToLineEnd) },
+			{ key: "ctrl+d", cmd: () => editComm(editorDeleteForward) },
+			{ key: "meta+b", cmd: () => editComm(moveWordBackward) },
+			{ key: "meta+left", cmd: () => editComm(moveWordBackward) },
+			{ key: "meta+f", cmd: () => editComm(moveWordForward) },
+			{ key: "meta+right", cmd: () => editComm(moveWordForward) },
+			{ key: "meta+backspace", cmd: () => editComm(deleteWordBackward) },
+			{ key: "meta+delete", cmd: () => editComm(deleteWordForward) },
+			{ key: "backspace", cmd: () => editComm(editorBackspace) },
+			{ key: "delete", cmd: () => editComm(editorDeleteForward) },
+			{ key: "left", cmd: () => editComm(editorMoveLeft) },
+			{ key: "right", cmd: () => editComm(editorMoveRight) },
+			{ key: "up", cmd: () => editComm((state) => moveVertically(state, -1)) },
+			{ key: "down", cmd: () => editComm((state) => moveVertically(state, 1)) },
+			{ key: "home", cmd: () => editComm(moveLineStart) },
+			{ key: "end", cmd: () => editComm(moveLineEnd) },
+			{ key: "shift+return", cmd: () => editComm((state) => insertText(state, "\n")) },
+			{ key: "return", cmd: () => commentModalCtxRef.current.submitDiffComment() },
+		],
+	}), [])
+
 	// CommandPalette: escape closes, return runs, up/k & down/j navigate.
 	const commandPaletteActiveRef = useRef(false)
 	commandPaletteActiveRef.current = commandPaletteActive
@@ -2003,103 +2041,8 @@ export const App = () => {
 		}
 
 		if (commentModalActive) {
-			if (key.name === "escape") {
-				closeActiveModal()
-				return
-			}
-			if (key.ctrl && key.name === "s") {
-				submitDiffComment()
-				return
-			}
-			if (key.ctrl && key.name === "a") {
-				editComment(moveLineStart)
-				return
-			}
-			if (key.ctrl && key.name === "e") {
-				editComment(moveLineEnd)
-				return
-			}
-			if (key.ctrl && key.name === "b") {
-				editComment(editorMoveLeft)
-				return
-			}
-			if (key.ctrl && key.name === "f") {
-				editComment(editorMoveRight)
-				return
-			}
-			if (key.ctrl && key.name === "w") {
-				editComment(deleteWordBackward)
-				return
-			}
-			if (key.ctrl && key.name === "u") {
-				editComment(deleteToLineStart)
-				return
-			}
-			if (key.ctrl && key.name === "k") {
-				editComment(deleteToLineEnd)
-				return
-			}
-			if (key.ctrl && key.name === "d") {
-				editComment(editorDeleteForward)
-				return
-			}
-			if ((key.meta || key.option) && (key.name === "b" || key.name === "left")) {
-				editComment(moveWordBackward)
-				return
-			}
-			if ((key.meta || key.option) && (key.name === "f" || key.name === "right")) {
-				editComment(moveWordForward)
-				return
-			}
-			if ((key.meta || key.option) && (key.name === "backspace" || key.name === "delete")) {
-				editComment(key.name === "delete" ? deleteWordForward : deleteWordBackward)
-				return
-			}
-			if (key.name === "backspace") {
-				editComment(editorBackspace)
-				return
-			}
-			if (key.name === "delete") {
-				editComment(editorDeleteForward)
-				return
-			}
-			if (key.name === "left") {
-				editComment(editorMoveLeft)
-				return
-			}
-			if (key.name === "right") {
-				editComment(editorMoveRight)
-				return
-			}
-			if (key.name === "up") {
-				editComment((state) => moveVertically(state, -1))
-				return
-			}
-			if (key.name === "down") {
-				editComment((state) => moveVertically(state, 1))
-				return
-			}
-			if (key.name === "home") {
-				editComment(moveLineStart)
-				return
-			}
-			if (key.name === "end") {
-				editComment(moveLineEnd)
-				return
-			}
-			if ((key.name === "return" || key.name === "enter") && key.shift) {
-				editComment((state) => insertText(state, "\n"))
-				return
-			}
-			if (key.name === "return" || key.name === "enter") {
-				submitDiffComment()
-				return
-			}
 			const text = printableKeyText(key)
-			if (text) {
-				editComment((state) => insertText(state, text))
-				return
-			}
+			if (text) editComment((state) => insertText(state, text))
 			return
 		}
 
