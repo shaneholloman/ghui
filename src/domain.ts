@@ -106,6 +106,19 @@ export interface PullRequestItem {
 	readonly url: string
 }
 
+export interface PullRequestPage {
+	readonly items: readonly PullRequestItem[]
+	readonly endCursor: string | null
+	readonly hasNextPage: boolean
+}
+
+export interface ListPullRequestPageInput {
+	readonly mode: PullRequestQueueMode
+	readonly repository: string | null
+	readonly cursor: string | null
+	readonly pageSize: number
+}
+
 export interface PullRequestMergeInfo {
 	readonly repository: string
 	readonly number: number

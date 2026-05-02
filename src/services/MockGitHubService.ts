@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { CheckItem, CreatePullRequestCommentInput, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
+import type { CheckItem, CreatePullRequestCommentInput, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
 import { GitHubService } from "./GitHubService.js"
 
 export interface MockOptions {
@@ -70,6 +70,23 @@ export const buildMockPullRequests = (options: MockOptions): readonly PullReques
 	return Array.from({ length: resolved.prCount }, (_, index) => buildPullRequest(index, resolved))
 }
 
+const filterByView = (mode: PullRequestQueueMode, repository: string | null, source: readonly PullRequestItem[]) => {
+	if (mode === "repository") return repository ? source.filter((item) => item.repository === repository) : []
+	return source
+}
+
+const pageItems = (source: readonly PullRequestItem[], cursor: string | null, pageSize: number): PullRequestPage => {
+	const start = cursor ? Number.parseInt(cursor, 10) : 0
+	const safeStart = Number.isFinite(start) && start >= 0 ? start : 0
+	const safePageSize = Math.max(1, Math.min(100, pageSize))
+	const end = Math.min(source.length, safeStart + safePageSize)
+	return {
+		items: source.slice(safeStart, end),
+		endCursor: end > safeStart ? String(end) : null,
+		hasNextPage: end < source.length,
+	}
+}
+
 export const MockGitHubService = {
 	layer: (options: MockOptions) => {
 		const items = buildMockPullRequests(options)
@@ -83,16 +100,13 @@ export const MockGitHubService = {
 			changedFiles: 0,
 			detailLoaded: false,
 		} satisfies PullRequestItem))
-		const filterByView = (mode: PullRequestQueueMode, repository: string | null, source: readonly PullRequestItem[]) => {
-			if (mode === "repository") return repository ? source.filter((item) => item.repository === repository) : []
-			return source
-		}
 		const findPullRequest = (repository: string, number: number) => items.find((item) => item.repository === repository && item.number === number) ?? items[0]!
 
 		return Layer.succeed(
 			GitHubService,
 			GitHubService.of({
 				listOpenPullRequests: (mode: PullRequestQueueMode, repository: string | null) => Effect.succeed(filterByView(mode, repository, summaryItems)),
+				listOpenPullRequestPage: (input) => Effect.succeed(pageItems(filterByView(input.mode, input.repository, summaryItems), input.cursor, input.pageSize)),
 				listOpenPullRequestDetails: (mode: PullRequestQueueMode, repository: string | null) => Effect.succeed(filterByView(mode, repository, items)),
 				getPullRequestDetails: (repository, number) => Effect.succeed(findPullRequest(repository, number)),
 				getAuthenticatedUser: () => Effect.succeed(username),

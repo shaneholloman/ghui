@@ -13,8 +13,9 @@ console.error = (...args: unknown[]) => {
 
 // Set env before any App-side module is loaded. Static imports above are intentionally
 // limited to test-only modules — App is dynamically imported.
-process.env.GHUI_MOCK_PR_COUNT ??= "80"
-process.env.GHUI_MOCK_REPO_COUNT ??= "4"
+process.env.GHUI_MOCK_PR_COUNT = "80"
+process.env.GHUI_MOCK_REPO_COUNT = "4"
+process.env.GHUI_PR_PAGE_SIZE = "100"
 
 const loadApp = async () => {
 	const { testRender } = await import("@opentui/react/test-utils")

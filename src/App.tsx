@@ -9,7 +9,7 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, commandEnabled, filterCommands } from "./commands.js"
 import { config } from "./config.js"
-import { type CreatePullRequestCommentInput, type DiffCommentSide, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
+import { type CreatePullRequestCommentInput, type DiffCommentSide, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import { availableMergeActions, mergeInfoFromPullRequest } from "./mergeActions.js"
@@ -41,6 +41,7 @@ const parseOptionalPositiveInt = (value: string | undefined, fallback: number | 
 }
 
 const mockPrCount = parseOptionalPositiveInt(process.env.GHUI_MOCK_PR_COUNT, null)
+const pullRequestPageSize = Math.min(100, parseOptionalPositiveInt(process.env.GHUI_PR_PAGE_SIZE, config.prPageSize) ?? config.prPageSize)
 const githubServiceLayer = mockPrCount !== null
 	? (await import("./services/MockGitHubService.js")).MockGitHubService.layer({ prCount: mockPrCount, repoCount: parseOptionalPositiveInt(process.env.GHUI_MOCK_REPO_COUNT, 4) ?? 4 })
 	: GitHubService.layerNoDeps
@@ -57,6 +58,8 @@ interface PullRequestLoad {
 	readonly view: PullRequestView
 	readonly data: readonly PullRequestItem[]
 	readonly fetchedAt: Date | null
+	readonly endCursor: string | null
+	readonly hasNextPage: boolean
 }
 
 interface DetailPlaceholderInput {
@@ -98,6 +101,13 @@ const AUTO_REFRESH_JITTER_MS = 10_000
 const DIFF_STICKY_HEADER_LINES = 2
 const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
+const LOAD_MORE_SELECTION_THRESHOLD = 8
+
+const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: readonly PullRequestItem[]) => {
+	const seen = new Set(existing.map((pullRequest) => pullRequest.url))
+	const mergedIncoming = mergeCachedDetails(incoming, existing)
+	return [...existing, ...mergedIncoming.filter((pullRequest) => !seen.has(pullRequest.url))]
+}
 
 const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
 const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(config.repository)).pipe(Atom.keepAlive)
@@ -117,7 +127,12 @@ const pullRequestsAtom = githubRuntime.atom(
 			const repository = viewRepository(view)
 			const cacheKey = viewCacheKey(view)
 			yield* Atom.set(retryProgressAtom, initialRetryProgress)
-			const data = yield* github.listOpenPullRequests(queueMode, repository).pipe(
+			const page = yield* github.listOpenPullRequestPage({
+				mode: queueMode,
+				repository,
+				cursor: null,
+				pageSize: Math.min(pullRequestPageSize, config.prFetchLimit),
+			}).pipe(
 					Effect.tapError(() =>
 						Atom.update(retryProgressAtom, (current) => RetryProgress.Retrying({
 							attempt: Math.min(RetryProgress.$match(current, { Idle: () => 0, Retrying: ({ attempt }) => attempt }) + 1, PR_FETCH_RETRIES),
@@ -132,8 +147,10 @@ const pullRequestsAtom = githubRuntime.atom(
 			const cache = yield* Atom.get(queueLoadCacheAtom)
 			const load = {
 				view,
-				data: mergeCachedDetails(data, cache[cacheKey]?.data),
+				data: mergeCachedDetails(page.items, cache[cacheKey]?.data),
 				fetchedAt: new Date(),
+				endCursor: page.endCursor,
+				hasNextPage: page.hasNextPage && page.items.length < config.prFetchLimit,
 			} satisfies PullRequestLoad
 			const nextCache = { ...cache }
 			delete nextCache[cacheKey]
@@ -269,6 +286,9 @@ const selectedDiffStateAtom = Atom.make((get) => {
 
 const listRepoLabelsAtom = githubRuntime.fn<string>()((repository) =>
 	GitHubService.use((github) => github.listRepoLabels(repository))
+)
+const listOpenPullRequestPageAtom = githubRuntime.fn<ListPullRequestPageInput>()((input) =>
+	GitHubService.use((github) => github.listOpenPullRequestPage(input))
 )
 const getPullRequestDetailsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.getPullRequestDetails(input.repository, input.number))
@@ -503,8 +523,10 @@ export const App = () => {
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [terminalFocused, setTerminalFocused] = useState(true)
+	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
+	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
 	const loadPullRequestDetails = useAtomSet(getPullRequestDetailsAtom, { mode: "promise" })
 	const addPullRequestLabel = useAtomSet(addPullRequestLabelAtom, { mode: "promise" })
 	const removePullRequestLabel = useAtomSet(removePullRequestLabelAtom, { mode: "promise" })
@@ -590,17 +612,23 @@ export const App = () => {
 	const visibleGroups = useAtomValue(visibleGroupsAtom)
 	const visiblePullRequests = useAtomValue(visiblePullRequestsAtom)
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
+	const selectedRepository = viewRepository(activeView)
+	const activeViews = activePullRequestViews(activeView)
+	const currentQueueCacheKey = viewCacheKey(activeView)
+	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
+	const hasMorePullRequests = Boolean(pullRequestLoad?.hasNextPage && loadedPullRequestCount < config.prFetchLimit)
+	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
 	const pullRequestListRows = useMemo(() => buildPullRequestListRows({
 		groups: visibleGroups,
 		status: pullRequestStatus,
 		error: pullRequestError,
 		filterText: visibleFilterText,
 		showFilterBar: filterMode || filterQuery.length > 0,
-	}), [visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, filterMode, filterQuery])
+		loadedCount: loadedPullRequestCount,
+		hasMore: hasMorePullRequests,
+		isLoadingMore: isLoadingMorePullRequests,
+	}), [visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, filterMode, filterQuery, loadedPullRequestCount, hasMorePullRequests, isLoadingMorePullRequests])
 	const selectedPullRequestRowIndex = pullRequestListRowIndex(pullRequestListRows, selectedPullRequest?.url ?? null)
-	const selectedRepository = viewRepository(activeView)
-	const activeViews = activePullRequestViews(activeView)
-	const currentQueueCacheKey = viewCacheKey(activeView)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
@@ -648,6 +676,7 @@ export const App = () => {
 	const refreshPullRequests = (message?: string) => {
 		refreshGenerationRef.current += 1
 		detailHydrationRef.current = null
+		setLoadingMoreKey(null)
 		setPullRequestOverrides({})
 		if (message) {
 			setNotice(null)
@@ -665,6 +694,7 @@ export const App = () => {
 		setSelectedIndex(registry.get(queueSelectionAtom)[viewCacheKey(view)] ?? 0)
 		setRecentlyCompletedPullRequests({})
 		detailHydrationRef.current = null
+		setLoadingMoreKey(null)
 		setDetailFullView(false)
 		setDiffFullView(false)
 		setDiffCommentMode(false)
@@ -675,6 +705,41 @@ export const App = () => {
 	}
 	const switchQueueMode = (delta: 1 | -1) => {
 		switchViewTo(nextView(activeView, activeViews, delta))
+	}
+	const loadMorePullRequests = () => {
+		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
+		const remaining = config.prFetchLimit - pullRequestLoad.data.length
+		if (remaining <= 0) return false
+		const cacheKey = currentQueueCacheKey
+		const generation = refreshGenerationRef.current
+		setLoadingMoreKey(cacheKey)
+		void loadPullRequestPage({
+			mode: viewMode(activeView),
+			repository: selectedRepository,
+			cursor: pullRequestLoad.endCursor,
+			pageSize: Math.min(pullRequestPageSize, remaining),
+		}).then((page) => {
+			if (generation !== refreshGenerationRef.current) return
+			setQueueLoadCache((current) => {
+				const load = current[cacheKey]
+				if (!load) return current
+				const data = appendPullRequestPage(load.data, page.items)
+				return {
+					...current,
+					[cacheKey]: {
+						...load,
+						data,
+						endCursor: page.endCursor,
+						hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+					},
+				}
+			})
+		}).catch((error) => {
+			flashNotice(errorMessage(error))
+		}).finally(() => {
+			setLoadingMoreKey((current) => current === cacheKey ? null : current)
+		})
+		return true
 	}
 	maybeRefreshPullRequestsRef.current = (minimumAgeMs) => {
 		if (!terminalFocusedRef.current || pullRequestStatusRef.current === "loading") return
@@ -757,6 +822,12 @@ export const App = () => {
 	useEffect(() => {
 		setQueueSelection((current) => current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex })
 	}, [currentQueueCacheKey, selectedIndex])
+
+	useEffect(() => {
+		if (filterMode || filterQuery.length > 0 || visiblePullRequests.length === 0) return
+		const thresholdIndex = Math.max(0, visiblePullRequests.length - LOAD_MORE_SELECTION_THRESHOLD)
+		if (selectedIndex >= thresholdIndex) loadMorePullRequests()
+	}, [selectedIndex, visiblePullRequests.length, filterMode, filterQuery, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
 
 	useEffect(() => {
 		const scroll = prListScrollRef.current
@@ -876,7 +947,12 @@ export const App = () => {
 		visibleCount: visiblePullRequests.length,
 		filterText: visibleFilterText,
 	})
-	const detailJunctions = getDetailJunctionRows(selectedPullRequest, rightPaneWidth, true)
+	const isSelectedPullRequestDetailLoading = selectedPullRequest !== null && !selectedPullRequest.detailLoaded
+	const detailLoadingContent: DetailPlaceholderContent = selectedPullRequest ? {
+		title: `${loadingIndicator} Loading pull request details`,
+		hint: `${selectedPullRequest.repository} #${selectedPullRequest.number}`,
+	} : detailPlaceholderContent
+	const detailJunctions = isSelectedPullRequestDetailLoading ? [] : getDetailJunctionRows(selectedPullRequest, rightPaneWidth, true)
 
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
@@ -1509,6 +1585,9 @@ export const App = () => {
 		selectedRepository,
 		activeViews,
 		activeView,
+		loadedPullRequestCount,
+		hasMorePullRequests,
+		isLoadingMorePullRequests,
 		selectedPullRequest,
 		detailFullView,
 		diffFullView,
@@ -1533,6 +1612,7 @@ export const App = () => {
 			},
 			openThemeModal,
 			openRepositoryPicker,
+			loadMorePullRequests,
 			switchViewTo,
 			openDetails: () => {
 				setDetailFullView(true)
@@ -2222,6 +2302,10 @@ export const App = () => {
 			return
 		}
 		if (key.name === "down" || key.name === "j") {
+			if (visiblePullRequests.length > 0 && selectedIndex >= visiblePullRequests.length - 1 && hasMorePullRequests) {
+				loadMorePullRequests()
+				return
+			}
 			setSelectedIndex((current) => {
 				if (visiblePullRequests.length === 0) return 0
 				return current >= visiblePullRequests.length - 1 ? 0 : current + 1
@@ -2294,6 +2378,9 @@ export const App = () => {
 		filterText: visibleFilterText,
 		showFilterBar: filterMode || filterQuery.length > 0,
 		isFilterEditing: filterMode,
+		loadedCount: loadedPullRequestCount,
+		hasMore: hasMorePullRequests,
+		isLoadingMore: isLoadingMorePullRequests,
 		onSelectPullRequest: selectPullRequestByUrl,
 	} as const
 
@@ -2377,6 +2464,11 @@ export const App = () => {
 					onSelectCommentLine={selectDiffCommentLine}
 					themeId={themeId}
 				/>
+			) : detailFullView && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
+				<box flexGrow={1} flexDirection="column">
+					<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} showChecks={isWideLayout} />
+					<LoadingPane content={detailLoadingContent} width={contentWidth} height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))} />
+				</box>
 			) : isWideLayout && detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
 					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: wideFullscreenDetailScrollable }}>
@@ -2404,7 +2496,12 @@ export const App = () => {
 					</box>
 					<SeparatorColumn height={wideBodyHeight} junctionRows={detailJunctions} />
 					<box width={rightPaneWidth} height={wideBodyHeight} flexDirection="column">
-						{selectedPullRequest ? (
+						{isSelectedPullRequestDetailLoading && selectedPullRequest ? (
+							<>
+								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
+								<LoadingPane content={detailLoadingContent} width={rightPaneWidth} height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))} />
+							</>
+						) : selectedPullRequest ? (
 							<>
 								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
 								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>

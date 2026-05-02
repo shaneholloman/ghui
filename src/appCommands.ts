@@ -11,6 +11,7 @@ interface AppCommandActions {
 	readonly clearFilter: () => void
 	readonly openThemeModal: () => void
 	readonly openRepositoryPicker: () => void
+	readonly loadMorePullRequests: () => void
 	readonly switchViewTo: (view: PullRequestView) => void
 	readonly openDetails: () => void
 	readonly closeDetails: () => void
@@ -38,6 +39,9 @@ interface BuildAppCommandsInput {
 	readonly selectedRepository: string | null
 	readonly activeViews: readonly PullRequestView[]
 	readonly activeView: PullRequestView
+	readonly loadedPullRequestCount: number
+	readonly hasMorePullRequests: boolean
+	readonly isLoadingMorePullRequests: boolean
 	readonly selectedPullRequest: PullRequestItem | null
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
@@ -58,6 +62,9 @@ export const buildAppCommands = ({
 	selectedRepository,
 	activeViews,
 	activeView,
+	loadedPullRequestCount,
+	hasMorePullRequests,
+	isLoadingMorePullRequests,
 	selectedPullRequest,
 	detailFullView,
 	diffFullView,
@@ -77,6 +84,9 @@ export const buildAppCommands = ({
 		? diffReady ? null : "Load the diff before running this command."
 		: noPullRequestReason
 	const diffOpenReadyReason = diffFullView ? diffReadyReason : "Open a diff first."
+	const loadMoreDisabledReason = isLoadingMorePullRequests
+		? "Already loading more pull requests."
+		: hasMorePullRequests ? null : "No more pull requests loaded by this view."
 
 	return [
 		defineCommand({
@@ -141,6 +151,15 @@ export const buildAppCommands = ({
 			disabledReason: viewEquals(view, activeView) ? "Already showing this view." : null,
 			run: () => actions.switchViewTo(view),
 		})),
+		defineCommand({
+			id: "pull.load-more",
+			title: "Load more pull requests",
+			scope: "Navigation",
+			subtitle: `${loadedPullRequestCount} loaded`,
+			disabledReason: loadMoreDisabledReason,
+			keywords: ["next page", "pagination", "more"],
+			run: actions.loadMorePullRequests,
+		}),
 		defineCommand({
 			id: "detail.open",
 			title: "Open pull request details",

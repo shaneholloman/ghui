@@ -13,6 +13,7 @@ export type PullRequestListRow =
 	| { readonly _tag: "message"; readonly text: string; readonly color: string }
 	| { readonly _tag: "group"; readonly repository: string; readonly pullRequests: readonly PullRequestItem[] }
 	| { readonly _tag: "pull-request"; readonly pullRequest: PullRequestItem; readonly groupPullRequests: readonly PullRequestItem[] }
+	| { readonly _tag: "load-more"; readonly text: string }
 
 const GROUP_ICON = "◆"
 
@@ -65,12 +66,18 @@ export const buildPullRequestListRows = ({
 	error,
 	filterText,
 	showFilterBar,
+	loadedCount,
+	hasMore,
+	isLoadingMore,
 }: {
 	readonly groups: PullRequestGroups
 	readonly status: LoadStatus
 	readonly error: string | null
 	readonly filterText: string
 	readonly showFilterBar: boolean
+	readonly loadedCount: number
+	readonly hasMore: boolean
+	readonly isLoadingMore: boolean
 }): readonly PullRequestListRow[] => {
 	const itemCount = groups.reduce((count, [, pullRequests]) => count + pullRequests.length, 0)
 	const rows: PullRequestListRow[] = [{ _tag: "title" }]
@@ -81,6 +88,9 @@ export const buildPullRequestListRows = ({
 	for (const [repository, pullRequests] of groups) {
 		rows.push({ _tag: "group", repository, pullRequests })
 		for (const pullRequest of pullRequests) rows.push({ _tag: "pull-request", pullRequest, groupPullRequests: pullRequests })
+	}
+	if (status === "ready" && itemCount > 0 && (hasMore || isLoadingMore)) {
+		rows.push({ _tag: "load-more", text: isLoadingMore ? `- Loading more pull requests... (${loadedCount} loaded)` : `- ${loadedCount} loaded, more available` })
 	}
 	return rows
 }
@@ -146,6 +156,9 @@ export const PullRequestList = ({
 	filterText,
 	showFilterBar,
 	isFilterEditing,
+	loadedCount,
+	hasMore,
+	isLoadingMore,
 	onSelectPullRequest,
 }: {
 	groups: PullRequestGroups
@@ -156,9 +169,12 @@ export const PullRequestList = ({
 	filterText: string
 	showFilterBar: boolean
 	isFilterEditing: boolean
+	loadedCount: number
+	hasMore: boolean
+	isLoadingMore: boolean
 	onSelectPullRequest: (url: string) => void
 }) => {
-	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar })
+	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore })
 
 	return (
 		<box width={contentWidth} flexDirection="column">
@@ -174,6 +190,7 @@ export const PullRequestList = ({
 					)
 				}
 				if (row._tag === "message") return <PlainLine key={`message-${index}`} text={row.text} fg={row.color} />
+				if (row._tag === "load-more") return <PlainLine key="load-more" text={row.text} fg={colors.muted} />
 				if (row._tag === "group") return <GroupTitle key={`group-${row.repository}`} label={row.repository} color={repoColor(row.repository)} filterText={filterText} />
 
 				const numWidth = groupNumberWidth(row.groupPullRequests)
