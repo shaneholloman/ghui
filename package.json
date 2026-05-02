@@ -1,6 +1,6 @@
 {
 	"name": "@kitlangton/ghui",
-	"version": "0.1.21",
+	"version": "0.1.22",
 	"description": "Terminal UI for GitHub pull requests",
 	"type": "module",
 	"license": "MIT",
@@ -48,6 +48,7 @@
 		"format:check": "oxfmt --check src/ test/"
 	},
 	"workspaces": [
+		".",
 		"packages/*"
 	],
 	"dependencies": {

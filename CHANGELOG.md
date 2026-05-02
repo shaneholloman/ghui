@@ -1,5 +1,13 @@
 # @kitlangton/ghui
 
+## 0.1.22
+
+### Patch Changes
+
+- 94f40b7: Polish diff navigation, command search, and pull request detail layout with vim-style viewport commands, counted list movement, syntax-highlighted code blocks, and fixed fullscreen headers.
+- 94f40b7: Make diff line comments cursor-driven with enter-to-open, range selection, thread jumps, and vim-style counted movement.
+- 94f40b7: Show an animated spinner in the pull request list footer while loading the next page.
+
 ## 0.1.21
 
 ### Patch Changes
