@@ -3,6 +3,8 @@
 import { addDefaultParsers, createCliRenderer, createTerminalPalette } from "@opentui/core"
 import { RegistryProvider } from "@effect/atom-react"
 import { createRoot } from "@opentui/react"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { KeymapProvider } from "@opentui/keymap/react"
 
 process.env.OTUI_USE_ALTERNATE_SCREEN = "true"
 
@@ -43,8 +45,12 @@ const renderer = await createCliRenderer({
 
 process.stdout.write(FOCUS_REPORTING_ENABLE)
 
+const keymap = createDefaultOpenTuiKeymap(renderer)
+
 createRoot(renderer).render(
 	<RegistryProvider>
-		<App />
+		<KeymapProvider keymap={keymap}>
+			<App />
+		</KeymapProvider>
 	</RegistryProvider>,
 )
