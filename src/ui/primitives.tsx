@@ -29,19 +29,37 @@ export const PlainLine = ({ text, fg = colors.text, bold = false }: { text: stri
 	</box>
 )
 
-export const TextLine = ({ children, fg = colors.text, bg, width }: { children: React.ReactNode; fg?: string; bg?: string | undefined; width?: number }) => (
-	<box height={1} {...(width === undefined ? {} : { width })}>
-		{bg ? (
-			<text wrapMode="none" truncate fg={fg} bg={bg}>
-				{children}
-			</text>
-		) : (
-			<text wrapMode="none" truncate fg={fg}>
-				{children}
-			</text>
-		)}
-	</box>
-)
+type TextLineProps = {
+	children: React.ReactNode
+	fg?: string
+	bg?: string | undefined
+	width?: number
+	onMouseDown?: (event: MouseEvent) => void
+	onMouseOver?: (event: MouseEvent) => void
+	onMouseOut?: (event: MouseEvent) => void
+}
+
+export const TextLine = ({ children, fg = colors.text, bg, width, onMouseDown, onMouseOver, onMouseOut }: TextLineProps) => {
+	const mouseProps = {
+		...(onMouseDown ? { onMouseDown } : {}),
+		...(onMouseOver ? { onMouseOver } : {}),
+		...(onMouseOut ? { onMouseOut } : {}),
+	}
+
+	return (
+		<box height={1} {...(width === undefined ? {} : { width })} {...mouseProps}>
+			{bg ? (
+				<text wrapMode="none" truncate fg={fg} bg={bg}>
+					{children}
+				</text>
+			) : (
+				<text wrapMode="none" truncate fg={fg}>
+					{children}
+				</text>
+			)}
+		</box>
+	)
+}
 
 export const MatchedCell = ({
 	text,

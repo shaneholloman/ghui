@@ -94,16 +94,16 @@ import {
 	DetailHeader,
 	DetailPlaceholder,
 	DetailsPane,
+	getDetailsPaneHeight,
 	getDetailHeaderHeight,
 	getDetailJunctionRows,
 	getScrollableDetailBodyHeight,
-	LoadingPane,
 	type DetailConversationStatus,
 	type DetailPlaceholderContent,
 } from "./ui/DetailsPane.js"
 import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
-import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
+import { Divider, Filler, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
 import {
 	ChangedFilesModal,
@@ -147,7 +147,7 @@ import { groupBy, pullRequestMetadataText } from "./ui/pullRequests.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
-import { SPINNER_FRAMES } from "./ui/spinner.js"
+import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
 
 const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
 	if (value === undefined) return fallback
@@ -1282,7 +1282,7 @@ export const App = () => {
 		if (!hasActiveLoadingIndicator) return
 		const interval = globalThis.setInterval(() => {
 			setLoadingFrame((current) => current + 1)
-		}, 120)
+		}, SPINNER_INTERVAL_MS)
 		return () => globalThis.clearInterval(interval)
 	}, [hasActiveLoadingIndicator])
 
@@ -1342,12 +1342,6 @@ export const App = () => {
 		filterText: visibleFilterText,
 	})
 	const isSelectedPullRequestDetailLoading = selectedPullRequest !== null && !selectedPullRequest.detailLoaded
-	const detailLoadingContent: DetailPlaceholderContent = selectedPullRequest
-		? {
-				title: `${loadingIndicator} Loading pull request details`,
-				hint: `${selectedPullRequest.repository} #${selectedPullRequest.number}`,
-			}
-		: detailPlaceholderContent
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
 	const loadPullRequestComments = (pullRequest: PullRequestItem, force = false) => {
@@ -2634,6 +2628,16 @@ export const App = () => {
 	const wideDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideDetailHeaderHeight)
 	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth, selectedConversationItems, selectedConversationStatus)
 	const wideDetailBodyScrollable = wideDetailBodyHeight > wideDetailBodyViewportHeight
+	const narrowDetailsPaneHeight = getDetailsPaneHeight({
+		pullRequest: selectedPullRequest,
+		contentWidth: fullscreenContentWidth,
+		paneWidth: contentWidth,
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
+	})
+	const narrowPullRequestListHeight = Math.max(1, wideBodyHeight - narrowDetailsPaneHeight - 1)
+	const widePullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > wideBodyHeight
+	const narrowPullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > narrowPullRequestListHeight
 	const detailJunctions = isSelectedPullRequestDetailLoading
 		? []
 		: getDetailJunctionRows({
@@ -2661,6 +2665,16 @@ export const App = () => {
 		loadingIndicator,
 		onSelectPullRequest: selectPullRequestByUrl,
 	} as const
+	const widePullRequestList = (
+		<box paddingLeft={sectionPadding} paddingRight={0}>
+			<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
+		</box>
+	)
+	const narrowPullRequestList = (
+		<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+			<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
+		</box>
+	)
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
 	const labelModalWidth = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
@@ -2748,11 +2762,7 @@ export const App = () => {
 			) : detailFullView && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 				<box flexGrow={1} flexDirection="column">
 					<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} showChecks={isWideLayout} />
-					<LoadingPane
-						content={detailLoadingContent}
-						width={contentWidth}
-						height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))}
-					/>
+					<Filler rows={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))} prefix="detail-loading-full" />
 				</box>
 			) : isWideLayout && detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
@@ -2787,22 +2797,22 @@ export const App = () => {
 			) : isWideLayout ? (
 				<box key="wide-main" flexGrow={1} flexDirection="row">
 					<box width={leftPaneWidth} height={wideBodyHeight} flexDirection="column">
-						<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
-							<box paddingLeft={sectionPadding} paddingRight={0}>
-								<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
+						{widePullRequestListNeedsScroll ? (
+							<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
+								{widePullRequestList}
+							</scrollbox>
+						) : (
+							<box height={wideBodyHeight} flexDirection="column">
+								{widePullRequestList}
 							</box>
-						</scrollbox>
+						)}
 					</box>
 					<SeparatorColumn height={wideBodyHeight} junctionRows={detailJunctions} />
 					<box width={rightPaneWidth} height={wideBodyHeight} flexDirection="column">
 						{isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 							<>
 								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
-								<LoadingPane
-									content={detailLoadingContent}
-									width={rightPaneWidth}
-									height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))}
-								/>
+								<Filler rows={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))} prefix="detail-loading-preview" />
 							</>
 						) : selectedPullRequest ? (
 							<>
@@ -2870,11 +2880,15 @@ export const App = () => {
 					/>
 					<Divider width={contentWidth} />
 					<box flexGrow={1} flexDirection="column">
-						<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
-							<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-								<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
+						{narrowPullRequestListNeedsScroll ? (
+							<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
+								{narrowPullRequestList}
+							</scrollbox>
+						) : (
+							<box flexGrow={1} flexDirection="column">
+								{narrowPullRequestList}
 							</box>
-						</scrollbox>
+						)}
 					</box>
 				</box>
 			)}

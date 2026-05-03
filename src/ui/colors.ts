@@ -117,6 +117,8 @@ export const mixHex = (base: string, overlay: string, amount: number) => {
 	})
 }
 
+export const rowHoverBackground = () => mixHex(colors.modalBackground, colors.selectedBg, 0.38)
+
 const grayscaleRamp = (background: string) => {
 	const bg = hexToRgb(background)
 	const bgLum = luminance(background)

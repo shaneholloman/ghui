@@ -487,7 +487,7 @@ export const DetailHeader = ({
 	const unique = deduplicateChecks(pullRequest.checks)
 	const checkRows = checksRowCount(unique)
 	const statsText = diffStatText(pullRequest)
-	const labelsWidth = !pullRequest.detailLoaded ? "loading details...".length : labels.reduce((total, label, index) => total + label.name.length + 2 + (index > 0 ? 1 : 0), 0)
+	const labelsWidth = pullRequest.detailLoaded ? labels.reduce((total, label, index) => total + label.name.length + 2 + (index > 0 ? 1 : 0), 0) : 0
 	const hasLabelContent = labelsWidth > 0
 	const showStats = contentWidth - labelsWidth - statsText.length >= (hasLabelContent ? 2 : 0)
 	const statsGap = Math.max(hasLabelContent ? 2 : 0, contentWidth - labelsWidth - statsText.length)
@@ -524,19 +524,17 @@ export const DetailHeader = ({
 			</box>
 			<PaddedRow>
 				<TextLine>
-					{!pullRequest.detailLoaded ? (
-						<span fg={colors.muted}>loading details...</span>
-					) : labels.length > 0 ? (
-						labels.map((label, index) => (
-							<Fragment key={label.name}>
-								{index > 0 ? <span fg={colors.muted}> </span> : null}
-								<span bg={labelColor(label)} fg={labelTextColor(labelColor(label))}>
-									{" "}
-									{label.name}{" "}
-								</span>
-							</Fragment>
-						))
-					) : null}
+					{pullRequest.detailLoaded && labels.length > 0
+						? labels.map((label, index) => (
+								<Fragment key={label.name}>
+									{index > 0 ? <span fg={colors.muted}> </span> : null}
+									<span bg={labelColor(label)} fg={labelTextColor(labelColor(label))}>
+										{" "}
+										{label.name}{" "}
+									</span>
+								</Fragment>
+							))
+						: null}
 					{showStats ? (
 						<>
 							{statsGap > 0 ? <span fg={colors.muted}>{" ".repeat(statsGap)}</span> : null}
