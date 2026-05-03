@@ -46,17 +46,34 @@ const inlineCommentSegments = (text: string, fg = colors.text): readonly Comment
 		.filter((part) => part.length > 0)
 		.map((part) => (part.startsWith("`") && part.endsWith("`") ? { text: part.slice(1, -1), fg: colors.inlineCode } : { text: part, fg }))
 
-const wrapCommentText = (body: string, width: number) => {
+interface WrappedLine {
+	readonly text: string
+	readonly quote: boolean
+}
+
+const QUOTE_PREFIX = /^>\s?/
+
+const wrapCommentText = (body: string, width: number): readonly WrappedLine[] => {
 	const safeWidth = Math.max(1, width)
-	const lines = body.trim().length === 0 ? ["(empty comment)"] : body.replace(/\r/g, "").trim().split("\n")
-	return lines.flatMap((line) => {
-		const trimmed = line.trim()
-		if (trimmed.length === 0) return []
-		const wrapped: string[] = []
-		for (let index = 0; index < trimmed.length; index += safeWidth) {
-			wrapped.push(trimmed.slice(index, index + safeWidth))
-		}
-		return wrapped
+	const sourceLines =
+		body.trim().length === 0
+			? [{ text: "(empty comment)", quote: false }]
+			: body
+					.replace(/\r/g, "")
+					.trim()
+					.split("\n")
+					.flatMap((raw) => {
+						const trimmed = raw.trim()
+						if (trimmed.length === 0) return []
+						const isQuote = QUOTE_PREFIX.test(trimmed)
+						return [{ text: isQuote ? trimmed.replace(QUOTE_PREFIX, "") : trimmed, quote: isQuote }]
+					})
+	return sourceLines.flatMap(({ text, quote }) => {
+		const chunks: WrappedLine[] = []
+		const effectiveWidth = quote ? Math.max(1, safeWidth - 2) : safeWidth
+		if (text.length === 0) chunks.push({ text: "", quote })
+		else for (let index = 0; index < text.length; index += effectiveWidth) chunks.push({ text: text.slice(index, index + effectiveWidth), quote })
+		return chunks
 	})
 }
 
@@ -90,7 +107,9 @@ export const commentMetaSegments = ({
 export const commentBodyRows = ({ keyPrefix, body, width }: { readonly keyPrefix: string; readonly body: string; readonly width: number }): readonly CommentDisplayLine[] =>
 	wrapCommentText(body, Math.max(1, width - 2)).map((line, index) => ({
 		key: `${keyPrefix}:body:${index}`,
-		segments: [{ text: "│ ", fg: colors.muted }, ...inlineCommentSegments(line)],
+		segments: line.quote
+			? [{ text: "│ ", fg: colors.muted }, { text: "▎ ", fg: colors.separator }, ...inlineCommentSegments(line.text, colors.muted)]
+			: [{ text: "│ ", fg: colors.muted }, ...inlineCommentSegments(line.text)],
 	}))
 
 export const commentDisplayRows = ({

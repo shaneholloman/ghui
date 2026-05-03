@@ -463,8 +463,22 @@ const repositoryParts = (repository: string) => {
 	return owner && name ? { owner, name } : null
 }
 
+// Pull the numeric REST comment id out of the raw payload, falling back to the
+// URL (e.g. `/pulls/comments/123456789` or `#discussion_r123456789`) when the
+// `id` field itself is missing. The /replies endpoint only accepts the REST
+// integer id — node_id (`PRRC_…`) is a 404.
+const restCommentId = (comment: RawPullRequestComment): string | null => {
+	if (typeof comment.id === "number") return String(comment.id)
+	if (typeof comment.id === "string" && /^\d+$/.test(comment.id)) return comment.id
+	const fromApiUrl = comment.url?.match(/\/comments\/(\d+)/)?.[1]
+	if (fromApiUrl) return fromApiUrl
+	const fromHtmlUrl = comment.html_url?.match(/#(?:discussion_r|issuecomment-)(\d+)/)?.[1]
+	if (fromHtmlUrl) return fromHtmlUrl
+	return null
+}
+
 const rawCommentFields = (comment: RawPullRequestComment, fallbackId: string) => ({
-	id: String(comment.id ?? comment.node_id ?? fallbackId),
+	id: restCommentId(comment) ?? comment.node_id ?? fallbackId,
 	author: comment.user?.login ?? "unknown",
 	body: comment.body ?? "",
 	createdAt: comment.created_at ? new Date(comment.created_at) : null,
