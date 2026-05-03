@@ -34,15 +34,43 @@ const reviewContextGroups = (comment: PullRequestComment, width: number): readon
 	return [[{ text: truncated, fg: colors.inlineCode }]]
 }
 
-// Order comments so review-thread replies sit right after their root, while
-// preserving overall createdAt order between roots and top-level comments.
+// GitHub doesn't thread issue comments, but our quote-reply UX produces a body
+// like `> @author wrote:\n> <quoted>\n\n<reply>`. We use that prefix to find a
+// likely parent so the reply visually nests instead of falling to the bottom.
+const QUOTE_HEADER_RE = /^>\s*@(\S+)\s+wrote:\s*\n((?:>[^\n]*(?:\n|$))+)/
+
+const issueQuoteParent = (comment: PullRequestComment & { readonly _tag: "comment" }, candidates: readonly PullRequestComment[]): string | null => {
+	const match = QUOTE_HEADER_RE.exec(comment.body)
+	if (!match) return null
+	const author = match[1] ?? ""
+	const quoted = (match[2] ?? "")
+		.split("\n")
+		.map((line) => line.replace(/^>\s?/, "").trimEnd())
+		.filter((line) => line.length > 0)
+		.join("\n")
+		.trim()
+	if (quoted.length === 0) return null
+	for (const candidate of candidates) {
+		if (candidate.id === comment.id) continue
+		if (candidate._tag !== "comment") continue
+		if (candidate.author !== author) continue
+		const body = candidate.body.trim()
+		if (body.length === 0) continue
+		if (body === quoted || body.startsWith(quoted) || quoted.startsWith(body)) return candidate.id
+	}
+	return null
+}
+
+// Order comments so replies sit right after their parent: review threads via
+// `inReplyTo`, issue-comment quote replies via the heuristic above. Roots
+// preserve overall createdAt order.
 const orderForThreads = (comments: readonly PullRequestComment[]): readonly { readonly comment: PullRequestComment; readonly indent: 0 | 1 }[] => {
 	const reviewById = new Map<string, PullRequestComment & { readonly _tag: "review-comment" }>()
 	for (const comment of comments) {
 		if (comment._tag === "review-comment") reviewById.set(comment.id, comment)
 	}
 
-	const rootIdFor = (comment: PullRequestComment & { readonly _tag: "review-comment" }): string => {
+	const reviewRootIdFor = (comment: PullRequestComment & { readonly _tag: "review-comment" }): string => {
 		let cursor: (PullRequestComment & { readonly _tag: "review-comment" }) | undefined = comment
 		const seen = new Set<string>()
 		while (cursor && cursor.inReplyTo) {
@@ -55,28 +83,34 @@ const orderForThreads = (comments: readonly PullRequestComment[]): readonly { re
 		return cursor?.id ?? comment.id
 	}
 
-	const repliesByRoot = new Map<string, (PullRequestComment & { readonly _tag: "review-comment" })[]>()
+	const repliesByRoot = new Map<string, PullRequestComment[]>()
 	const roots: PullRequestComment[] = []
 	for (const comment of comments) {
-		if (comment._tag !== "review-comment") {
-			roots.push(comment)
-			continue
-		}
-		const rootId = rootIdFor(comment)
-		if (rootId === comment.id) {
-			roots.push(comment)
+		if (comment._tag === "review-comment") {
+			const rootId = reviewRootIdFor(comment)
+			if (rootId === comment.id) roots.push(comment)
+			else {
+				const list = repliesByRoot.get(rootId) ?? []
+				list.push(comment)
+				repliesByRoot.set(rootId, list)
+			}
 		} else {
-			const list = repliesByRoot.get(rootId) ?? []
-			list.push(comment)
-			repliesByRoot.set(rootId, list)
+			const parentId = issueQuoteParent(comment, comments)
+			if (parentId) {
+				const list = repliesByRoot.get(parentId) ?? []
+				list.push(comment)
+				repliesByRoot.set(parentId, list)
+			} else {
+				roots.push(comment)
+			}
 		}
 	}
 
+	const byTime = (left: PullRequestComment, right: PullRequestComment) => (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0)
 	const ordered: { readonly comment: PullRequestComment; readonly indent: 0 | 1 }[] = []
 	for (const root of roots) {
 		ordered.push({ comment: root, indent: 0 })
-		if (root._tag !== "review-comment") continue
-		const replies = (repliesByRoot.get(root.id) ?? []).slice().sort((left, right) => (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0))
+		const replies = (repliesByRoot.get(root.id) ?? []).slice().sort(byTime)
 		for (const reply of replies) ordered.push({ comment: reply, indent: 1 })
 	}
 	return ordered
