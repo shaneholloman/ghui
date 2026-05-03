@@ -1,5 +1,12 @@
 # @kitlangton/ghui
 
+## 0.3.1
+
+### Patch Changes
+
+- 8b67389: Fix the published CLI package so clean installs do not depend on workspace-only sources or consumer JSX settings.
+- 4b2c0e4: Polish review conversation previews and soften highlighted diff gutters.
+
 ## 0.3.0
 
 ### Minor Changes
