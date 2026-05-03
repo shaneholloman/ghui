@@ -1,5 +1,14 @@
 # @kitlangton/ghui
 
+## 0.3.3
+
+### Patch Changes
+
+- fe5576f: Make pull request review submission discoverable with `shift-r` from list, details, and diff views.
+- Polish the review modal with action-first selection, optional summary editing, paste support, and less noisy footer/header hints.
+- Hide conversation previews until comments are loaded and non-empty.
+- Enforce formatting in CI and document the pre-commit/release checks for agents.
+
 ## 0.3.2
 
 ### Patch Changes

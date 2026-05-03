@@ -83,3 +83,11 @@ You can also copy `.env.example` to `.env` and edit the values locally.
 - `o`: open PR in browser
 - `y`: copy PR metadata
 - `q`: quit
+
+Review submission:
+
+- Press `shift-r` to open the review modal.
+- Use `j` / `k` or `up` / `down` to choose Comment, Approve, or Request changes.
+- Press `enter` to move to the optional summary area.
+- Press `enter` again to submit, or `shift-enter` to insert a newline.
+- Press `esc` from the summary to return to action selection; press `esc` from action selection to cancel.
