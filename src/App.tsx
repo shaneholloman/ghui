@@ -524,26 +524,14 @@ const selectedDiffCommentAccent = (kind: DiffCommentKind) => selectedDiffComment
 
 const mixDiffLineContentColor = (base: string, accent: string, amount: number) => mixHex(base === "transparent" ? colors.background : base, accent, amount)
 
-const diffCommentLineColor = (anchor: DiffCommentAnchor, kind: "selected" | "range" | "thread" | "hover"): DiffLineColorConfig => {
+const diffCommentLineColor = (anchor: DiffCommentAnchor, kind: "selected" | "range" | "thread"): DiffLineColorConfig => {
 	const original = originalDiffLineColor(anchor)
 	const accent = kind === "thread" ? colors.status.pending : selectedDiffCommentAccent(anchor.kind)
 	if (kind === "thread") return { ...original, gutter: mixHex(original.gutter, accent, 0.3) }
-	if (kind === "hover") {
-		return {
-			gutter: mixHex(original.gutter, colors.selectedBg, 0.22),
-			content: mixDiffLineContentColor(original.content, colors.selectedBg, 0.12),
-		}
-	}
 	return {
 		gutter: mixHex(original.gutter, accent, kind === "selected" ? 0.38 : 0.26),
 		content: mixDiffLineContentColor(original.content, accent, kind === "selected" ? 0.2 : 0.1),
 	}
-}
-
-const sameStackedDiffCommentAnchor = (left: StackedDiffCommentAnchor | null, right: StackedDiffCommentAnchor | null) => {
-	if (left === right) return true
-	if (!left || !right) return false
-	return left.fileIndex === right.fileIndex && left.side === right.side && left.renderLine === right.renderLine && left.localRenderLine === right.localRenderLine
 }
 
 const sameDiffCommentTarget = (left: DiffCommentAnchor, right: DiffCommentAnchor) => left.path === right.path && left.side === right.side
@@ -702,7 +690,6 @@ export const App = () => {
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
 	const [detailPreviewScrollTop, setDetailPreviewScrollTop] = useState(0)
-	const [hoveredDiffCommentAnchor, setHoveredDiffCommentAnchor] = useState<StackedDiffCommentAnchor | null>(null)
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
@@ -1216,10 +1203,6 @@ export const App = () => {
 	}, [diffFullView, selectedDiffCommentAnchor?.fileIndex])
 
 	useEffect(() => {
-		setHoveredDiffCommentAnchor(null)
-	}, [selectedDiffKey, effectiveDiffRenderView, diffWrapMode])
-
-	useEffect(() => {
 		const previous = diffCommentLineColorsRef.current
 		if (previous.contextKey === diffLineColorContextKey) {
 			for (const entry of previous.entries) {
@@ -1245,9 +1228,6 @@ export const App = () => {
 		for (const anchor of diffCommentThreadAnchors) {
 			applyLineColor(anchor, diffCommentLineColor(anchor, "thread"))
 		}
-		if (hoveredDiffCommentAnchor) {
-			applyLineColor(hoveredDiffCommentAnchor, diffCommentLineColor(hoveredDiffCommentAnchor, "hover"), true)
-		}
 		if (selectedDiffCommentRangeAnchors.length > 0) {
 			for (const anchor of selectedDiffCommentRangeAnchors) {
 				applyLineColor(anchor, diffCommentLineColor(anchor, "range"), true)
@@ -1269,10 +1249,6 @@ export const App = () => {
 		selectedDiffCommentAnchor?.localRenderLine,
 		selectedDiffCommentAnchor?.side,
 		selectedDiffCommentAnchor?.fileIndex,
-		hoveredDiffCommentAnchor?.renderLine,
-		hoveredDiffCommentAnchor?.localRenderLine,
-		hoveredDiffCommentAnchor?.side,
-		hoveredDiffCommentAnchor?.fileIndex,
 		selectedDiffCommentRangeAnchors,
 		diffLineColorContextKey,
 		effectiveDiffRenderView,
@@ -1624,22 +1600,9 @@ export const App = () => {
 		setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 	}
 
-	const diffCommentAnchorAtLine = (renderLine: number, side: DiffCommentSide | null) => {
-		const lineAnchors = diffCommentAnchors.filter((anchor) => anchor.renderLine === renderLine)
-		return (side ? lineAnchors.find((anchor) => anchor.side === side) : undefined) ?? lineAnchors[0] ?? null
-	}
-
-	const hoverDiffCommentLine = (renderLine: number, side: DiffCommentSide | null) => {
-		const nextAnchor = diffCommentAnchorAtLine(renderLine, side)
-		setHoveredDiffCommentAnchor((current) => (sameStackedDiffCommentAnchor(current, nextAnchor) ? current : nextAnchor))
-	}
-
-	const clearHoveredDiffCommentLine = () => {
-		setHoveredDiffCommentAnchor((current) => (current === null ? current : null))
-	}
-
 	const selectDiffCommentLine = (renderLine: number, side: DiffCommentSide | null) => {
-		const nextAnchor = diffCommentAnchorAtLine(renderLine, side)
+		const lineAnchors = diffCommentAnchors.filter((anchor) => anchor.renderLine === renderLine)
+		const nextAnchor = (side ? lineAnchors.find((anchor) => anchor.side === side) : undefined) ?? lineAnchors[0]
 		if (!nextAnchor) return
 		suppressNextDiffCommentScrollRef.current = true
 		setDiffPreferredSide(side ?? nextAnchor.side)
@@ -2794,8 +2757,6 @@ export const App = () => {
 					selectedCommentLabel={selectedDiffCommentLabel}
 					selectedCommentThread={selectedDiffCommentThread}
 					onSelectCommentLine={selectDiffCommentLine}
-					onHoverCommentLine={hoverDiffCommentLine}
-					onClearHoverCommentLine={clearHoveredDiffCommentLine}
 					themeId={themeId}
 				/>
 			) : detailFullView && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
