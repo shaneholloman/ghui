@@ -54,6 +54,8 @@ interface BuildAppCommandsInput {
 	readonly selectedPullRequest: PullRequestItem | null
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
+	readonly commentsViewActive: boolean
+	readonly hasSelectedComment: boolean
 	readonly diffReady: boolean
 	readonly effectiveDiffRenderView: DiffView
 	readonly diffWrapMode: DiffWrapMode
@@ -80,6 +82,8 @@ export const buildAppCommands = ({
 	selectedPullRequest,
 	detailFullView,
 	diffFullView,
+	commentsViewActive,
+	hasSelectedComment,
 	diffReady,
 	effectiveDiffRenderView,
 	diffWrapMode,
@@ -100,6 +104,7 @@ export const buildAppCommands = ({
 	const selectedDiffLineReason = diffFullView && diffReady ? (selectedDiffCommentAnchorLabel ? null : "No diff line selected.") : diffOpenReadyReason
 	const diffThreadReason = diffFullView && diffReady ? (hasDiffCommentThreads ? null : "No diff comments loaded.") : diffOpenReadyReason
 	const changedFilesReason = diffFullView && diffReady ? (readyDiffFileCount > 0 ? null : "No changed files loaded.") : diffOpenReadyReason
+	const selectedCommentReason = selectedPullRequest ? (commentsViewActive ? (hasSelectedComment ? null : "No comment selected.") : "Open comments first.") : noPullRequestReason
 	const loadMoreDisabledReason = isLoadingMorePullRequests ? "Already loading more pull requests." : hasMorePullRequests ? null : "No more pull requests loaded by this view."
 
 	const forSelected = (command: Omit<AppCommand, "subtitle" | "disabledReason"> & { readonly requireOpen?: boolean }): AppCommand => {
@@ -225,11 +230,13 @@ export const buildAppCommands = ({
 			keywords: ["add", "post", "issue comment"],
 			run: actions.openNewIssueCommentModal,
 		}),
-		forSelected({
+		defineCommand({
 			id: "comments.reply",
 			title: "Reply to comment",
 			scope: "Comments",
+			subtitle: selectedPullRequestLabel,
 			shortcut: "shift-r",
+			disabledReason: selectedCommentReason,
 			keywords: ["respond", "thread"],
 			run: actions.openReplyToSelectedComment,
 		}),

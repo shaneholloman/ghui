@@ -525,6 +525,8 @@ const groupDiffCommentThreads = (pullRequest: PullRequestItem, comments: readonl
 
 const isLocalDiffComment = (comment: PullRequestReviewComment) => comment.id.startsWith("local:")
 
+const reviewCommentAsPullRequestComment = (comment: PullRequestReviewComment): PullRequestComment => ({ _tag: "review-comment", ...comment })
+
 // Walk the inReplyTo chain to find the thread root id. The /replies endpoint
 // rejects ids that aren't roots with "parent comment not found".
 const findReviewThreadRootId = (comments: readonly PullRequestComment[], commentId: string): string => {
@@ -1326,6 +1328,7 @@ export const App = () => {
 		pullRequestResult.waiting ||
 		isHydratingPullRequestDetails ||
 		isLoadingMorePullRequests ||
+		selectedCommentsStatus === "loading" ||
 		labelModal.loading ||
 		closeModal.running ||
 		pullRequestStateModal.running ||
@@ -1502,11 +1505,11 @@ export const App = () => {
 
 	const openCommentsView = () => {
 		if (!selectedPullRequest) return
+		loadPullRequestComments(selectedPullRequest, true)
 		setCommentsViewActive(true)
 		setDetailFullView(false)
 		setDiffFullView(false)
 		setCommentsViewSelection(0)
-		loadPullRequestReviewComments(selectedPullRequest, true)
 	}
 
 	const closeCommentsView = () => {
@@ -1549,7 +1552,7 @@ export const App = () => {
 
 	const refreshSelectedComments = () => {
 		if (!selectedPullRequest) return
-		loadPullRequestReviewComments(selectedPullRequest, true)
+		loadPullRequestComments(selectedPullRequest, true)
 	}
 
 	const setDiffRenderableRef = (index: number, diff: DiffRenderable | null) => {
@@ -1812,6 +1815,7 @@ export const App = () => {
 
 		const targetRange = selectedDiffCommentRange
 		const target = targetRange?.end ?? selectedDiffCommentAnchor
+		const key = pullRequestDiffKey(selectedPullRequest)
 		const threadKey = selectedDiffKey ? diffCommentThreadMapKey(selectedDiffKey, target) : null
 		const optimisticComment = {
 			id: `local:${Date.now()}`,
@@ -1842,6 +1846,10 @@ export const App = () => {
 				[threadKey]: [...(current[threadKey] ?? []), optimisticComment],
 			}))
 		}
+		setPullRequestComments((current) => ({
+			...current,
+			[key]: [...(current[key] ?? []), reviewCommentAsPullRequestComment(optimisticComment)],
+		}))
 		closeActiveModal()
 		setDiffCommentRangeStartIndex(null)
 		flashNotice(`Commenting on ${target.path}:${target.line}`)
@@ -1853,6 +1861,10 @@ export const App = () => {
 						[threadKey]: (current[threadKey] ?? []).map((existing) => (existing.id === optimisticComment.id ? comment : existing)),
 					}))
 				}
+				setPullRequestComments((current) => ({
+					...current,
+					[key]: (current[key] ?? []).map((existing) => (existing.id === optimisticComment.id ? reviewCommentAsPullRequestComment(comment) : existing)),
+				}))
 				flashNotice(`Commented on ${target.path}:${target.line}`)
 			})
 			.catch((error) => {
@@ -1865,6 +1877,10 @@ export const App = () => {
 						return next
 					})
 				}
+				setPullRequestComments((current) => ({
+					...current,
+					[key]: (current[key] ?? []).filter((comment) => comment.id !== optimisticComment.id),
+				}))
 				flashNotice(errorMessage(error))
 			})
 	}
@@ -1902,18 +1918,24 @@ export const App = () => {
 		readonly postingMessage: string
 		readonly successMessage: string
 		readonly request: () => Promise<PullRequestComment>
+		readonly onOptimistic?: (comment: PullRequestComment) => void
+		readonly onCreated?: (optimistic: PullRequestComment, created: PullRequestComment) => void
+		readonly onRevert?: (comment: PullRequestComment) => void
 	}) => {
-		const { key, optimistic, postingMessage, successMessage, request } = input
+		const { key, optimistic, postingMessage, successMessage, request, onOptimistic, onCreated, onRevert } = input
 		setPullRequestComments((current) => ({ ...current, [key]: [...(current[key] ?? []), optimistic] }))
+		onOptimistic?.(optimistic)
 		closeActiveModal()
 		flashNotice(postingMessage)
 		void request()
 			.then((created) => {
 				setPullRequestComments((current) => ({ ...current, [key]: (current[key] ?? []).map((entry) => (entry.id === optimistic.id ? created : entry)) }))
+				onCreated?.(optimistic, created)
 				flashNotice(successMessage)
 			})
 			.catch((error) => {
 				setPullRequestComments((current) => ({ ...current, [key]: (current[key] ?? []).filter((entry) => entry.id !== optimistic.id) }))
+				onRevert?.(optimistic)
 				flashNotice(errorMessage(error))
 			})
 	}
@@ -1949,8 +1971,10 @@ export const App = () => {
 		const target = commentModal.target
 		const parent = selectedComments.find((entry) => entry._tag === "review-comment" && entry.id === target.inReplyTo)
 		const reviewParent = parent?._tag === "review-comment" ? parent : null
+		const key = pullRequestDiffKey(selectedPullRequest)
+		const threadKey = reviewParent ? diffCommentThreadMapKey(key, reviewParent) : null
 		submitOptimisticComment({
-			key: pullRequestDiffKey(selectedPullRequest),
+			key,
 			optimistic: {
 				_tag: "review-comment",
 				id: `local:reply:${Date.now()}`,
@@ -1966,6 +1990,27 @@ export const App = () => {
 			postingMessage: `Replying on ${target.anchorLabel}`,
 			successMessage: `Replied on ${target.anchorLabel}`,
 			request: () => replyToReviewComment({ repository, number, inReplyTo: target.inReplyTo, body }),
+			onOptimistic: (comment) => {
+				if (!threadKey || comment._tag !== "review-comment") return
+				setDiffCommentThreads((current) => ({ ...current, [threadKey]: [...(current[threadKey] ?? []), comment] }))
+			},
+			onCreated: (optimistic, created) => {
+				if (!threadKey || created._tag !== "review-comment") return
+				setDiffCommentThreads((current) => ({
+					...current,
+					[threadKey]: (current[threadKey] ?? []).map((comment) => (comment.id === optimistic.id ? created : comment)),
+				}))
+			},
+			onRevert: (comment) => {
+				if (!threadKey) return
+				setDiffCommentThreads((current) => {
+					const next = { ...current }
+					const comments = (next[threadKey] ?? []).filter((entry) => entry.id !== comment.id)
+					if (comments.length > 0) next[threadKey] = comments
+					else delete next[threadKey]
+					return next
+				})
+			},
 		})
 	}
 
@@ -2482,6 +2527,8 @@ export const App = () => {
 		selectedPullRequest,
 		detailFullView,
 		diffFullView,
+		commentsViewActive,
+		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
 		diffReady: selectedDiffState?._tag === "Ready",
 		effectiveDiffRenderView,
 		diffWrapMode,
@@ -3305,7 +3352,11 @@ export const App = () => {
 				</box>
 			)}
 
-			{isWideLayout && !detailFullView && !diffFullView ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" /> : <Divider width={contentWidth} />}
+			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive ? (
+				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" />
+			) : (
+				<Divider width={contentWidth} />
+			)}
 			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
 				{footerNotice ? (
 					<PlainLine text={footerNotice} fg={colors.count} />

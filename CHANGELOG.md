@@ -1,5 +1,11 @@
 # @kitlangton/ghui
 
+## 0.4.7
+
+### Patch Changes
+
+- Fix comments view refreshes and keep review comment replies synchronized across the comments pane and diff threads.
+
 ## 0.4.6
 
 ### Patch Changes

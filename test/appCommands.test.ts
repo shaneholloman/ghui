@@ -42,6 +42,8 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 		selectedPullRequest,
 		detailFullView: false,
 		diffFullView: true,
+		commentsViewActive: false,
+		hasSelectedComment: false,
 		diffReady: true,
 		effectiveDiffRenderView: "split",
 		diffWrapMode: "none",
@@ -65,6 +67,10 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 			closeDetails: noop,
 			openDiffView: noop,
 			closeDiffView: noop,
+			openCommentsView: noop,
+			closeCommentsView: noop,
+			openNewIssueCommentModal: noop,
+			openReplyToSelectedComment: noop,
 			reloadDiff: noop,
 			toggleDiffRenderView: noop,
 			toggleDiffWrapMode: noop,
@@ -126,5 +132,17 @@ describe("review UX commands", () => {
 				selectedPullRequest: { ...selectedPullRequest, state: "closed" },
 			}).disabledReason,
 		).toBe("Pull request is not open.")
+	})
+
+	test("reply command requires the comments view", () => {
+		expect(commandById("comments.reply", { hasSelectedComment: true }).disabledReason).toBe("Open comments first.")
+	})
+
+	test("reply command requires a selected comment", () => {
+		expect(commandById("comments.reply", { commentsViewActive: true, hasSelectedComment: false }).disabledReason).toBe("No comment selected.")
+	})
+
+	test("reply command is available for a selected comment", () => {
+		expect(commandById("comments.reply", { commentsViewActive: true, hasSelectedComment: true }).disabledReason).toBeFalsy()
 	})
 })

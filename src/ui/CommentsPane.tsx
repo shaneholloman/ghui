@@ -207,7 +207,12 @@ export const CommentsPane = ({
 
 	const bodyHeight = Math.max(1, height - 4) // header + 2 dividers + footer
 
+	const showLoading = status !== "ready"
+	const blockRows = blocks.reduce((total, block) => total + block.height, 0)
+	const commentsNeedScroll = !showLoading && blockRows > bodyHeight
+
 	useEffect(() => {
+		if (!commentsNeedScroll) return
 		const scrollbox = scrollboxRef.current
 		if (!scrollbox) return
 		const blockTop = offsets[safeIndex] ?? 0
@@ -216,21 +221,40 @@ export const CommentsPane = ({
 		const viewportBottom = viewportTop + bodyHeight
 		if (blockTop < viewportTop) scrollbox.scrollTo({ x: 0, y: blockTop })
 		else if (blockBottom > viewportBottom) scrollbox.scrollTo({ x: 0, y: Math.max(0, blockBottom - bodyHeight) })
-	}, [safeIndex, blocks, offsets, bodyHeight])
+	}, [safeIndex, blocks, offsets, bodyHeight, commentsNeedScroll])
 
-	const showLoading = status === "loading" && comments.length === 0
-	const onRealComment = !placeholderSelected && realBlocks.length > 0
-	const replyTarget = onRealComment ? realBlocks[safeIndex]?.comment : null
-	const enterLabel = replyTarget?._tag === "review-comment" ? "reply" : "new"
+	const onRealComment = !showLoading && !placeholderSelected && realBlocks.length > 0
+	const enterLabel = onRealComment ? "reply" : "new"
 
 	const footerItems: readonly HintItem[] = [
-		{ key: "↑↓", label: "move", disabled: blocks.length <= 1 },
+		{ key: "↑↓", label: "move", disabled: showLoading || blocks.length <= 1 },
 		{ key: "enter", label: enterLabel },
 		{ key: "a", label: "new" },
 		{ key: "o", label: "open", disabled: !onRealComment },
 		{ key: "r", label: "refresh" },
 		{ key: "esc", label: "close" },
 	]
+	const renderedBlocks = blocks.map((block, index) => {
+		const isSelected = index === safeIndex
+		if (block.isPlaceholder) {
+			return (
+				<TextLine key={block.key}>
+					<span fg={isSelected ? colors.accent : colors.muted} attributes={isSelected ? TextAttributes.BOLD : 0}>
+						+ Add new comment
+					</span>
+				</TextLine>
+			)
+		}
+		return (
+			<box key={block.key} flexDirection="column">
+				<CommentSegmentsLine segments={withReplyIndent(block.meta.segments, block.indent)} selected={isSelected} />
+				{block.body.map((line) => (
+					<CommentSegmentsLine key={line.key} segments={withReplyIndent(line.segments, block.indent)} />
+				))}
+				<PlainLine text="" fg={colors.muted} />
+			</box>
+		)
+	})
 
 	return (
 		<box flexDirection="column" height={height} backgroundColor={colors.background}>
@@ -251,29 +275,14 @@ export const CommentsPane = ({
 						<PlainLine text={centerCell(`${loadingIndicator} Loading comments`, contentWidth)} fg={colors.muted} />
 						<Filler rows={Math.max(0, Math.ceil((bodyHeight - 1) / 2))} prefix="loading-bottom" />
 					</>
+				) : !commentsNeedScroll ? (
+					<box flexGrow={1} flexDirection="column">
+						{renderedBlocks}
+						<Filler rows={Math.max(0, bodyHeight - blockRows)} prefix="comments-pad" />
+					</box>
 				) : (
-					<scrollbox ref={scrollboxRef} focusable={false} flexGrow={1}>
-						{blocks.map((block, index) => {
-							const isSelected = index === safeIndex
-							if (block.isPlaceholder) {
-								return (
-									<TextLine key={block.key}>
-										<span fg={isSelected ? colors.accent : colors.muted} attributes={isSelected ? TextAttributes.BOLD : 0}>
-											+ Add new comment
-										</span>
-									</TextLine>
-								)
-							}
-							return (
-								<box key={block.key} flexDirection="column">
-									<CommentSegmentsLine segments={withReplyIndent(block.meta.segments, block.indent)} selected={isSelected} />
-									{block.body.map((line) => (
-										<CommentSegmentsLine key={line.key} segments={withReplyIndent(line.segments, block.indent)} />
-									))}
-									<PlainLine text="" fg={colors.muted} />
-								</box>
-							)
-						})}
+					<scrollbox ref={scrollboxRef} focusable={false} flexGrow={1} verticalScrollbarOptions={{ visible: true }}>
+						{renderedBlocks}
 					</scrollbox>
 				)}
 			</box>

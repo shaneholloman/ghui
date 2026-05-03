@@ -168,6 +168,24 @@ export const MockGitHubService = {
 				inReplyTo: `mock-review:${repository}:${number}:1`,
 			},
 		]
+		const reviewComments = (repository: string, number: number): readonly PullRequestReviewComment[] =>
+			comments(repository, number).flatMap((comment) =>
+				comment._tag === "review-comment"
+					? [
+							{
+								id: comment.id,
+								path: comment.path,
+								line: comment.line,
+								side: comment.side,
+								author: comment.author,
+								body: comment.body,
+								createdAt: comment.createdAt,
+								url: comment.url,
+								inReplyTo: comment.inReplyTo,
+							},
+						]
+					: [],
+			)
 
 		return Layer.succeed(
 			GitHubService,
@@ -178,7 +196,7 @@ export const MockGitHubService = {
 				getPullRequestDetails: (repository, number) => Effect.succeed(findPullRequest(repository, number)),
 				getAuthenticatedUser: () => Effect.succeed(username),
 				getPullRequestDiff: (_repo, _number) => Effect.succeed(mockDiff),
-				listPullRequestReviewComments: (_repo, _number) => Effect.succeed([] as readonly PullRequestReviewComment[]),
+				listPullRequestReviewComments: (repository, number) => Effect.succeed(reviewComments(repository, number)),
 				listPullRequestComments: (repository, number) => Effect.succeed(comments(repository, number)),
 				getPullRequestMergeInfo: (repository, number) => {
 					const pr = findPullRequest(repository, number)
