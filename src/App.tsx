@@ -13,7 +13,7 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, commandEnabled, defineCommand, filterCommands, sortCommandsByScope } from "./commands.js"
 import { config } from "./config.js"
-import { type CreatePullRequestCommentInput, type DiffCommentSide, type ListPullRequestPageInput, type LoadStatus, type PullRequestConversationItem, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
+import { type CreatePullRequestCommentInput, type DiffCommentSide, type ListPullRequestPageInput, type LoadStatus, type PullRequestConversationItem, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment, type SubmitPullRequestReviewInput } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import { availableMergeActions, mergeInfoFromPullRequest } from "./mergeActions.js"
@@ -33,7 +33,7 @@ import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHin
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
-import { CloseModal, CommentModal, CommentThreadModal, filterLabels, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, ThemeModal, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type ThemeModalState } from "./ui/modals.js"
+import { ChangedFilesModal, CloseModal, CommentModal, CommentThreadModal, filterChangedFiles, filterLabels, initialChangedFilesModalState, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialSubmitReviewModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, submitReviewOptions, SubmitReviewModal, ThemeModal, type ChangedFilesModalState, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type SubmitReviewModalState, type ThemeModalState } from "./ui/modals.js"
 import { groupBy, reviewLabel } from "./ui/pullRequests.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
@@ -350,6 +350,7 @@ const closePullRequestAtom = githubRuntime.fn<{ readonly repository: string; rea
 	GitHubService.use((github) => github.closePullRequest(input.repository, input.number))
 )
 const createPullRequestCommentAtom = githubRuntime.fn<CreatePullRequestCommentInput>()((input) => GitHubService.use((github) => github.createPullRequestComment(input)))
+const submitPullRequestReviewAtom = githubRuntime.fn<SubmitPullRequestReviewInput>()((input) => GitHubService.use((github) => github.submitPullRequestReview(input)))
 const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
 const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
 
@@ -417,6 +418,12 @@ const groupDiffCommentThreads = (pullRequest: PullRequestItem, comments: readonl
 }
 
 const isLocalDiffComment = (comment: PullRequestReviewComment) => comment.id.startsWith("local:")
+
+const reviewStatusAfterSubmit = {
+	COMMENT: null,
+	APPROVE: "approved",
+	REQUEST_CHANGES: "changes",
+} satisfies Record<SubmitPullRequestReviewInput["event"], PullRequestItem["reviewStatus"] | null>
 
 const originalDiffLineColor = (anchor: DiffCommentAnchor): DiffLineColorConfig => {
 	if (anchor.kind === "addition") {
@@ -559,6 +566,8 @@ export const App = () => {
 	const mergeModalActive = Modal.$is("Merge")(activeModal)
 	const commentModalActive = Modal.$is("Comment")(activeModal)
 	const commentThreadModalActive = Modal.$is("CommentThread")(activeModal)
+	const changedFilesModalActive = Modal.$is("ChangedFiles")(activeModal)
+	const submitReviewModalActive = Modal.$is("SubmitReview")(activeModal)
 	const themeModalActive = Modal.$is("Theme")(activeModal)
 	const commandPaletteActive = Modal.$is("CommandPalette")(activeModal)
 	const openRepositoryModalActive = Modal.$is("OpenRepository")(activeModal)
@@ -567,6 +576,8 @@ export const App = () => {
 	const mergeModal: MergeModalState = mergeModalActive ? activeModal : initialMergeModalState
 	const commentModal: CommentModalState = commentModalActive ? activeModal : initialCommentModalState
 	const commentThreadModal: CommentThreadModalState = commentThreadModalActive ? activeModal : initialCommentThreadModalState
+	const changedFilesModal: ChangedFilesModalState = changedFilesModalActive ? activeModal : initialChangedFilesModalState
+	const submitReviewModal: SubmitReviewModalState = submitReviewModalActive ? activeModal : initialSubmitReviewModalState
 	const themeModal: ThemeModalState = themeModalActive ? activeModal : initialThemeModalState
 	const commandPalette: CommandPaletteState = commandPaletteActive ? activeModal : initialCommandPaletteState
 	const openRepositoryModal: OpenRepositoryModalState = openRepositoryModalActive ? activeModal : initialOpenRepositoryModalState
@@ -585,6 +596,8 @@ export const App = () => {
 	const setMergeModal = makeModalSetter("Merge")
 	const setCommentModal = makeModalSetter("Comment")
 	const setCommentThreadModal = makeModalSetter("CommentThread")
+	const setChangedFilesModal = makeModalSetter("ChangedFiles")
+	const setSubmitReviewModal = makeModalSetter("SubmitReview")
 	const setThemeModal = makeModalSetter("Theme")
 	const setCommandPalette = makeModalSetter("CommandPalette")
 	const setOpenRepositoryModal = makeModalSetter("OpenRepository")
@@ -616,6 +629,7 @@ export const App = () => {
 	const mergePullRequest = useAtomSet(mergePullRequestAtom, { mode: "promise" })
 	const closePullRequest = useAtomSet(closePullRequestAtom, { mode: "promise" })
 	const createPullRequestComment = useAtomSet(createPullRequestCommentAtom, { mode: "promise" })
+	const submitPullRequestReview = useAtomSet(submitPullRequestReviewAtom, { mode: "promise" })
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
 	const terminalWidth = width ?? 100
@@ -723,6 +737,10 @@ export const App = () => {
 			? diffWhitespaceMode === "ignore" ? minimizeWhitespaceDiffFiles(selectedDiffState.files) : selectedDiffState.files
 			: [],
 		[selectedDiffState, diffWhitespaceMode],
+	)
+	const changedFileResults = useMemo(
+		() => changedFilesModalActive ? filterChangedFiles(readyDiffFiles, changedFilesModal.query) : [],
+		[changedFilesModalActive, readyDiffFiles, changedFilesModal.query],
 	)
 	const displayedDiffState = useMemo(
 		() => selectedDiffState?._tag === "Ready"
@@ -1154,7 +1172,7 @@ export const App = () => {
 	}, [diffFullView])
 	const isHydratingPullRequestDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
-	const hasActiveLoadingIndicator = pullRequestResult.waiting || isHydratingPullRequestDetails || isLoadingMorePullRequests || labelModal.loading || closeModal.running || mergeModal.loading || mergeModal.running || selectedDiffState?._tag === "Loading"
+	const hasActiveLoadingIndicator = pullRequestResult.waiting || isHydratingPullRequestDetails || isLoadingMorePullRequests || labelModal.loading || closeModal.running || mergeModal.loading || mergeModal.running || submitReviewModal.running || selectedDiffState?._tag === "Loading"
 	const loadingIndicator = SPINNER_FRAMES[loadingFrame % SPINNER_FRAMES.length]!
 
 	useEffect(() => {
@@ -1383,9 +1401,9 @@ export const App = () => {
 		return () => { scroll.verticalScrollBar.off("change", sync) }
 	}, [isWideLayout, detailFullView, diffFullView, syncDetailPreviewScrollState])
 
-	const jumpDiffFile = (delta: 1 | -1) => {
+	const selectDiffFile = (index: number) => {
 		if (readyDiffFiles.length === 0) return
-		const nextIndex = safeDiffFileIndex(readyDiffFiles, diffFileIndex + delta)
+		const nextIndex = safeDiffFileIndex(readyDiffFiles, index)
 		setDiffFileIndex(nextIndex)
 		setDiffCommentRangeStartIndex(null)
 		const targetSide = diffPreferredSide ?? selectedDiffCommentAnchor?.side
@@ -1393,6 +1411,26 @@ export const App = () => {
 			?? diffCommentAnchors.find((anchor) => anchor.fileIndex === nextIndex)
 		if (nextAnchor) setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 		scrollToDiffFile(nextIndex)
+	}
+
+	const jumpDiffFile = (delta: 1 | -1) => {
+		selectDiffFile(diffFileIndex + delta)
+	}
+
+	const openChangedFilesModal = () => {
+		if (readyDiffFiles.length === 0) return
+		setChangedFilesModal({
+			query: "",
+			selectedIndex: safeDiffFileIndex(readyDiffFiles, diffFileIndex),
+		})
+	}
+
+	const selectChangedFile = () => {
+		const selectedIndex = changedFileResults.length === 0 ? 0 : Math.max(0, Math.min(changedFilesModal.selectedIndex, changedFileResults.length - 1))
+		const entry = changedFileResults[selectedIndex]
+		if (!entry) return
+		closeActiveModal()
+		selectDiffFile(entry.index)
 	}
 
 	const navigableDiffCommentAnchors = () => diffCommentRangeStartAnchor
@@ -1471,6 +1509,27 @@ export const App = () => {
 			const next = transform({ body: current.body, cursor: current.cursor })
 			if (next.body === current.body && next.cursor === current.cursor && current.error === null) return current
 			return { ...current, body: next.body, cursor: next.cursor, error: null }
+		})
+	}
+
+	const editSubmitReview = (transform: (state: CommentEditorValue) => CommentEditorValue) => {
+		setSubmitReviewModal((current) => {
+			const next = transform({ body: current.body, cursor: current.cursor })
+			if (next.body === current.body && next.cursor === current.cursor && current.error === null) return current
+			return { ...current, body: next.body, cursor: next.cursor, error: null }
+		})
+	}
+
+	const openSubmitReviewModal = () => {
+		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
+		setSubmitReviewModal({
+			repository: selectedPullRequest.repository,
+			number: selectedPullRequest.number,
+			selectedIndex: 0,
+			body: "",
+			cursor: 0,
+			running: false,
+			error: null,
 		})
 	}
 
@@ -1581,6 +1640,31 @@ export const App = () => {
 			}
 			flashNotice(errorMessage(error))
 		})
+	}
+
+	const confirmSubmitReview = () => {
+		if (!submitReviewModal.repository || submitReviewModal.number === null || submitReviewModal.running) return
+		const option = submitReviewOptions[submitReviewModal.selectedIndex]
+		if (!option) return
+		const repository = submitReviewModal.repository
+		const number = submitReviewModal.number
+		const body = submitReviewModal.body.trim()
+		const targetPullRequest = pullRequests.find((pullRequest) => pullRequest.repository === repository && pullRequest.number === number) ?? null
+		const nextReviewStatus = reviewStatusAfterSubmit[option.event]
+
+		setSubmitReviewModal((current) => ({ ...current, running: true, error: null }))
+		void submitPullRequestReview({ repository, number, event: option.event, body })
+			.then(() => {
+				if (targetPullRequest && nextReviewStatus) {
+					updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, reviewStatus: nextReviewStatus }))
+				}
+				closeActiveModal()
+				flashNotice(`Submitted ${option.title.toLowerCase()} review for #${number}`)
+			})
+			.catch((error) => {
+				setSubmitReviewModal((current) => ({ ...current, running: false, error: errorMessage(error) }))
+				flashNotice(errorMessage(error))
+			})
 	}
 
 	const openSelectedPullRequestInBrowser = (pullRequest: PullRequestItem) => {
@@ -1860,8 +1944,16 @@ export const App = () => {
 			editComment((state) => insertText(state, text.replace(/\r\n?/g, "\n")))
 			return true
 		}
+		if (submitReviewModalActive) {
+			editSubmitReview((state) => insertText(state, text.replace(/\r\n?/g, "\n")))
+			return true
+		}
 		if (labelModalActive) {
 			setLabelModal((current) => ({ ...current, query: current.query + singleLineText(text), selectedIndex: 0 }))
+			return true
+		}
+		if (changedFilesModalActive) {
+			setChangedFilesModal((current) => ({ ...current, query: current.query + singleLineText(text), selectedIndex: 0 }))
 			return true
 		}
 		if (filterMode) {
@@ -1883,7 +1975,7 @@ export const App = () => {
 		return () => {
 			keyInput.off("paste", handlePaste)
 		}
-	}, [renderer, commandPaletteActive, openRepositoryModalActive, themeModalActive, themeModal.filterMode, commentModalActive, labelModalActive, filterMode])
+	}, [renderer, commandPaletteActive, openRepositoryModalActive, themeModalActive, themeModal.filterMode, commentModalActive, submitReviewModalActive, labelModalActive, changedFilesModalActive, filterMode])
 
 	const appCommands: readonly AppCommand[] = buildAppCommands({
 		pullRequestStatus,
@@ -1945,11 +2037,13 @@ export const App = () => {
 			toggleDiffRenderView: () => setDiffRenderView((current) => current === "unified" ? "split" : "unified"),
 			toggleDiffWrapMode: () => setDiffWrapMode((current) => current === "none" ? "word" : "none"),
 			toggleDiffWhitespaceMode,
+			openChangedFilesModal,
 			jumpDiffFile,
 			openSelectedDiffComment,
 			toggleDiffCommentRange,
 			moveDiffCommentThread,
 			openDiffCommentModal,
+			openSubmitReviewModal,
 			togglePullRequestDraftStatus: toggleSelectedPullRequestDraftStatus,
 			openLabelModal,
 			openMergeModal,
@@ -2014,6 +2108,15 @@ export const App = () => {
 	const moveLabelSelection = (delta: -1 | 1) => setLabelModal((current) => {
 		const max = Math.max(0, filterLabels(labelModal.availableLabels, labelModal.query).length - 1)
 		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
+	})
+	const moveChangedFileSelection = (delta: -1 | 1) => setChangedFilesModal((current) => {
+		const max = Math.max(0, changedFileResults.length - 1)
+		const selectedIndex = Math.max(0, Math.min(max, current.selectedIndex + delta))
+		return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+	})
+	const moveSubmitReviewActionSelection = (delta: -1 | 1) => setSubmitReviewModal((current) => {
+		const max = Math.max(0, submitReviewOptions.length - 1)
+		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)), error: null }
 	})
 	const moveCommandPaletteSelection = (delta: -1 | 1) => setCommandPalette((current) => {
 		const selectedIndex = clampCommandIndex(current.selectedIndex + delta, commandPaletteCommands)
@@ -2089,6 +2192,8 @@ export const App = () => {
 		closeModalActive,
 		mergeModalActive,
 		commentThreadModalActive,
+		changedFilesModalActive,
+		submitReviewModalActive,
 		labelModalActive,
 		themeModalActive,
 		openRepositoryModalActive,
@@ -2100,6 +2205,8 @@ export const App = () => {
 		textInputActive: commentModalActive
 			|| commandPaletteActive
 			|| openRepositoryModalActive
+			|| changedFilesModalActive
+			|| submitReviewModalActive
 			|| labelModalActive
 			|| filterMode
 			|| (themeModalActive && themeModal.filterMode),
@@ -2118,6 +2225,32 @@ export const App = () => {
 			closeModal: closeActiveModal,
 			openInlineComment: openDiffCommentModal,
 			scrollBy: scrollCommentThread,
+		},
+		changedFilesModal: {
+			hasResults: changedFileResults.length > 0,
+			closeModal: closeActiveModal,
+			selectFile: selectChangedFile,
+			moveSelection: moveChangedFileSelection,
+		},
+		submitReviewModal: {
+			closeModal: closeActiveModal,
+			submit: confirmSubmitReview,
+			insertNewline: () => editSubmitReview((state) => insertText(state, "\n")),
+			moveActionSelection: moveSubmitReviewActionSelection,
+			moveLeft: () => editSubmitReview(editorMoveLeft),
+			moveRight: () => editSubmitReview(editorMoveRight),
+			moveUp: () => editSubmitReview((state) => moveVertically(state, -1)),
+			moveDown: () => editSubmitReview((state) => moveVertically(state, 1)),
+			moveLineStart: () => editSubmitReview(moveLineStart),
+			moveLineEnd: () => editSubmitReview(moveLineEnd),
+			moveWordBackward: () => editSubmitReview(moveWordBackward),
+			moveWordForward: () => editSubmitReview(moveWordForward),
+			backspace: () => editSubmitReview(editorBackspace),
+			deleteForward: () => editSubmitReview(editorDeleteForward),
+			deleteWordBackward: () => editSubmitReview(deleteWordBackward),
+			deleteWordForward: () => editSubmitReview(deleteWordForward),
+			deleteToLineStart: () => editSubmitReview(deleteToLineStart),
+			deleteToLineEnd: () => editSubmitReview(deleteToLineEnd),
 		},
 		labelModal: {
 			closeModal: closeActiveModal,
@@ -2180,7 +2313,6 @@ export const App = () => {
 				else runCommandById("diff.close")
 			},
 			openSelectedComment: openSelectedDiffComment,
-			addComment: () => runCommandById("diff.add-comment"),
 			toggleRange: () => runCommandById("diff.toggle-range"),
 			toggleView: () => runCommandById("diff.toggle-view"),
 			toggleWrap: () => runCommandById("diff.toggle-wrap"),
@@ -2191,6 +2323,8 @@ export const App = () => {
 			moveAnchorToBoundary: moveDiffCommentToBoundary,
 			alignAnchor: alignSelectedDiffCommentAnchor,
 			selectSide: selectDiffCommentSide,
+			openChangedFiles: () => runCommandById("diff.changed-files"),
+			openSubmitReview: () => runCommandById("diff.submit-review"),
 			nextFile: () => runCommandById("diff.next-file"),
 			previousFile: () => runCommandById("diff.previous-file"),
 			openInBrowser: () => runCommandById("pull.open-browser"),
@@ -2274,9 +2408,21 @@ export const App = () => {
 			return
 		}
 
+		if (submitReviewModalActive) {
+			const text = printableKeyText(key)
+			if (text) editSubmitReview((state) => insertText(state, text))
+			return
+		}
 
-
-
+		if (changedFilesModalActive) {
+			if (isSingleLineInputKey(key)) {
+				setChangedFilesModal((current) => {
+					const query = editSingleLineInput(current.query, key) ?? current.query
+					return query === current.query ? current : { ...current, query, selectedIndex: 0 }
+				})
+			}
+			return
+		}
 		if (labelModalActive) {
 			if (isSingleLineInputKey(key)) {
 				setLabelModal((current) => ({
@@ -2344,6 +2490,11 @@ export const App = () => {
 	const labelModalHeight = Math.min(20, terminalHeight - 4)
 	const labelModalLeft = centeredOffset(contentWidth, labelModalWidth)
 	const labelModalTop = centeredOffset(terminalHeight, labelModalHeight)
+	const longestDiffFileName = changedFilesModalActive ? readyDiffFiles.reduce((max, file) => Math.max(max, file.name.length), 0) : 0
+	const changedFilesModalWidth = changedFilesModalActive ? Math.min(Math.max(46, longestDiffFileName + 16), 88, contentWidth - 4) : 46
+	const changedFilesModalHeight = Math.min(22, terminalHeight - 4)
+	const changedFilesModalLeft = centeredOffset(contentWidth, changedFilesModalWidth)
+	const changedFilesModalTop = centeredOffset(terminalHeight, changedFilesModalHeight)
 	const sizedModal = (minW: number, maxW: number, padX: number, maxH: number) => {
 		const w = Math.min(maxW, Math.max(minW, contentWidth - padX))
 		const h = Math.min(maxH, terminalHeight - 4)
@@ -2364,6 +2515,11 @@ export const App = () => {
 	const commentThreadModalHeight = commentThreadLayout.height
 	const commentThreadModalLeft = commentThreadLayout.left
 	const commentThreadModalTop = commentThreadLayout.top
+	const submitReviewLayout = sizedModal(54, 84, 8, 18)
+	const submitReviewModalWidth = submitReviewLayout.width
+	const submitReviewModalHeight = submitReviewLayout.height
+	const submitReviewModalLeft = submitReviewLayout.left
+	const submitReviewModalTop = submitReviewLayout.top
 	const commentAnchorLabel = selectedDiffCommentAnchor && selectedDiffCommentLabel
 		? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}`
 		: "No diff line selected"
@@ -2509,7 +2665,7 @@ export const App = () => {
 						hasSelection={selectedPullRequest !== null}
 						canCloseSelection={selectedPullRequest?.state === "open"}
 						hasError={pullRequestStatus === "error"}
-						isLoading={pullRequestStatus === "loading" || isRefreshingPullRequests || isHydratingPullRequestDetails || closeModal.running || mergeModal.running}
+						isLoading={pullRequestStatus === "loading" || isRefreshingPullRequests || isHydratingPullRequestDetails || closeModal.running || mergeModal.running || submitReviewModal.running}
 						loadingIndicator={loadingIndicator}
 						retryProgress={retryProgress}
 					/>
@@ -2555,6 +2711,27 @@ export const App = () => {
 					modalHeight={commentThreadModalHeight}
 					offsetLeft={commentThreadModalLeft}
 					offsetTop={commentThreadModalTop}
+				/>
+			) : null}
+			{changedFilesModalActive ? (
+				<ChangedFilesModal
+					state={changedFilesModal}
+					results={changedFileResults}
+					totalCount={readyDiffFiles.length}
+					modalWidth={changedFilesModalWidth}
+					modalHeight={changedFilesModalHeight}
+					offsetLeft={changedFilesModalLeft}
+					offsetTop={changedFilesModalTop}
+				/>
+			) : null}
+			{submitReviewModalActive ? (
+				<SubmitReviewModal
+					state={submitReviewModal}
+					modalWidth={submitReviewModalWidth}
+					modalHeight={submitReviewModalHeight}
+					offsetLeft={submitReviewModalLeft}
+					offsetTop={submitReviewModalTop}
+					loadingIndicator={loadingIndicator}
 				/>
 			) : null}
 			{mergeModalActive ? (

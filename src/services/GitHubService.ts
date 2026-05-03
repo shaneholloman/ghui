@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { config } from "../config.js"
-import { DiffCommentSide, pullRequestQueueSearchQualifier, type CheckItem, type CreatePullRequestCommentInput, type ListPullRequestPageInput, type Mergeable, type PullRequestConversationItem, type PullRequestItem, type PullRequestMergeAction, type PullRequestMergeInfo, type PullRequestPage, type PullRequestQueueMode, type PullRequestReviewComment, type ReviewStatus } from "../domain.js"
+import { DiffCommentSide, pullRequestQueueSearchQualifier, type CheckItem, type CreatePullRequestCommentInput, type ListPullRequestPageInput, type Mergeable, type PullRequestConversationItem, type PullRequestItem, type PullRequestMergeAction, type PullRequestMergeInfo, type PullRequestPage, type PullRequestQueueMode, type PullRequestReviewComment, type ReviewStatus, type SubmitPullRequestReviewInput } from "../domain.js"
 import { getMergeActionDefinition } from "../mergeActions.js"
 import { CommandError, CommandRunner, type JsonParseError } from "./CommandRunner.js"
 
@@ -522,6 +522,12 @@ const MERGEABLE_BY_RAW: Record<string, Mergeable> = {
 const normalizeMergeable = (value: string): Mergeable =>
 	MERGEABLE_BY_RAW[value] ?? "unknown"
 
+const REVIEW_EVENT_CLI_FLAG = {
+	COMMENT: "--comment",
+	APPROVE: "--approve",
+	REQUEST_CHANGES: "--request-changes",
+} as const satisfies Record<SubmitPullRequestReviewInput["event"], string>
+
 export class GitHubService extends Context.Service<GitHubService, {
 	readonly listOpenPullRequests: (mode: PullRequestQueueMode, repository: string | null) => Effect.Effect<readonly PullRequestItem[], GitHubError>
 	readonly listOpenPullRequestPage: (input: ListPullRequestPageInput) => Effect.Effect<PullRequestPage, GitHubError>
@@ -535,6 +541,7 @@ export class GitHubService extends Context.Service<GitHubService, {
 	readonly mergePullRequest: (repository: string, number: number, action: PullRequestMergeAction) => Effect.Effect<void, CommandError>
 	readonly closePullRequest: (repository: string, number: number) => Effect.Effect<void, CommandError>
 	readonly createPullRequestComment: (input: CreatePullRequestCommentInput) => Effect.Effect<PullRequestReviewComment, GitHubError>
+	readonly submitPullRequestReview: (input: SubmitPullRequestReviewInput) => Effect.Effect<void, CommandError>
 	readonly toggleDraftStatus: (repository: string, number: number, isDraft: boolean) => Effect.Effect<void, CommandError>
 	readonly listRepoLabels: (repository: string) => Effect.Effect<readonly { readonly name: string; readonly color: string | null }[], GitHubError>
 	readonly addPullRequestLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
@@ -702,6 +709,13 @@ export class GitHubService extends Context.Service<GitHubService, {
 				return parsePullRequestComment(response) ?? fallbackCreatedComment(input)
 			})
 
+			const submitPullRequestReview = (input: SubmitPullRequestReviewInput) =>
+				ghVoid("submitPullRequestReview", [
+					"pr", "review", String(input.number), "--repo", input.repository,
+					REVIEW_EVENT_CLI_FLAG[input.event],
+					"--body", input.body,
+				])
+
 			const toggleDraftStatus = (repository: string, number: number, isDraft: boolean) =>
 				ghVoid("toggleDraftStatus", ["pr", "ready", String(number), "--repo", repository, ...(isDraft ? [] : ["--undo"])])
 
@@ -729,6 +743,7 @@ export class GitHubService extends Context.Service<GitHubService, {
 				mergePullRequest,
 				closePullRequest,
 				createPullRequestComment,
+				submitPullRequestReview,
 				toggleDraftStatus,
 				listRepoLabels,
 				addPullRequestLabel,

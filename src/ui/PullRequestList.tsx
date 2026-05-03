@@ -2,7 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import type { LoadStatus, PullRequestItem } from "../domain.js"
 import { daysOpen } from "../date.js"
 import { colors } from "./colors.js"
-import { fitCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
+import { fitCell, MatchedCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
 import { pullRequestRowDisplay, repoColor, reviewIcon } from "./pullRequests.js"
 
 export type PullRequestGroups = Array<[string, PullRequestItem[]]>
@@ -35,22 +35,6 @@ const groupAgeWidth = (pullRequests: readonly PullRequestItem[]) => {
 	if (pullRequests.length === 0) return 4
 	const maxLen = Math.max(...pullRequests.map((pr) => `${daysOpen(pr.createdAt)}d`.length))
 	return Math.max(4, maxLen + 1)
-}
-
-const MatchedCell = ({ text, width, query, align = "left" }: { text: string; width: number; query: string; align?: "left" | "right" }) => {
-	const fitted = fitCell(text, width, align)
-	const needle = query.trim().toLowerCase()
-	const index = needle.length > 0 ? fitted.toLowerCase().indexOf(needle) : -1
-	if (index < 0) return <span>{fitted}</span>
-
-	const end = Math.min(fitted.length, index + needle.length)
-	return (
-		<>
-			{index > 0 ? <span>{fitted.slice(0, index)}</span> : null}
-			<span fg={colors.accent} attributes={TextAttributes.BOLD}>{fitted.slice(index, end)}</span>
-			{end < fitted.length ? <span>{fitted.slice(end)}</span> : null}
-		</>
-	)
 }
 
 const GroupTitle = ({ label, color, filterText }: { label: string; color: string; filterText: string }) => (

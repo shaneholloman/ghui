@@ -30,8 +30,8 @@ export const themeModalKeymap = Theme(
 		enabled: (s) => s.filterMode && !s.hasFilteredResults ? "No matching themes." : true,
 		run: (s) => s.confirmSelection(),
 	},
-	{ id: "theme-modal.up-arrow", title: "Up", keys: ["up"], run: (s) => s.moveSelection(-1) },
-	{ id: "theme-modal.down-arrow", title: "Down", keys: ["down"], run: (s) => s.moveSelection(1) },
+	{ id: "theme-modal.up-arrow", title: "Up", keys: ["up", "ctrl+p", "ctrl+k"], run: (s) => s.moveSelection(-1) },
+	{ id: "theme-modal.down-arrow", title: "Down", keys: ["down", "ctrl+n", "ctrl+j"], run: (s) => s.moveSelection(1) },
 	{
 		id: "theme-modal.up-letter",
 		title: "Up",

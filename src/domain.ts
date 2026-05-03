@@ -44,6 +44,9 @@ export type DiffCommentSide = Schema.Schema.Type<typeof DiffCommentSide>
 
 export type PullRequestMergeAction = "squash" | "auto" | "admin" | "disable-auto"
 
+export const pullRequestReviewEvents = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const
+export type PullRequestReviewEvent = (typeof pullRequestReviewEvents)[number]
+
 export interface CheckItem {
 	readonly name: string
 	readonly status: CheckRunStatus
@@ -64,6 +67,13 @@ export interface CreatePullRequestCommentInput {
 	readonly side: DiffCommentSide
 	readonly startLine?: number
 	readonly startSide?: DiffCommentSide
+	readonly body: string
+}
+
+export interface SubmitPullRequestReviewInput {
+	readonly repository: string
+	readonly number: number
+	readonly event: PullRequestReviewEvent
 	readonly body: string
 }
 

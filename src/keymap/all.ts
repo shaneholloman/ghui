@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { changedFilesModalKeymap, type ChangedFilesModalCtx } from "./changedFilesModal.ts"
 import { closeModalKeymap, type CloseModalCtx } from "./closeModal.ts"
 import { commandPaletteKeymap, type CommandPaletteCtx } from "./commandPalette.ts"
 import { commentModalKeymap, type CommentModalCtx } from "./commentModal.ts"
@@ -10,6 +11,7 @@ import { labelModalKeymap, type LabelModalCtx } from "./labelModal.ts"
 import { listNavKeymap, type ListNavCtx } from "./listNav.ts"
 import { mergeModalKeymap, type MergeModalCtx } from "./mergeModal.ts"
 import { openRepositoryModalKeymap, type OpenRepositoryModalCtx } from "./openRepositoryModal.ts"
+import { submitReviewModalKeymap, type SubmitReviewModalCtx } from "./submitReviewModal.ts"
 import { themeModalKeymap, type ThemeModalCtx } from "./themeModal.ts"
 
 export interface AppCtx {
@@ -17,6 +19,8 @@ export interface AppCtx {
 	readonly closeModalActive: boolean
 	readonly mergeModalActive: boolean
 	readonly commentThreadModalActive: boolean
+	readonly changedFilesModalActive: boolean
+	readonly submitReviewModalActive: boolean
 	readonly labelModalActive: boolean
 	readonly themeModalActive: boolean
 	readonly openRepositoryModalActive: boolean
@@ -34,6 +38,8 @@ export interface AppCtx {
 	readonly closeModal: CloseModalCtx
 	readonly mergeModal: MergeModalCtx
 	readonly commentThreadModal: CommentThreadModalCtx
+	readonly changedFilesModal: ChangedFilesModalCtx
+	readonly submitReviewModal: SubmitReviewModalCtx
 	readonly labelModal: LabelModalCtx
 	readonly themeModal: ThemeModalCtx
 	readonly openRepositoryModal: OpenRepositoryModalCtx
@@ -51,15 +57,20 @@ export interface AppCtx {
 
 const App = context<AppCtx>()
 
+const modalActive = (a: AppCtx): boolean =>
+	a.closeModalActive
+	|| a.mergeModalActive
+	|| a.commentThreadModalActive
+	|| a.changedFilesModalActive
+	|| a.submitReviewModalActive
+	|| a.labelModalActive
+	|| a.themeModalActive
+	|| a.openRepositoryModalActive
+	|| a.commentModalActive
+	|| a.commandPaletteActive
+
 const inListMode = (a: AppCtx): boolean =>
-	!a.closeModalActive
-	&& !a.mergeModalActive
-	&& !a.commentThreadModalActive
-	&& !a.labelModalActive
-	&& !a.themeModalActive
-	&& !a.openRepositoryModalActive
-	&& !a.commentModalActive
-	&& !a.commandPaletteActive
+	!modalActive(a)
 	&& !a.filterMode
 	&& !a.diffFullView
 	&& !a.detailFullView
@@ -87,6 +98,8 @@ export const appKeymap = App(
 	closeModalKeymap.scope((a) => a.closeModalActive && a.closeModal),
 	mergeModalKeymap.scope((a) => a.mergeModalActive && a.mergeModal),
 	commentThreadModalKeymap.scope((a) => a.commentThreadModalActive && a.commentThreadModal),
+	changedFilesModalKeymap.scope((a) => a.changedFilesModalActive && a.changedFilesModal),
+	submitReviewModalKeymap.scope((a) => a.submitReviewModalActive && a.submitReviewModal),
 	labelModalKeymap.scope((a) => a.labelModalActive && a.labelModal),
 	themeModalKeymap.scope((a) => a.themeModalActive && a.themeModal),
 	openRepositoryModalKeymap.scope((a) => a.openRepositoryModalActive && a.openRepositoryModal),
@@ -95,8 +108,8 @@ export const appKeymap = App(
 	filterModeKeymap.scope((a) => a.filterMode && a.filterModeCtx),
 
 	// Full-view layers (only when no modal is on top)
-	diffViewKeymap.scope((a) => a.diffFullView && !a.commandPaletteActive && a.diff),
-	detailViewKeymap.scope((a) => a.detailFullView && !a.commandPaletteActive && a.detail),
+	diffViewKeymap.scope((a) => a.diffFullView && !modalActive(a) && a.diff),
+	detailViewKeymap.scope((a) => a.detailFullView && !modalActive(a) && a.detail),
 
 	// PR list nav
 	listNavKeymap.scope((a) => inListMode(a) && a.listNav),

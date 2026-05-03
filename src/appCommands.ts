@@ -21,11 +21,13 @@ interface AppCommandActions {
 	readonly toggleDiffRenderView: () => void
 	readonly toggleDiffWrapMode: () => void
 	readonly toggleDiffWhitespaceMode: () => void
+	readonly openChangedFilesModal: () => void
 	readonly jumpDiffFile: (delta: 1 | -1) => void
 	readonly openSelectedDiffComment: () => void
 	readonly toggleDiffCommentRange: () => void
 	readonly moveDiffCommentThread: (delta: 1 | -1) => void
 	readonly openDiffCommentModal: () => void
+	readonly openSubmitReviewModal: () => void
 	readonly togglePullRequestDraftStatus: () => void
 	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
@@ -99,6 +101,10 @@ export const buildAppCommands = ({
 	const diffThreadReason = diffFullView && diffReady
 		? hasDiffCommentThreads ? null : "No diff comments loaded."
 		: diffOpenReadyReason
+	const changedFilesReason = diffFullView && diffReady
+		? readyDiffFileCount > 0 ? null : "No changed files loaded."
+		: diffOpenReadyReason
+	const submitReviewReason = diffFullView && diffReady ? noOpenPullRequestReason : diffOpenReadyReason
 	const loadMoreDisabledReason = isLoadingMorePullRequests
 		? "Already loading more pull requests."
 		: hasMorePullRequests ? null : "No more pull requests loaded by this view."
@@ -257,12 +263,22 @@ export const buildAppCommands = ({
 			run: actions.toggleDiffWhitespaceMode,
 		}),
 		defineCommand({
+			id: "diff.changed-files",
+			title: "Open changed files navigator",
+			scope: "Diff",
+			subtitle: readyDiffFileCount > 0 ? `${readyDiffFileCount} changed files` : "No diff files loaded",
+			shortcut: "f",
+			disabledReason: changedFilesReason,
+			keywords: ["files", "navigator", "search"],
+			run: actions.openChangedFilesModal,
+		}),
+		defineCommand({
 			id: "diff.next-file",
 			title: "Next diff file",
 			scope: "Diff",
 			subtitle: readyDiffFileCount > 0 ? `${diffFileIndex + 1}/${readyDiffFileCount}` : "No diff files loaded",
 			shortcut: "]",
-			disabledReason: diffFullView && readyDiffFileCount > 0 ? null : diffOpenReadyReason,
+			disabledReason: changedFilesReason,
 			run: () => actions.jumpDiffFile(1),
 		}),
 		defineCommand({
@@ -271,7 +287,7 @@ export const buildAppCommands = ({
 			scope: "Diff",
 			subtitle: readyDiffFileCount > 0 ? `${diffFileIndex + 1}/${readyDiffFileCount}` : "No diff files loaded",
 			shortcut: "[",
-			disabledReason: diffFullView && readyDiffFileCount > 0 ? null : diffOpenReadyReason,
+			disabledReason: changedFilesReason,
 			run: () => actions.jumpDiffFile(-1),
 		}),
 		defineCommand({
@@ -319,10 +335,19 @@ export const buildAppCommands = ({
 			title: "Add comment on selected diff line",
 			scope: "Diff",
 			subtitle: selectedDiffCommentAnchorLabel ?? "No diff line selected",
-			shortcut: "a",
 			disabledReason: selectedDiffLineReason,
 			keywords: ["review", "reply"],
 			run: actions.openDiffCommentModal,
+		}),
+		defineCommand({
+			id: "diff.submit-review",
+			title: "Submit pull request review",
+			scope: "Diff",
+			subtitle: selectedPullRequestLabel,
+			shortcut: "R",
+			disabledReason: submitReviewReason,
+			keywords: ["review", "approve", "request changes"],
+			run: actions.openSubmitReviewModal,
 		}),
 		forSelected({
 			id: "pull.toggle-draft",

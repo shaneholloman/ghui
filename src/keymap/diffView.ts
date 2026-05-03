@@ -8,7 +8,6 @@ export interface DiffViewCtx {
 	readonly halfPage: number
 	readonly handleEscape: () => void          // closes diff, or clears comment range if active
 	readonly openSelectedComment: () => void
-	readonly addComment: () => void
 	readonly toggleRange: () => void
 	readonly toggleView: () => void
 	readonly toggleWrap: () => void
@@ -19,6 +18,8 @@ export interface DiffViewCtx {
 	readonly moveAnchorToBoundary: (boundary: "first" | "last") => void
 	readonly alignAnchor: (align: DiffAlign) => void
 	readonly selectSide: (side: DiffSide) => void
+	readonly openChangedFiles: () => void
+	readonly openSubmitReview: () => void
 	readonly nextFile: () => void
 	readonly previousFile: () => void
 	readonly openInBrowser: () => void
@@ -29,7 +30,6 @@ const Diff = context<DiffViewCtx>()
 export const diffViewKeymap = Diff(
 	{ id: "diff.escape", title: "Close diff / clear range", keys: ["escape"], run: (s) => s.handleEscape() },
 	{ id: "diff.open-comment", title: "Open / add comment", keys: ["return"], run: (s) => s.openSelectedComment() },
-	{ id: "diff.add-comment", title: "Add comment on line", keys: ["a"], run: (s) => s.addComment() },
 	{ id: "diff.toggle-range", title: "Toggle comment range", keys: ["v"], run: (s) => s.toggleRange() },
 	{ id: "diff.toggle-view", title: "Toggle split/unified", keys: ["shift+v"], run: (s) => s.toggleView() },
 	{ id: "diff.toggle-wrap", title: "Toggle wrap", keys: ["w"], run: (s) => s.toggleWrap() },
@@ -77,8 +77,10 @@ export const diffViewKeymap = Diff(
 	{ id: "diff.side-right", title: "New side", keys: ["right", "l"], run: (s) => s.selectSide("RIGHT") },
 
 	// File nav
+	{ id: "diff.changed-files", title: "Changed files", keys: ["f"], run: (s) => s.openChangedFiles() },
 	{ id: "diff.next-file", title: "Next file", keys: ["]"], run: (s) => s.nextFile() },
 	{ id: "diff.previous-file", title: "Previous file", keys: ["["], run: (s) => s.previousFile() },
+	{ id: "diff.submit-review", title: "Submit review", keys: ["shift+r"], run: (s) => s.openSubmitReview() },
 
 	// Boundary jumps + align
 	{ id: "diff.first", title: "First comment", keys: ["g g"], run: (s) => s.moveAnchorToBoundary("first") },

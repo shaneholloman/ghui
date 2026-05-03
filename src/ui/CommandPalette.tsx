@@ -4,7 +4,7 @@ import type { AppCommand } from "../commands.js"
 import { clampCommandIndex } from "../commands.js"
 import { colors } from "./colors.js"
 import { scrollTopForVisibleLine } from "./diff.js"
-import { centerCell, Divider, Filler, fitCell, HintRow, ModalFrame, PaddedRow, PlainLine, standardModalDims, TextLine, trimCell } from "./primitives.js"
+import { centerCell, Filler, fitCell, HintRow, PlainLine, searchModalDims, SearchModalFrame, TextLine, trimCell } from "./primitives.js"
 
 const scopeLabels = {
 	Global: "App",
@@ -79,8 +79,7 @@ export const CommandPalette = ({
 	onSelectCommandIndex: (index: number) => void
 	onRunCommand: (command: AppCommand) => void
 }) => {
-	const { innerWidth, contentWidth, rowWidth } = standardModalDims(modalWidth, modalHeight)
-	const listHeight = Math.max(1, modalHeight - 6)
+	const { bodyHeight: listHeight, rowWidth } = searchModalDims(modalWidth, modalHeight)
 	const clampedIndex = clampCommandIndex(selectedIndex, commands)
 	const [scrollTop, setScrollTop] = useState(0)
 	const rows = useMemo(() => buildCommandPaletteRows(commands), [commands])
@@ -88,18 +87,6 @@ export const CommandPalette = ({
 	const visibleRows = rows.slice(scrollTop, scrollTop + listHeight)
 	const bottomPaddingRows = Math.max(0, listHeight - visibleRows.length)
 	const countText = commands.length === 1 ? "1 command" : `${commands.length} commands`
-	const placeholder = "Search"
-	const titleText = "Commands"
-	const headerGap = 1
-	const headerDivider = "│"
-	const searchGap = 1
-	const dividerColumn = 1 + titleText.length + headerGap
-	const searchStart = titleText.length + headerGap + headerDivider.length + searchGap
-	const countGap = countText.length > 0 ? 2 : 0
-	const searchWidth = Math.max(1, contentWidth - searchStart - countGap - countText.length)
-	const queryText = trimCell(query, Math.max(0, searchWidth - 1))
-	const queryPadding = Math.max(0, searchWidth - queryText.length - 1)
-	const caretFg = colors.background === "transparent" ? colors.text : colors.background
 	const emptyTopRows = Math.max(0, Math.floor((listHeight - 1) / 2))
 	const emptyBottomRows = Math.max(0, listHeight - emptyTopRows - 1)
 	const runCommandOnMouseDown = (command: AppCommand) => (event: MouseEvent) => {
@@ -171,46 +158,19 @@ export const CommandPalette = ({
 		setScrollTop((current) => commandPaletteScrollTop({ current, rowsLength: rows.length, listHeight, selectedRowIndex }))
 	}, [listHeight, rows.length, selectedRowIndex])
 	return (
-		<ModalFrame
+		<SearchModalFrame
 			left={offsetLeft}
 			top={offsetTop}
 			width={modalWidth}
 			height={modalHeight}
-			junctionRows={[1, modalHeight - 4]}
-			topJunctionColumns={[dividerColumn]}
+			title="Commands"
+			query={query}
+			placeholder="Search"
+			countText={countText}
+			onBodyMouseScroll={handleMouseScroll}
+			footer={<HintRow items={[{ key: "↑↓", label: "select" }, { key: "enter", label: "run" }, { key: "esc", label: "close" }]} />}
 		>
-			<PaddedRow>
-				<TextLine>
-					<span fg={colors.accent} attributes={TextAttributes.BOLD}>{titleText}</span>
-					<span>{" ".repeat(headerGap)}</span>
-					<span fg={colors.separator}>{headerDivider}</span>
-					<span>{" ".repeat(searchGap)}</span>
-					{query.length > 0 ? (
-						<>
-							<span fg={colors.text}>{queryText}</span>
-							<span bg={colors.muted} fg={caretFg}> </span>
-							{queryPadding > 0 ? <span>{" ".repeat(queryPadding)}</span> : null}
-						</>
-					) : (
-						<>
-							<span bg={colors.muted} fg={caretFg}>{placeholder[0]}</span>
-							<span fg={colors.muted}>{fitCell(placeholder.slice(1), Math.max(0, searchWidth - 1))}</span>
-						</>
-					)}
-					{countText.length > 0 && searchWidth > placeholder.length ? (
-						<>
-							<span>{" ".repeat(countGap)}</span>
-							<span fg={colors.muted}>{countText}</span>
-						</>
-					) : null}
-				</TextLine>
-			</PaddedRow>
-			<Divider width={innerWidth} junctionAt={dividerColumn} junctionChar="┴" />
-			<box height={listHeight} flexDirection="column" onMouseScroll={handleMouseScroll}>{content}</box>
-			<Divider width={innerWidth} />
-			<PaddedRow>
-				<HintRow items={[{ key: "↑↓", label: "select" }, { key: "enter", label: "run" }, { key: "ctrl-u", label: "clear" }, { key: "ctrl-w", label: "word" }, { key: "esc", label: "close" }]} />
-			</PaddedRow>
-		</ModalFrame>
+			{content}
+		</SearchModalFrame>
 	)
 }
