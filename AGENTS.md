@@ -12,7 +12,9 @@
 - Create a GitHub release named and tagged `v<package.json version>`.
 - Publishing to npm happens from GitHub Actions via trusted publishing; do not use an `NPM_TOKEN`.
 - The workflow verifies the release tag matches `package.json`, builds standalone binaries, runs `npm publish`, uploads release assets, and dispatches `kitlangton/homebrew-tap`.
-- Homebrew tap automation requires a `HOMEBREW_TAP_TOKEN` secret with access to dispatch workflows in `kitlangton/homebrew-tap`.
+- Homebrew tap automation uses the `HOMEBREW_TAP_TOKEN` Actions secret on `kitlangton/ghui` to dispatch `kitlangton/homebrew-tap`.
+- `HOMEBREW_TAP_TOKEN` should be a fine-grained PAT owned by `kitlangton`, scoped only to `kitlangton/homebrew-tap`, with repository `Contents: Read and write`.
+- After releases, verify both the publish workflow and the tap dispatch workflow pass.
 
 ## Commands
 
@@ -27,6 +29,9 @@
 - Create release: `gh release create vX.Y.Z --target main --title "vX.Y.Z" --notes "..."`.
 - Check publish run: `gh run list --workflow publish.yml --limit 5`.
 - Check npm version: `npm view @kitlangton/ghui version`.
+- Check tap workflow: `gh run list --repo kitlangton/homebrew-tap --workflow update-ghui.yml --limit 5`.
+- Check Homebrew formula: `brew info kitlangton/tap/ghui`.
+- Test Homebrew install: `brew reinstall kitlangton/tap/ghui && /opt/homebrew/opt/ghui/bin/ghui --version`.
 
 ## Commit Readiness
 

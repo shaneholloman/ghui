@@ -8,15 +8,25 @@ Terminal UI for keeping up with your open GitHub pull requests across repositori
 
 ## Install
 
+Homebrew is the recommended install path on macOS and Linux. It installs a standalone `ghui` binary, so you do not need Bun or npm at runtime.
+
 ```bash
 brew install kitlangton/tap/ghui
 ```
 
-Or with npm:
+Upgrade with:
+
+```bash
+brew upgrade ghui
+```
+
+Or install with npm:
 
 ```bash
 npm install -g @kitlangton/ghui
 ```
+
+The npm package also installs a platform-specific binary package and does not require Bun.
 
 Requirements:
 
