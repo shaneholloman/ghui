@@ -212,9 +212,7 @@ const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}
 const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
 const recentlyCompletedPullRequestsAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
 const usernameAtom = githubRuntime.atom(
-	config.author === "@me"
-		? GitHubService.use((github) => github.getAuthenticatedUser())
-		: Effect.succeed(config.author.replace(/^@/, "")),
+	GitHubService.use((github) => github.getAuthenticatedUser()),
 ).pipe(Atom.keepAlive)
 
 const pullRequestLoadAtom = Atom.make((get) => {

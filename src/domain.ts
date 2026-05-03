@@ -16,10 +16,10 @@ export const pullRequestQueueLabels = {
 	mentioned: "mentioned",
 } as const satisfies Record<PullRequestQueueMode, string>
 
-export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, author: string, repository: string | null) => {
+export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, repository: string | null) => {
 	const qualifiers = {
-		repository: repository ? `repo:${repository}` : `author:${author}`,
-		authored: `author:${author}`,
+		repository: repository ? `repo:${repository}` : "author:@me",
+		authored: "author:@me",
 		review: "review-requested:@me",
 		assigned: "assignee:@me",
 		mentioned: "mentions:@me",

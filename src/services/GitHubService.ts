@@ -413,9 +413,9 @@ const parsePullRequest = (item: RawPullRequestNode): PullRequestItem => {
 	}
 }
 
-const searchQuery = (mode: PullRequestQueueMode, author: string, repository: string | null) => {
+const searchQuery = (mode: PullRequestQueueMode, repository: string | null) => {
 	const sort = mode === "repository" ? "sort:updated-desc" : "sort:created-desc"
-	return `${pullRequestQueueSearchQualifier(mode, author, repository)} is:pr is:open ${sort}`
+	return `${pullRequestQueueSearchQualifier(mode, repository)} is:pr is:open ${sort}`
 }
 
 const pullRequestPage = <Item>(connection: PullRequestConnection<Item>, parse: (node: Item) => PullRequestItem): PullRequestPage => ({
@@ -506,7 +506,7 @@ const fallbackCreatedComment = (input: CreatePullRequestCommentInput): PullReque
 	path: input.path,
 	line: input.line,
 	side: input.side,
-	author: config.author.replace(/^@/, "") || "you",
+	author: "you",
 	body: input.body,
 	createdAt: new Date(),
 	url: null,
@@ -564,7 +564,7 @@ export class GitHubService extends Context.Service<GitHubService, {
 					const response: SearchResponse<Item["Type"]> = yield* command.runSchema(responseSchema, "gh", [
 						"api", "graphql",
 						"-f", `query=${query}`,
-						"-F", `searchQuery=${searchQuery(input.mode, config.author, input.repository)}`,
+						"-F", `searchQuery=${searchQuery(input.mode, input.repository)}`,
 						"-F", `first=${input.pageSize}`,
 						...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
 					])

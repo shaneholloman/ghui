@@ -44,13 +44,12 @@ bun run dev
 
 ## Configuration
 
-- `GHUI_AUTHOR`: author passed to `gh search prs`, defaults to `@me`
 - `GHUI_PR_FETCH_LIMIT`: max PRs fetched, defaults to `200`
 
 Example:
 
 ```bash
-GHUI_AUTHOR=@me ghui
+GHUI_PR_FETCH_LIMIT=100 ghui
 ```
 
 You can also copy `.env.example` to `.env` and edit the values locally.
