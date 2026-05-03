@@ -24,7 +24,8 @@ export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, repo
 		assigned: "assignee:@me",
 		mentioned: "mentions:@me",
 	} as const satisfies Record<PullRequestQueueMode, string>
-	return qualifiers[mode]
+	const qualifier = qualifiers[mode]
+	return mode === "repository" && repository ? qualifier : `${qualifier} archived:false`
 }
 
 export type CheckConclusion = "success" | "failure" | "neutral" | "skipped" | "cancelled" | "timed_out"
