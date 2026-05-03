@@ -1,5 +1,11 @@
 # @kitlangton/ghui
 
+## 0.4.2
+
+### Patch Changes
+
+- 3b41b4e: Show the startup logo sooner, run spinners at a shared 12 FPS, and add a separate hover highlight for pull request rows.
+
 ## 0.4.1
 
 ### Patch Changes
