@@ -826,7 +826,6 @@ export const App = () => {
 	}
 
 	useEffect(() => {
-		setActiveTheme(themeId)
 		renderer.setBackgroundColor(colors.background)
 	}, [renderer, themeId])
 
