@@ -1,5 +1,11 @@
 # @kitlangton/ghui
 
+## 0.6.0
+
+### Minor Changes
+
+- c8fb3e7: Edit and delete your own comments from the comments view (`e` and `x`). Edits open the comment editor pre-filled; deletes prompt for confirmation. Both update optimistically and revert on failure. Also collapses the duplicate footer that previously appeared below the comments pane — the comments view now hosts a single, context-aware hint row.
+
 ## 0.5.0
 
 ### Minor Changes

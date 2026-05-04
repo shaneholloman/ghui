@@ -13,7 +13,7 @@ import {
 	type CommentSegment,
 } from "./comments.js"
 import { truncateConversationPath } from "./DetailsPane.js"
-import { centerCell, Divider, Filler, HintRow, PaddedRow, PlainLine, TextLine, type HintItem } from "./primitives.js"
+import { centerCell, Divider, Filler, PaddedRow, PlainLine, TextLine } from "./primitives.js"
 import { shortRepoName } from "./pullRequests.js"
 
 const META_PREFIX_WIDTH = 2 // "• "
@@ -175,7 +175,6 @@ export const CommentsPane = ({
 	orderedComments,
 	status,
 	selectedIndex,
-	viewerLogin,
 	contentWidth,
 	paneWidth,
 	height,
@@ -186,7 +185,6 @@ export const CommentsPane = ({
 	orderedComments: readonly OrderedComment[]
 	status: "idle" | "loading" | "ready"
 	selectedIndex: number
-	viewerLogin: string | null
 	contentWidth: number
 	paneWidth: number
 	height: number
@@ -197,7 +195,6 @@ export const CommentsPane = ({
 	const offsets = useMemo(() => blockOffsets(blocks), [blocks])
 	const scrollboxRef = useRef<ScrollBoxRenderable | null>(null)
 	const safeIndex = Math.max(0, Math.min(selectedIndex, blocks.length - 1))
-	const placeholderSelected = blocks[safeIndex]?.isPlaceholder ?? false
 
 	const headerLine = (() => {
 		const repo = shortRepoName(pullRequest.repository)
@@ -207,7 +204,10 @@ export const CommentsPane = ({
 		return { left, gap, count }
 	})()
 
-	const bodyHeight = Math.max(1, height - 4) // header + 2 dividers + footer
+	// height = header (1) + body divider (1) + body (variable). The bottom
+	// divider + footer live in the App-level chrome (FooterHints) so the
+	// CommentsPane stays consistent with DiffPane / DetailsPane.
+	const bodyHeight = Math.max(1, height - 2)
 
 	const showLoading = status !== "ready"
 	const blockRows = blocks.reduce((total, block) => total + block.height, 0)
@@ -225,21 +225,6 @@ export const CommentsPane = ({
 		else if (blockBottom > viewportBottom) scrollbox.scrollTo({ x: 0, y: Math.max(0, blockBottom - bodyHeight) })
 	}, [safeIndex, blocks, offsets, bodyHeight, commentsNeedScroll])
 
-	const onRealComment = !showLoading && !placeholderSelected && realBlocks.length > 0
-	const enterLabel = onRealComment ? "reply" : "new"
-	const selectedComment = onRealComment ? (orderedComments[safeIndex]?.comment ?? null) : null
-	const selectedIsOwn = !!viewerLogin && !!selectedComment && selectedComment.author === viewerLogin && !selectedComment.id.startsWith("local:")
-
-	const footerItems: readonly HintItem[] = [
-		{ key: "↑↓", label: "move", disabled: showLoading || blocks.length <= 1 },
-		{ key: "enter", label: enterLabel },
-		{ key: "a", label: "new" },
-		{ key: "e", label: "edit", disabled: !selectedIsOwn },
-		{ key: "x", label: "delete", disabled: !selectedIsOwn },
-		{ key: "o", label: "open", disabled: !onRealComment },
-		{ key: "r", label: "refresh" },
-		{ key: "esc", label: "close" },
-	]
 	const renderedBlocks = blocks.map((block, index) => {
 		const isSelected = index === safeIndex
 		if (block.isPlaceholder) {
@@ -292,10 +277,6 @@ export const CommentsPane = ({
 					</scrollbox>
 				)}
 			</box>
-			<Divider width={paneWidth} />
-			<PaddedRow>
-				<HintRow items={footerItems} />
-			</PaddedRow>
 		</box>
 	)
 }

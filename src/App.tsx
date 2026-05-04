@@ -3407,7 +3407,6 @@ export const App = () => {
 					orderedComments={orderedComments}
 					status={selectedCommentsStatus}
 					selectedIndex={commentsViewSelection}
-					viewerLogin={username}
 					contentWidth={fullscreenContentWidth}
 					paneWidth={contentWidth}
 					height={wideBodyHeight}
@@ -3621,6 +3620,10 @@ export const App = () => {
 						detailFullView={detailFullView}
 						diffFullView={diffFullView}
 						diffRangeActive={diffCommentRangeActive}
+						commentsViewActive={commentsViewActive}
+						commentsViewOnRealComment={commentsViewActive && selectedCommentsStatus === "ready" && selectedOrderedComment !== null}
+						commentsViewCanEditSelected={canEditComment(selectedOrderedComment)}
+						commentsViewCount={selectedComments.length}
 						hasSelection={selectedPullRequest !== null}
 						hasError={pullRequestStatus === "error"}
 						isLoading={

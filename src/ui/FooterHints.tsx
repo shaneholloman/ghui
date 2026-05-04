@@ -16,6 +16,10 @@ interface HintsContext {
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
 	readonly diffRangeActive: boolean
+	readonly commentsViewActive: boolean
+	readonly commentsViewOnRealComment: boolean
+	readonly commentsViewCanEditSelected: boolean
+	readonly commentsViewCount: number
 	readonly hasSelection: boolean
 	readonly hasError: boolean
 	readonly isLoading: boolean
@@ -48,6 +52,17 @@ const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "d", label: "diff", when: ctx.hasSelection },
 ]
 
+const commentsViewHints = (ctx: HintsContext): readonly HintItem[] => [
+	{ key: "↑↓", label: "move", disabled: ctx.commentsViewCount <= 1 },
+	{ key: "enter", label: ctx.commentsViewOnRealComment ? "reply" : "new" },
+	{ key: "a", label: "new" },
+	{ key: "e", label: "edit", disabled: !ctx.commentsViewCanEditSelected },
+	{ key: "x", label: "delete", disabled: !ctx.commentsViewCanEditSelected },
+	{ key: "o", label: "open", disabled: !ctx.commentsViewOnRealComment },
+	{ key: "r", label: "refresh" },
+	{ key: "esc", label: "close" },
+]
+
 const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 	const retrying = ctx.retryProgress._tag === "Retrying"
 	return [
@@ -69,6 +84,7 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 
 const footerHints = (ctx: HintsContext): readonly HintItem[] => {
 	if (ctx.filterEditing) return filterEditingHints
+	if (ctx.commentsViewActive) return commentsViewHints(ctx)
 	if (ctx.diffFullView) return diffViewHints(ctx)
 	if (ctx.detailFullView) return detailFullViewHints(ctx)
 	return defaultHints(ctx)
