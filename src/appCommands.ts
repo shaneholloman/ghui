@@ -21,6 +21,8 @@ interface AppCommandActions {
 	readonly closeCommentsView: () => void
 	readonly openNewIssueCommentModal: () => void
 	readonly openReplyToSelectedComment: () => void
+	readonly openEditSelectedComment: () => void
+	readonly openDeleteSelectedComment: () => void
 	readonly reloadDiff: () => void
 	readonly toggleDiffRenderView: () => void
 	readonly toggleDiffWrapMode: () => void
@@ -56,6 +58,7 @@ interface BuildAppCommandsInput {
 	readonly diffFullView: boolean
 	readonly commentsViewActive: boolean
 	readonly hasSelectedComment: boolean
+	readonly canEditSelectedComment: boolean
 	readonly diffReady: boolean
 	readonly effectiveDiffRenderView: DiffView
 	readonly diffWrapMode: DiffWrapMode
@@ -84,6 +87,7 @@ export const buildAppCommands = ({
 	diffFullView,
 	commentsViewActive,
 	hasSelectedComment,
+	canEditSelectedComment,
 	diffReady,
 	effectiveDiffRenderView,
 	diffWrapMode,
@@ -105,6 +109,7 @@ export const buildAppCommands = ({
 	const diffThreadReason = diffFullView && diffReady ? (hasDiffCommentThreads ? null : "No diff comments loaded.") : diffOpenReadyReason
 	const changedFilesReason = diffFullView && diffReady ? (readyDiffFileCount > 0 ? null : "No changed files loaded.") : diffOpenReadyReason
 	const selectedCommentReason = selectedPullRequest ? (commentsViewActive ? (hasSelectedComment ? null : "No comment selected.") : "Open comments first.") : noPullRequestReason
+	const ownCommentReason = selectedCommentReason ?? (canEditSelectedComment ? null : "Only your own (synced) comments can be edited or deleted.")
 	const loadMoreDisabledReason = isLoadingMorePullRequests ? "Already loading more pull requests." : hasMorePullRequests ? null : "No more pull requests loaded by this view."
 
 	const forSelected = (command: Omit<AppCommand, "subtitle" | "disabledReason"> & { readonly requireOpen?: boolean }): AppCommand => {
@@ -239,6 +244,26 @@ export const buildAppCommands = ({
 			disabledReason: selectedCommentReason,
 			keywords: ["respond", "thread"],
 			run: actions.openReplyToSelectedComment,
+		}),
+		defineCommand({
+			id: "comments.edit",
+			title: "Edit comment",
+			scope: "Comments",
+			subtitle: selectedPullRequestLabel,
+			shortcut: "e",
+			disabledReason: ownCommentReason,
+			keywords: ["update", "modify", "rewrite"],
+			run: actions.openEditSelectedComment,
+		}),
+		defineCommand({
+			id: "comments.delete",
+			title: "Delete comment",
+			scope: "Comments",
+			subtitle: selectedPullRequestLabel,
+			shortcut: "x",
+			disabledReason: ownCommentReason,
+			keywords: ["remove", "destroy"],
+			run: actions.openDeleteSelectedComment,
 		}),
 		defineCommand({
 			id: "diff.close",

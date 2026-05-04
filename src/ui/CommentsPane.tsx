@@ -175,6 +175,7 @@ export const CommentsPane = ({
 	orderedComments,
 	status,
 	selectedIndex,
+	viewerLogin,
 	contentWidth,
 	paneWidth,
 	height,
@@ -185,6 +186,7 @@ export const CommentsPane = ({
 	orderedComments: readonly OrderedComment[]
 	status: "idle" | "loading" | "ready"
 	selectedIndex: number
+	viewerLogin: string | null
 	contentWidth: number
 	paneWidth: number
 	height: number
@@ -225,11 +227,15 @@ export const CommentsPane = ({
 
 	const onRealComment = !showLoading && !placeholderSelected && realBlocks.length > 0
 	const enterLabel = onRealComment ? "reply" : "new"
+	const selectedComment = onRealComment ? (orderedComments[safeIndex]?.comment ?? null) : null
+	const selectedIsOwn = !!viewerLogin && !!selectedComment && selectedComment.author === viewerLogin && !selectedComment.id.startsWith("local:")
 
 	const footerItems: readonly HintItem[] = [
 		{ key: "↑↓", label: "move", disabled: showLoading || blocks.length <= 1 },
 		{ key: "enter", label: enterLabel },
 		{ key: "a", label: "new" },
+		{ key: "e", label: "edit", disabled: !selectedIsOwn },
+		{ key: "x", label: "delete", disabled: !selectedIsOwn },
 		{ key: "o", label: "open", disabled: !onRealComment },
 		{ key: "r", label: "refresh" },
 		{ key: "esc", label: "close" },

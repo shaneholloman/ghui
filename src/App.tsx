@@ -115,6 +115,7 @@ import {
 	CloseModal,
 	CommentModal,
 	CommentThreadModal,
+	DeleteCommentModal,
 	filterChangedFiles,
 	filterLabels,
 	initialChangedFilesModalState,
@@ -122,6 +123,7 @@ import {
 	initialCommandPaletteState,
 	initialCommentModalState,
 	initialCommentThreadModalState,
+	initialDeleteCommentModalState,
 	initialLabelModalState,
 	initialMergeModalState,
 	initialModal,
@@ -142,6 +144,7 @@ import {
 	type CommandPaletteState,
 	type CommentModalState,
 	type CommentThreadModalState,
+	type DeleteCommentModalState,
 	type LabelModalState,
 	type MergeModalState,
 	type ModalState,
@@ -488,6 +491,18 @@ const createPullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository
 const replyToReviewCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly inReplyTo: string; readonly body: string }>()((input) =>
 	GitHubService.use((github) => github.replyToReviewComment(input.repository, input.number, input.inReplyTo, input.body)),
 )
+const editPullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string; readonly body: string }>()((input) =>
+	GitHubService.use((github) => github.editPullRequestIssueComment(input.repository, input.commentId, input.body)),
+)
+const editReviewCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string; readonly body: string }>()((input) =>
+	GitHubService.use((github) => github.editReviewComment(input.repository, input.commentId, input.body)),
+)
+const deletePullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string }>()((input) =>
+	GitHubService.use((github) => github.deletePullRequestIssueComment(input.repository, input.commentId)),
+)
+const deleteReviewCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string }>()((input) =>
+	GitHubService.use((github) => github.deleteReviewComment(input.repository, input.commentId)),
+)
 const submitPullRequestReviewAtom = githubRuntime.fn<SubmitPullRequestReviewInput>()((input) => GitHubService.use((github) => github.submitPullRequestReview(input)))
 const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
 const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
@@ -703,6 +718,7 @@ export const App = () => {
 	const pullRequestStateModalActive = Modal.$is("PullRequestState")(activeModal)
 	const mergeModalActive = Modal.$is("Merge")(activeModal)
 	const commentModalActive = Modal.$is("Comment")(activeModal)
+	const deleteCommentModalActive = Modal.$is("DeleteComment")(activeModal)
 	const commentThreadModalActive = Modal.$is("CommentThread")(activeModal)
 	const changedFilesModalActive = Modal.$is("ChangedFiles")(activeModal)
 	const submitReviewModalActive = Modal.$is("SubmitReview")(activeModal)
@@ -714,6 +730,7 @@ export const App = () => {
 	const pullRequestStateModal: PullRequestStateModalState = pullRequestStateModalActive ? activeModal : initialPullRequestStateModalState
 	const mergeModal: MergeModalState = mergeModalActive ? activeModal : initialMergeModalState
 	const commentModal: CommentModalState = commentModalActive ? activeModal : initialCommentModalState
+	const deleteCommentModal: DeleteCommentModalState = deleteCommentModalActive ? activeModal : initialDeleteCommentModalState
 	const commentThreadModal: CommentThreadModalState = commentThreadModalActive ? activeModal : initialCommentThreadModalState
 	const changedFilesModal: ChangedFilesModalState = changedFilesModalActive ? activeModal : initialChangedFilesModalState
 	const submitReviewModal: SubmitReviewModalState = submitReviewModalActive ? activeModal : initialSubmitReviewModalState
@@ -737,6 +754,7 @@ export const App = () => {
 	const setPullRequestStateModal = makeModalSetter("PullRequestState")
 	const setMergeModal = makeModalSetter("Merge")
 	const setCommentModal = makeModalSetter("Comment")
+	const setDeleteCommentModal = makeModalSetter("DeleteComment")
 	const setCommentThreadModal = makeModalSetter("CommentThread")
 	const setChangedFilesModal = makeModalSetter("ChangedFiles")
 	const setSubmitReviewModal = makeModalSetter("SubmitReview")
@@ -778,6 +796,10 @@ export const App = () => {
 	const createPullRequestComment = useAtomSet(createPullRequestCommentAtom, { mode: "promise" })
 	const createPullRequestIssueComment = useAtomSet(createPullRequestIssueCommentAtom, { mode: "promise" })
 	const replyToReviewComment = useAtomSet(replyToReviewCommentAtom, { mode: "promise" })
+	const editPullRequestIssueComment = useAtomSet(editPullRequestIssueCommentAtom, { mode: "promise" })
+	const editReviewComment = useAtomSet(editReviewCommentAtom, { mode: "promise" })
+	const deletePullRequestIssueComment = useAtomSet(deletePullRequestIssueCommentAtom, { mode: "promise" })
+	const deleteReviewComment = useAtomSet(deleteReviewCommentAtom, { mode: "promise" })
 	const submitPullRequestReview = useAtomSet(submitPullRequestReviewAtom, { mode: "promise" })
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
@@ -2033,6 +2055,83 @@ export const App = () => {
 		})
 	}
 
+	// Selected comment must belong to the viewer and have a server id (not the
+	// optimistic `local:` prefix) before we offer edit/delete affordances.
+	const canEditComment = (comment: PullRequestComment | null): comment is PullRequestComment =>
+		comment !== null && username !== null && comment.author === username && !comment.id.startsWith("local:")
+
+	const openEditSelectedComment = () => {
+		if (!selectedPullRequest) return
+		const comment = selectedOrderedComment
+		if (!canEditComment(comment)) {
+			flashNotice(comment ? "Can't edit this comment" : "No comment selected")
+			return
+		}
+		const anchorLabel = comment._tag === "review-comment" ? `Editing ${comment.path}:${comment.line}` : `Editing comment on #${selectedPullRequest.number}`
+		setCommentModal({
+			body: comment.body,
+			cursor: comment.body.length,
+			error: null,
+			target: { kind: "edit", commentId: comment.id, commentTag: comment._tag, anchorLabel },
+		})
+	}
+
+	const submitEditComment = () => {
+		if (!selectedPullRequest || commentModal.target.kind !== "edit") return
+		const body = requireCommentBody()
+		if (body === null) return
+		const target = commentModal.target
+		const key = pullRequestDiffKey(selectedPullRequest)
+		const previous = (pullRequestComments[key] ?? []).find((entry) => entry.id === target.commentId)
+		if (!previous) {
+			setCommentModal((current) => ({ ...current, error: "Comment not found in cache." }))
+			return
+		}
+		const repository = selectedPullRequest.repository
+
+		// Optimistically swap the body in both caches; restore the previous on failure.
+		const previousReview = previous._tag === "review-comment" ? previous : null
+		const threadKey = previousReview ? diffCommentThreadMapKey(key, previousReview) : null
+		const replaceInList = <T extends { readonly id: string }>(list: readonly T[], next: T) => list.map((entry) => (entry.id === target.commentId ? next : entry))
+
+		setPullRequestComments((current) => ({ ...current, [key]: replaceInList(current[key] ?? [], { ...previous, body }) }))
+		if (threadKey && previousReview) {
+			setDiffCommentThreads((current) => ({
+				...current,
+				[threadKey]: replaceInList(current[threadKey] ?? [], { ...previousReview, body }),
+			}))
+		}
+		closeActiveModal()
+		flashNotice("Saving comment edit")
+
+		const request =
+			target.commentTag === "comment"
+				? () => editPullRequestIssueComment({ repository, commentId: target.commentId, body })
+				: () => editReviewComment({ repository, commentId: target.commentId, body })
+
+		void request()
+			.then((updated) => {
+				setPullRequestComments((current) => ({ ...current, [key]: replaceInList(current[key] ?? [], updated) }))
+				if (threadKey && updated._tag === "review-comment") {
+					setDiffCommentThreads((current) => ({
+						...current,
+						[threadKey]: replaceInList(current[threadKey] ?? [], updated),
+					}))
+				}
+				flashNotice("Comment updated")
+			})
+			.catch((error) => {
+				setPullRequestComments((current) => ({ ...current, [key]: replaceInList(current[key] ?? [], previous) }))
+				if (threadKey && previousReview) {
+					setDiffCommentThreads((current) => ({
+						...current,
+						[threadKey]: replaceInList(current[threadKey] ?? [], previousReview),
+					}))
+				}
+				flashNotice(errorMessage(error))
+			})
+	}
+
 	const submitCommentModal = () => {
 		switch (commentModal.target.kind) {
 			case "diff":
@@ -2044,7 +2143,92 @@ export const App = () => {
 			case "reply":
 				submitReplyComment()
 				return
+			case "edit":
+				submitEditComment()
+				return
 		}
+	}
+
+	const openDeleteSelectedComment = () => {
+		if (!selectedPullRequest) return
+		const comment = selectedOrderedComment
+		if (!canEditComment(comment)) {
+			flashNotice(comment ? "Can't delete this comment" : "No comment selected")
+			return
+		}
+		const firstLine = comment.body.split("\n").find((line) => line.trim().length > 0) ?? ""
+		const preview = firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine
+		setDeleteCommentModal({
+			commentId: comment.id,
+			commentTag: comment._tag,
+			author: comment.author,
+			preview,
+			running: false,
+			error: null,
+		})
+	}
+
+	const confirmDeleteComment = () => {
+		if (!selectedPullRequest || deleteCommentModal.running) return
+		const target = { commentId: deleteCommentModal.commentId, commentTag: deleteCommentModal.commentTag }
+		const key = pullRequestDiffKey(selectedPullRequest)
+		const list = pullRequestComments[key] ?? []
+		const previousIndex = list.findIndex((entry) => entry.id === target.commentId)
+		const previous = previousIndex >= 0 ? list[previousIndex] : undefined
+		if (!previous) {
+			setDeleteCommentModal((current) => ({ ...current, error: "Comment not found in cache." }))
+			return
+		}
+		const previousReview = previous._tag === "review-comment" ? previous : null
+		const threadKey = previousReview ? diffCommentThreadMapKey(key, previousReview) : null
+		const previousThread = threadKey ? (diffCommentThreads[threadKey] ?? []) : []
+		const previousThreadIndex = previousReview ? previousThread.findIndex((entry) => entry.id === previous.id) : -1
+		const repository = selectedPullRequest.repository
+
+		setPullRequestComments((current) => ({
+			...current,
+			[key]: (current[key] ?? []).filter((entry) => entry.id !== target.commentId),
+		}))
+		if (threadKey) {
+			setDiffCommentThreads((current) => {
+				const next = { ...current }
+				const filtered = (next[threadKey] ?? []).filter((entry) => entry.id !== target.commentId)
+				if (filtered.length > 0) next[threadKey] = filtered
+				else delete next[threadKey]
+				return next
+			})
+		}
+		closeActiveModal()
+		flashNotice("Deleting comment")
+
+		const request =
+			target.commentTag === "comment"
+				? () => deletePullRequestIssueComment({ repository, commentId: target.commentId })
+				: () => deleteReviewComment({ repository, commentId: target.commentId })
+
+		void request()
+			.then(() => flashNotice("Comment deleted"))
+			.catch((error) => {
+				// Splice the previous entry back at its original index in both caches.
+				setPullRequestComments((current) => {
+					const arr = current[key] ?? []
+					if (arr.some((entry) => entry.id === previous.id)) return current
+					const restored = [...arr]
+					restored.splice(Math.min(previousIndex, restored.length), 0, previous)
+					return { ...current, [key]: restored }
+				})
+				if (threadKey && previousReview) {
+					setDiffCommentThreads((current) => {
+						const arr = current[threadKey] ?? []
+						if (arr.some((entry) => entry.id === previousReview.id)) return current
+						const restored = [...arr]
+						const insertIndex = previousThreadIndex >= 0 ? previousThreadIndex : restored.length
+						restored.splice(Math.min(insertIndex, restored.length), 0, previousReview)
+						return { ...current, [threadKey]: restored }
+					})
+				}
+				flashNotice(errorMessage(error))
+			})
 	}
 
 	const confirmSubmitReview = () => {
@@ -2551,6 +2735,7 @@ export const App = () => {
 		diffFullView,
 		commentsViewActive,
 		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
+		canEditSelectedComment: canEditComment(selectedOrderedComment),
 		diffReady: selectedDiffState?._tag === "Ready",
 		effectiveDiffRenderView,
 		diffWrapMode,
@@ -2594,6 +2779,8 @@ export const App = () => {
 			closeCommentsView,
 			openNewIssueCommentModal,
 			openReplyToSelectedComment,
+			openEditSelectedComment,
+			openDeleteSelectedComment,
 			reloadDiff: () => {
 				if (!selectedPullRequest) return
 				loadPullRequestDiff(selectedPullRequest, { force: true, includeComments: true })
@@ -2780,6 +2967,7 @@ export const App = () => {
 		themeModalActive,
 		openRepositoryModalActive,
 		commentModalActive,
+		deleteCommentModalActive,
 		commandPaletteActive,
 		filterMode,
 		diffFullView,
@@ -2887,6 +3075,10 @@ export const App = () => {
 			deleteToLineStart: () => editComment(deleteToLineStart),
 			deleteToLineEnd: () => editComment(deleteToLineEnd),
 		},
+		deleteCommentModal: {
+			closeModal: closeActiveModal,
+			confirmDelete: confirmDeleteComment,
+		},
 		commandPalette: {
 			closeModal: closeActiveModal,
 			runSelected: () => {
@@ -2948,11 +3140,14 @@ export const App = () => {
 			scrollBy: moveCommentsSelection,
 			scrollTo: setCommentsSelection,
 			visibleCount: commentsRowCount,
+			canEditSelected: canEditComment(selectedOrderedComment),
 			closeCommentsView,
 			openInBrowser: openSelectedCommentInBrowser,
 			refresh: refreshSelectedComments,
 			newComment: () => runCommandById("comments.new"),
 			confirmSelection: confirmCommentSelection,
+			editSelected: () => runCommandById("comments.edit"),
+			deleteSelected: () => runCommandById("comments.delete"),
 		},
 		listNav: {
 			halfPage,
@@ -3141,6 +3336,11 @@ export const App = () => {
 	const closeModalHeight = closeLayout.height
 	const closeModalLeft = closeLayout.left
 	const closeModalTop = closeLayout.top
+	const deleteCommentLayout = sizedModal(46, 68, 12, 12)
+	const deleteCommentModalWidth = deleteCommentLayout.width
+	const deleteCommentModalHeight = deleteCommentLayout.height
+	const deleteCommentModalLeft = deleteCommentLayout.left
+	const deleteCommentModalTop = deleteCommentLayout.top
 	const pullRequestStateLayout = sizedModal(46, 68, 12, 9)
 	const pullRequestStateModalWidth = pullRequestStateLayout.width
 	const pullRequestStateModalHeight = pullRequestStateLayout.height
@@ -3165,6 +3365,7 @@ export const App = () => {
 		if (commentModalActive) {
 			if (commentModal.target.kind === "issue") return selectedPullRequest ? `New comment on #${selectedPullRequest.number}` : "New comment"
 			if (commentModal.target.kind === "reply") return `Reply on ${commentModal.target.anchorLabel}`
+			if (commentModal.target.kind === "edit") return commentModal.target.anchorLabel
 		}
 		return selectedDiffCommentAnchor && selectedDiffCommentLabel ? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}` : "No diff line selected"
 	})()
@@ -3206,6 +3407,7 @@ export const App = () => {
 					orderedComments={orderedComments}
 					status={selectedCommentsStatus}
 					selectedIndex={commentsViewSelection}
+					viewerLogin={username}
 					contentWidth={fullscreenContentWidth}
 					paneWidth={contentWidth}
 					height={wideBodyHeight}
@@ -3474,6 +3676,16 @@ export const App = () => {
 					modalHeight={commentModalHeight}
 					offsetLeft={commentModalLeft}
 					offsetTop={commentModalTop}
+				/>
+			) : null}
+			{deleteCommentModalActive ? (
+				<DeleteCommentModal
+					state={deleteCommentModal}
+					modalWidth={deleteCommentModalWidth}
+					modalHeight={deleteCommentModalHeight}
+					offsetLeft={deleteCommentModalLeft}
+					offsetTop={deleteCommentModalTop}
+					loadingIndicator={loadingIndicator}
 				/>
 			) : null}
 			{commentThreadModalActive ? (

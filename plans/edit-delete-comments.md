@@ -10,7 +10,7 @@ Today the comments view is read + reply-only. Once a comment is posted, it can't
    - Top-level (issue) comments: `PATCH /repos/{owner}/{repo}/issues/comments/{id}` with `{ body }`.
    - Review thread comments: `PATCH /repos/{owner}/{repo}/pulls/comments/{id}` with `{ body }`.
    - Disabled with a flash hint when the selected comment isn't the viewer's.
-2. **Delete own comment** — `shift+D` opens a confirm modal ("Delete comment? `[y]es` / `[esc]` cancel"); on confirm:
+2. **Delete own comment** — `x` opens a confirm modal ("Delete comment? `[y]es` / `[esc]` cancel"); on confirm:
    - Top-level: `DELETE /repos/{owner}/{repo}/issues/comments/{id}`.
    - Review thread: `DELETE /repos/{owner}/{repo}/pulls/comments/{id}`.
    - Optimistic remove from the local cache; restore on error.
@@ -43,7 +43,7 @@ Permission gating: GitHub returns 403 for edit/delete of others' comments unless
 - New `DeleteCommentModal` (or reuse the existing `CloseModal` shape) for the confirm. Modal carries `{ commentId, commentTag }`. Submit calls the right delete and removes from cache.
 - Keymap additions in `commentsView.ts`:
   - `e` → edit selected (gated on `selectedOrderedComment.author === viewer && !isPlaceholder`).
-  - `shift+d` → delete selected (same gate).
+  - `x` → delete selected (same gate). Mirrors the existing `x` "destroy thing under cursor" key in detail/list views (close PR), which also routes through a confirm modal.
 - `openReplyToSelectedComment` already uses `selectedOrderedComment`; the edit/delete handlers use the same lookup.
 
 ## Optimistic + revert
@@ -66,4 +66,6 @@ Permission gating: GitHub returns 403 for edit/delete of others' comments unless
 
 ## Status
 
-Not started. Pick up after the queued-reviews work, or alongside it — they share much of the comment-modal plumbing.
+Shipped. `e` edits a viewer-authored synced comment in place; `x` opens a confirm modal that deletes it. Both flows are optimistic with a same-index restore on failure. Diff-thread cache and the per-PR comments cache are kept in sync.
+
+Out-of-scope items from v1 (markdown preview, edits on optimistic `local:` comments, blocking deletes of thread roots, edit history, bulk delete, editing review summary bodies) remain as written above and are not tracked in this plan after shipping.

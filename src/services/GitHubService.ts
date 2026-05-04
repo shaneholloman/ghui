@@ -592,6 +592,10 @@ export class GitHubService extends Context.Service<
 		readonly createPullRequestComment: (input: CreatePullRequestCommentInput) => Effect.Effect<PullRequestReviewComment, GitHubError>
 		readonly createPullRequestIssueComment: (repository: string, number: number, body: string) => Effect.Effect<PullRequestComment, GitHubError>
 		readonly replyToReviewComment: (repository: string, number: number, inReplyTo: string, body: string) => Effect.Effect<PullRequestComment, GitHubError>
+		readonly editPullRequestIssueComment: (repository: string, commentId: string, body: string) => Effect.Effect<PullRequestComment, GitHubError>
+		readonly editReviewComment: (repository: string, commentId: string, body: string) => Effect.Effect<PullRequestComment, GitHubError>
+		readonly deletePullRequestIssueComment: (repository: string, commentId: string) => Effect.Effect<void, CommandError>
+		readonly deleteReviewComment: (repository: string, commentId: string) => Effect.Effect<void, CommandError>
 		readonly submitPullRequestReview: (input: SubmitPullRequestReviewInput) => Effect.Effect<void, CommandError>
 		readonly toggleDraftStatus: (repository: string, number: number, isDraft: boolean) => Effect.Effect<void, CommandError>
 		readonly listRepoLabels: (repository: string) => Effect.Effect<readonly { readonly name: string; readonly color: string | null }[], GitHubError>
@@ -862,6 +866,54 @@ export class GitHubService extends Context.Service<
 				return parsePullRequestComment(response) ?? fallbackCreatedComment(input)
 			})
 
+			const editPullRequestIssueComment = Effect.fn("GitHubService.editPullRequestIssueComment")(function* (repository: string, commentId: string, body: string) {
+				const response = yield* command.runSchema(PullRequestCommentSchema, "gh", [
+					"api",
+					"--method",
+					"PATCH",
+					`repos/${repository}/issues/comments/${commentId}`,
+					"-f",
+					`body=${body}`,
+				])
+				return parseIssueComment(response)
+			})
+
+			const editReviewComment = Effect.fn("GitHubService.editReviewComment")(function* (repository: string, commentId: string, body: string) {
+				const response = yield* command.runSchema(PullRequestCommentSchema, "gh", [
+					"api",
+					"--method",
+					"PATCH",
+					`repos/${repository}/pulls/comments/${commentId}`,
+					"-f",
+					`body=${body}`,
+				])
+				const review = parsePullRequestComment(response)
+				if (!review) {
+					// PATCH on a non-line review comment (e.g. file-level) can return a
+					// payload that lacks `path`/`line` — keep our cached id and side
+					// stable so the caller can still swap the body in place.
+					return {
+						_tag: "review-comment" as const,
+						id: commentId,
+						path: "",
+						line: 0,
+						side: "RIGHT" as const,
+						author: "you",
+						body,
+						createdAt: new Date(),
+						url: null,
+						inReplyTo: null,
+					}
+				}
+				return reviewCommentAsComment(review)
+			})
+
+			const deletePullRequestIssueComment = (repository: string, commentId: string) =>
+				ghVoid("deletePullRequestIssueComment", ["api", "--method", "DELETE", `repos/${repository}/issues/comments/${commentId}`])
+
+			const deleteReviewComment = (repository: string, commentId: string) =>
+				ghVoid("deleteReviewComment", ["api", "--method", "DELETE", `repos/${repository}/pulls/comments/${commentId}`])
+
 			const submitPullRequestReview = (input: SubmitPullRequestReviewInput) =>
 				ghVoid("submitPullRequestReview", ["pr", "review", String(input.number), "--repo", input.repository, REVIEW_EVENT_CLI_FLAG[input.event], "--body", input.body])
 
@@ -895,6 +947,10 @@ export class GitHubService extends Context.Service<
 				createPullRequestComment,
 				createPullRequestIssueComment,
 				replyToReviewComment,
+				editPullRequestIssueComment,
+				editReviewComment,
+				deletePullRequestIssueComment,
+				deleteReviewComment,
 				submitPullRequestReview,
 				toggleDraftStatus,
 				listRepoLabels,

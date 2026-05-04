@@ -76,13 +76,26 @@ export interface PullRequestStateModalState {
 	readonly error: string | null
 }
 
-export type CommentModalTarget = { readonly kind: "diff" } | { readonly kind: "issue" } | { readonly kind: "reply"; readonly inReplyTo: string; readonly anchorLabel: string }
+export type CommentModalTarget =
+	| { readonly kind: "diff" }
+	| { readonly kind: "issue" }
+	| { readonly kind: "reply"; readonly inReplyTo: string; readonly anchorLabel: string }
+	| { readonly kind: "edit"; readonly commentId: string; readonly commentTag: "comment" | "review-comment"; readonly anchorLabel: string }
 
 export interface CommentModalState {
 	readonly body: string
 	readonly cursor: number
 	readonly error: string | null
 	readonly target: CommentModalTarget
+}
+
+export interface DeleteCommentModalState {
+	readonly commentId: string
+	readonly commentTag: "comment" | "review-comment"
+	readonly author: string
+	readonly preview: string
+	readonly running: boolean
+	readonly error: string | null
 }
 
 export interface CommentThreadModalState {
@@ -356,6 +369,15 @@ export const initialCommentModalState: CommentModalState = {
 	target: { kind: "diff" },
 }
 
+export const initialDeleteCommentModalState: DeleteCommentModalState = {
+	commentId: "",
+	commentTag: "comment",
+	author: "",
+	preview: "",
+	running: false,
+	error: null,
+}
+
 export const initialCommentThreadModalState: CommentThreadModalState = {
 	scrollOffset: 0,
 }
@@ -400,6 +422,7 @@ export type Modal = Data.TaggedEnum<{
 	PullRequestState: PullRequestStateModalState
 	Merge: MergeModalState
 	Comment: CommentModalState
+	DeleteComment: DeleteCommentModalState
 	CommentThread: CommentThreadModalState
 	ChangedFiles: ChangedFilesModalState
 	SubmitReview: SubmitReviewModalState
@@ -420,6 +443,7 @@ export const modalInitialStates = {
 	PullRequestState: initialPullRequestStateModalState,
 	Merge: initialMergeModalState,
 	Comment: initialCommentModalState,
+	DeleteComment: initialDeleteCommentModalState,
 	CommentThread: initialCommentThreadModalState,
 	ChangedFiles: initialChangedFilesModalState,
 	SubmitReview: initialSubmitReviewModalState,
@@ -951,7 +975,7 @@ export const CommentModal = ({
 	offsetTop: number
 }) => {
 	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
-	const title = "Comment"
+	const title = state.target.kind === "edit" ? "Edit comment" : "Comment"
 	const editorHeight = Math.max(1, bodyHeight - (state.error ? 1 : 0))
 	const lineRanges = commentEditorLines(state.body)
 	const cursor = clampCursor(state.body, state.cursor)
@@ -1008,6 +1032,63 @@ export const CommentModal = ({
 		>
 			{state.error ? <PlainLine text={fitCell(state.error, contentWidth)} fg={colors.error} /> : null}
 			{visibleLines.map(renderEditorLine)}
+		</StandardModal>
+	)
+}
+
+export const DeleteCommentModal = ({
+	state,
+	modalWidth,
+	modalHeight,
+	offsetLeft,
+	offsetTop,
+	loadingIndicator,
+}: {
+	state: DeleteCommentModalState
+	modalWidth: number
+	modalHeight: number
+	offsetLeft: number
+	offsetTop: number
+	loadingIndicator: string
+}) => {
+	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
+	const title = "Delete comment"
+	const rightText = state.running ? `${loadingIndicator} deleting` : "confirm"
+	const previewLine = state.preview.length > 0 ? state.preview : "(empty body)"
+	const titleLines = [fitCell(`@${state.author}`, contentWidth), fitCell(previewLine, contentWidth)]
+	const topRows = Math.max(0, Math.floor((bodyHeight - titleLines.length - 2) / 2))
+	const bottomRows = Math.max(0, bodyHeight - topRows - titleLines.length - 2)
+
+	return (
+		<StandardModal
+			left={offsetLeft}
+			top={offsetTop}
+			width={modalWidth}
+			height={modalHeight}
+			title={title}
+			titleFg={colors.error}
+			headerRight={{ text: rightText, pending: state.running }}
+			subtitle={<PlainLine text={fitCell("This permanently removes the comment on GitHub.", contentWidth)} fg={colors.muted} />}
+			bodyPadding={1}
+			footer={
+				<HintRow
+					items={[
+						{ key: "enter", label: "delete" },
+						{ key: "esc", label: "cancel" },
+					]}
+				/>
+			}
+		>
+			{state.error ? (
+				<PlainLine text={fitCell(state.error, contentWidth)} fg={colors.error} />
+			) : (
+				<>
+					<Filler rows={topRows} prefix="top" />
+					<PlainLine text={titleLines[0]!} fg={colors.muted} />
+					<PlainLine text={titleLines[1]!} fg={colors.text} />
+					<Filler rows={bottomRows} prefix="bottom" />
+				</>
+			)}
 		</StandardModal>
 	)
 }

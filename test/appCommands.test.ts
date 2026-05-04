@@ -44,6 +44,7 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 		diffFullView: true,
 		commentsViewActive: false,
 		hasSelectedComment: false,
+		canEditSelectedComment: false,
 		diffReady: true,
 		effectiveDiffRenderView: "split",
 		diffWrapMode: "none",
@@ -71,6 +72,8 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 			closeCommentsView: noop,
 			openNewIssueCommentModal: noop,
 			openReplyToSelectedComment: noop,
+			openEditSelectedComment: noop,
+			openDeleteSelectedComment: noop,
 			reloadDiff: noop,
 			toggleDiffRenderView: noop,
 			toggleDiffWrapMode: noop,
@@ -144,5 +147,53 @@ describe("review UX commands", () => {
 
 	test("reply command is available for a selected comment", () => {
 		expect(commandById("comments.reply", { commentsViewActive: true, hasSelectedComment: true }).disabledReason).toBeFalsy()
+	})
+
+	test("edit command requires comments view", () => {
+		expect(commandById("comments.edit", { hasSelectedComment: true, canEditSelectedComment: true }).disabledReason).toBe("Open comments first.")
+	})
+
+	test("edit command requires a selected comment", () => {
+		expect(commandById("comments.edit", { commentsViewActive: true, hasSelectedComment: false }).disabledReason).toBe("No comment selected.")
+	})
+
+	test("edit command requires the comment to be the viewer's own (synced) comment", () => {
+		expect(
+			commandById("comments.edit", {
+				commentsViewActive: true,
+				hasSelectedComment: true,
+				canEditSelectedComment: false,
+			}).disabledReason,
+		).toBe("Only your own (synced) comments can be edited or deleted.")
+	})
+
+	test("edit command is available for the viewer's own selected comment", () => {
+		const command = commandById("comments.edit", {
+			commentsViewActive: true,
+			hasSelectedComment: true,
+			canEditSelectedComment: true,
+		})
+		expect(command.shortcut).toBe("e")
+		expect(command.disabledReason).toBeFalsy()
+	})
+
+	test("delete command is available for the viewer's own selected comment", () => {
+		const command = commandById("comments.delete", {
+			commentsViewActive: true,
+			hasSelectedComment: true,
+			canEditSelectedComment: true,
+		})
+		expect(command.shortcut).toBe("x")
+		expect(command.disabledReason).toBeFalsy()
+	})
+
+	test("delete command rejects others' comments", () => {
+		expect(
+			commandById("comments.delete", {
+				commentsViewActive: true,
+				hasSelectedComment: true,
+				canEditSelectedComment: false,
+			}).disabledReason,
+		).toBe("Only your own (synced) comments can be edited or deleted.")
 	})
 })

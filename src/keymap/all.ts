@@ -5,6 +5,7 @@ import { commandPaletteKeymap, type CommandPaletteCtx } from "./commandPalette.t
 import { commentModalKeymap, type CommentModalCtx } from "./commentModal.ts"
 import { commentsViewKeymap, type CommentsViewCtx } from "./commentsView.ts"
 import { commentThreadModalKeymap, type CommentThreadModalCtx } from "./commentThreadModal.ts"
+import { deleteCommentModalKeymap, type DeleteCommentModalCtx } from "./deleteCommentModal.ts"
 import { detailViewKeymap, type DetailViewCtx } from "./detailView.ts"
 import { diffViewKeymap, type DiffViewCtx } from "./diffView.ts"
 import { filterModeKeymap, type FilterModeCtx } from "./filterMode.ts"
@@ -28,6 +29,7 @@ export interface AppCtx {
 	readonly themeModalActive: boolean
 	readonly openRepositoryModalActive: boolean
 	readonly commentModalActive: boolean
+	readonly deleteCommentModalActive: boolean
 	readonly commandPaletteActive: boolean
 	readonly filterMode: boolean
 	readonly diffFullView: boolean
@@ -49,6 +51,7 @@ export interface AppCtx {
 	readonly themeModal: ThemeModalCtx
 	readonly openRepositoryModal: OpenRepositoryModalCtx
 	readonly commentModal: CommentModalCtx
+	readonly deleteCommentModal: DeleteCommentModalCtx
 	readonly commandPalette: CommandPaletteCtx
 	readonly filterModeCtx: FilterModeCtx
 	readonly diff: DiffViewCtx
@@ -74,6 +77,7 @@ const modalActive = (a: AppCtx): boolean =>
 	a.themeModalActive ||
 	a.openRepositoryModalActive ||
 	a.commentModalActive ||
+	a.deleteCommentModalActive ||
 	a.commandPaletteActive
 
 const inListMode = (a: AppCtx): boolean => !modalActive(a) && !a.filterMode && !a.diffFullView && !a.detailFullView && !a.commentsViewActive
@@ -108,6 +112,7 @@ export const appKeymap = App(
 	themeModalKeymap.scope((a) => a.themeModalActive && a.themeModal),
 	openRepositoryModalKeymap.scope((a) => a.openRepositoryModalActive && a.openRepositoryModal),
 	commentModalKeymap.scope((a) => a.commentModalActive && a.commentModal),
+	deleteCommentModalKeymap.scope((a) => a.deleteCommentModalActive && a.deleteCommentModal),
 	commandPaletteKeymap.scope((a) => a.commandPaletteActive && a.commandPalette),
 	filterModeKeymap.scope((a) => a.filterMode && a.filterModeCtx),
 
