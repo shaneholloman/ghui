@@ -221,6 +221,7 @@ export const PullRequestDiffPane = ({
 							syncScroll
 							filetype={stackedFile.file.filetype ?? "text"}
 							syntaxStyle={syntaxStyle}
+							fg={colors.text}
 							showLineNumbers
 							wrapMode={wrapMode}
 							addedBg={colors.diff.addedBg}

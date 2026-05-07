@@ -32,7 +32,7 @@ describe("pullRequestRowDisplay", () => {
 		const display = pullRequestRowDisplay(open, true)
 		expect(display.rowFg).toBe(colors.selectedText)
 		expect(display.numberFg).toBe(colors.accent)
-		expect(display.checkText).toBe("5/5")
+		expect(display.checkText).toBe("✓")
 	})
 
 	test("open + unselected uses default text/count", () => {
@@ -41,17 +41,17 @@ describe("pullRequestRowDisplay", () => {
 		expect(display.numberFg).toBe(colors.count)
 	})
 
-	test("merged → checkText 'merged' and passing color", () => {
+	test("merged → check icon and passing color", () => {
 		const display = pullRequestRowDisplay({ ...open, state: "merged" }, false)
-		expect(display.checkText).toBe("merged")
+		expect(display.checkText).toBe("✓")
 		expect(display.checkFg).toBe(colors.status.passing)
 		expect(display.indicatorFg).toBe(colors.status.passing)
 		expect(display.rowFg).toBe(colors.muted)
 	})
 
-	test("closed → checkText 'closed' and muted", () => {
+	test("closed → check icon and muted", () => {
 		const display = pullRequestRowDisplay({ ...open, state: "closed" }, false)
-		expect(display.checkText).toBe("closed")
+		expect(display.checkText).toBe("✓")
 		expect(display.checkFg).toBe(colors.muted)
 		expect(display.indicatorFg).toBe(colors.muted)
 	})
@@ -61,9 +61,14 @@ describe("pullRequestRowDisplay", () => {
 		expect(display.indicatorFg).toBe(colors.accent)
 	})
 
-	test("checkSummary 'checks N/M' prefix is stripped", () => {
-		const display = pullRequestRowDisplay({ ...open, checkSummary: "checks 7/9" }, false)
-		expect(display.checkText).toBe("7/9")
+	test.each([
+		["passing", "✓"],
+		["failing", "×"],
+		["pending", "◐"],
+		["none", ""],
+	] as const)("check status %s → %s", (checkStatus, icon) => {
+		const display = pullRequestRowDisplay({ ...open, checkStatus }, false)
+		expect(display.checkText).toBe(icon)
 	})
 })
 

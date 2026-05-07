@@ -42,6 +42,13 @@ const REVIEW_ICON: Record<ReviewStatus, string> = {
 	none: "·",
 }
 
+const CHECK_ICON: Record<PullRequestItem["checkStatus"], string> = {
+	passing: "✓",
+	failing: "×",
+	pending: "◐",
+	none: "",
+}
+
 export const reviewIcon = (pullRequest: PullRequestItem) => {
 	if (pullRequest.state === "merged") return "✓"
 	if (pullRequest.state === "closed") return "×"
@@ -63,7 +70,7 @@ export const pullRequestRowDisplay = (pullRequest: PullRequestItem, selected: bo
 	const isFinal = isMerged || isClosed
 	const indicatorFg = isMerged ? colors.status.passing : isClosed ? colors.muted : pullRequest.autoMergeEnabled ? colors.accent : statusColor(pullRequest.reviewStatus)
 	const checkFg = isMerged ? colors.status.passing : isClosed ? colors.muted : statusColor(pullRequest.checkStatus)
-	const checkText = isMerged ? "merged" : isClosed ? "closed" : (pullRequest.checkSummary?.replace(/^checks\s+/, "") ?? "")
+	const checkText = CHECK_ICON[pullRequest.checkStatus]
 	return {
 		indicatorFg,
 		rowFg: selected ? colors.selectedText : isFinal ? colors.muted : colors.text,

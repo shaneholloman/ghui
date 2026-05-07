@@ -20,7 +20,7 @@ const GROUP_ICON = "◆"
 
 const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: number) => {
 	const reviewWidth = 1
-	const checkWidth = 6
+	const checkWidth = 2
 	const fixedWidth = reviewWidth + 1 + numberWidth + 1 + checkWidth + ageWidth
 	const titleWidth = Math.max(8, contentWidth - fixedWidth)
 	return { reviewWidth, checkWidth, ageWidth, numberWidth, titleWidth }
@@ -132,8 +132,8 @@ const PullRequestRow = ({
 			<span>
 				<MatchedCell text={pullRequest.title} width={titleWidth} query={filterText} />
 			</span>
-			<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
 			<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
+			<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
 			{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
 		</TextLine>
 	)
