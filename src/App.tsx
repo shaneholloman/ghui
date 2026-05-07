@@ -221,6 +221,7 @@ type DiffRenderableRuntimeSides = {
 interface AppliedDiffLineColor {
 	readonly anchor: StackedDiffCommentAnchor
 	readonly view: DiffView
+	readonly color: DiffLineColorConfig
 }
 
 interface AppliedDiffLineColorState {
@@ -252,6 +253,9 @@ const FOCUS_RETURN_REFRESH_MIN_MS = 60_000
 const FOCUSED_IDLE_REFRESH_MS = 5 * 60_000
 const AUTO_REFRESH_JITTER_MS = 10_000
 const DIFF_STICKY_HEADER_LINES = 2
+const DIFF_LAYOUT_RETRY_MS = 16
+const DIFF_SCROLL_RESTORE_ATTEMPTS = 6
+const DIFF_LINE_COLOR_REAPPLY_ATTEMPTS = 8
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
 const LOAD_MORE_SELECTION_THRESHOLD = 8
 const LOAD_MORE_SCROLL_THRESHOLD = 3
@@ -656,9 +660,9 @@ const diffSideTargets = (diff: DiffRenderable, anchor: DiffCommentAnchor, view: 
 	return withSides.leftSide ? [withSides.leftSide] : []
 }
 
-const setDiffCommentLineColor = (diff: DiffRenderable, entry: AppliedDiffLineColor, color: DiffLineColorConfig) => {
+const setDiffCommentLineColor = (diff: DiffRenderable, entry: AppliedDiffLineColor) => {
 	for (const target of diffSideTargets(diff, entry.anchor, entry.view)) {
-		target.setLineColor(entry.anchor.colorLine, color)
+		target.setLineColor(entry.anchor.colorLine, entry.color)
 	}
 }
 
@@ -861,6 +865,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const prListScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const diffRenderableRefs = useRef(new Map<number, DiffRenderable>())
 	const diffCommentLineColorsRef = useRef<AppliedDiffLineColorState>({ contextKey: null, entries: [] })
+	const diffLineColorRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const diffLocationRestoreTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const pendingDiffLocationRestoreRef = useRef<PendingDiffLocationRestore | null>(null)
 	const suppressNextDiffCommentScrollRef = useRef(false)
 	const headerFooterWidth = Math.max(24, contentWidth - 2)
@@ -922,6 +928,12 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			}
 			if (detailPrefetchTimeoutRef.current !== null) {
 				clearTimeout(detailPrefetchTimeoutRef.current)
+			}
+			if (diffLineColorRetryTimeoutRef.current !== null) {
+				clearTimeout(diffLineColorRetryTimeoutRef.current)
+			}
+			if (diffLocationRestoreTimeoutRef.current !== null) {
+				clearTimeout(diffLocationRestoreTimeoutRef.current)
 			}
 		},
 		[],
@@ -1389,25 +1401,55 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		pendingDiffLocationRestoreRef.current = null
 		const nextAnchor = nearestDiffAnchorForLocation(diffCommentAnchors, pending.anchor)
 		if (!nextAnchor) return
-		const scroll = diffScrollRef.current
-		if (scroll) {
-			const viewportHeight = Math.max(1, scroll.viewport.height)
-			const maxScrollTop = Math.max(0, scroll.scrollHeight - viewportHeight)
-			const nextTop = Math.max(0, Math.min(maxScrollTop, nextAnchor.renderLine - pending.screenOffset))
-			suppressNextDiffCommentScrollRef.current = true
-			scroll.scrollTo({ x: 0, y: nextTop })
-			syncDiffScrollState()
-		}
+		if (diffLocationRestoreTimeoutRef.current !== null) clearTimeout(diffLocationRestoreTimeoutRef.current)
+		suppressNextDiffCommentScrollRef.current = true
 		setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 		setDiffFileIndex(nextAnchor.fileIndex)
+
+		let attempts = 0
+		const restoreScroll = () => {
+			attempts++
+			const scroll = diffScrollRef.current
+			if (scroll) {
+				const viewportHeight = Math.max(1, scroll.viewport.height)
+				const maxScrollTop = Math.max(0, scroll.scrollHeight - viewportHeight)
+				const targetTop = Math.max(0, nextAnchor.renderLine - pending.screenOffset)
+				const nextTop = Math.min(maxScrollTop, targetTop)
+				suppressNextDiffCommentScrollRef.current = true
+				if (Math.floor(scroll.scrollTop) !== nextTop) {
+					scroll.scrollTo({ x: 0, y: nextTop })
+					syncDiffScrollState()
+				}
+				if (maxScrollTop >= targetTop && Math.floor(scroll.scrollTop) === targetTop) {
+					suppressNextDiffCommentScrollRef.current = false
+					diffLocationRestoreTimeoutRef.current = null
+					return
+				}
+			}
+			if (attempts < DIFF_SCROLL_RESTORE_ATTEMPTS) {
+				diffLocationRestoreTimeoutRef.current = globalThis.setTimeout(restoreScroll, DIFF_LAYOUT_RETRY_MS)
+			} else {
+				suppressNextDiffCommentScrollRef.current = false
+				diffLocationRestoreTimeoutRef.current = null
+			}
+		}
+		diffLocationRestoreTimeoutRef.current = globalThis.setTimeout(restoreScroll, DIFF_LAYOUT_RETRY_MS)
 	}, [diffFullView, diffWhitespaceMode, diffCommentAnchors])
 
 	useEffect(() => {
+		const applyEntries = (entries: readonly AppliedDiffLineColor[]) => {
+			for (const entry of entries) {
+				const diff = diffRenderableRefs.current.get(entry.anchor.fileIndex)
+				if (diff) setDiffCommentLineColor(diff, entry)
+			}
+		}
+
 		const previous = diffCommentLineColorsRef.current
+		const contextChanged = previous.contextKey !== diffLineColorContextKey
 		if (previous.contextKey === diffLineColorContextKey) {
 			for (const entry of previous.entries) {
 				const diff = diffRenderableRefs.current.get(entry.anchor.fileIndex)
-				if (diff) setDiffCommentLineColor(diff, entry, originalDiffLineColor(entry.anchor))
+				if (diff) setDiffCommentLineColor(diff, { ...entry, color: originalDiffLineColor(entry.anchor) })
 			}
 		}
 
@@ -1417,9 +1459,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			const key = `${effectiveDiffRenderView}:${anchor.side}:${anchor.renderLine}`
 			if (appliedKeys.has(key) && !override) return
 			appliedKeys.add(key)
-			const entry = { anchor, view: effectiveDiffRenderView } satisfies AppliedDiffLineColor
+			const entry = { anchor, view: effectiveDiffRenderView, color } satisfies AppliedDiffLineColor
 			const diff = diffRenderableRefs.current.get(anchor.fileIndex)
-			if (diff) setDiffCommentLineColor(diff, entry, color)
+			if (diff) setDiffCommentLineColor(diff, entry)
 			if (!nextEntries.some((existing) => existing.view === entry.view && existing.anchor.side === anchor.side && existing.anchor.renderLine === anchor.renderLine)) {
 				nextEntries.push(entry)
 			}
@@ -1444,9 +1486,28 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			suppressNextDiffCommentScrollRef.current = false
 		}
 		diffCommentLineColorsRef.current = { contextKey: diffLineColorContextKey, entries: nextEntries }
+		if (contextChanged && diffLineColorRetryTimeoutRef.current !== null) clearTimeout(diffLineColorRetryTimeoutRef.current)
+		if (contextChanged && diffLineColorContextKey && nextEntries.length > 0) {
+			const contextKey = diffLineColorContextKey
+			let attempts = 0
+			const reapplyLineColors = () => {
+				attempts++
+				if (diffCommentLineColorsRef.current.contextKey !== contextKey) {
+					diffLineColorRetryTimeoutRef.current = null
+					return
+				}
+				applyEntries(diffCommentLineColorsRef.current.entries)
+				if (attempts < DIFF_LINE_COLOR_REAPPLY_ATTEMPTS) {
+					diffLineColorRetryTimeoutRef.current = globalThis.setTimeout(reapplyLineColors, DIFF_LAYOUT_RETRY_MS)
+				} else {
+					diffLineColorRetryTimeoutRef.current = null
+				}
+			}
+			diffLineColorRetryTimeoutRef.current = globalThis.setTimeout(reapplyLineColors, DIFF_LAYOUT_RETRY_MS)
+		}
 	}, [
 		selectedDiffCommentAnchor?.renderLine,
-		selectedDiffCommentAnchor?.localRenderLine,
+		selectedDiffCommentAnchor?.colorLine,
 		selectedDiffCommentAnchor?.side,
 		selectedDiffCommentAnchor?.fileIndex,
 		selectedDiffCommentRangeAnchors,
@@ -1698,8 +1759,14 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const setDiffRenderableRef = (index: number, diff: DiffRenderable | null) => {
-		if (diff) diffRenderableRefs.current.set(index, diff)
-		else diffRenderableRefs.current.delete(index)
+		if (diff) {
+			diffRenderableRefs.current.set(index, diff)
+			for (const entry of diffCommentLineColorsRef.current.entries) {
+				if (entry.anchor.fileIndex === index) setDiffCommentLineColor(diff, entry)
+			}
+		} else {
+			diffRenderableRefs.current.delete(index)
+		}
 	}
 
 	const scrollToDiffFile = (index: number) => {
@@ -2474,17 +2541,31 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		previewActiveTheme(id)
 	}
 
-	const toggleDiffWhitespaceMode = () => {
-		const next = diffWhitespaceMode === "ignore" ? "show" : "ignore"
+	const preserveCurrentDiffLocation = () => {
 		if (diffFullView && selectedDiffCommentAnchor) {
 			const scroll = diffScrollRef.current
 			const maxScreenOffset = Math.max(DIFF_STICKY_HEADER_LINES, (scroll?.viewport.height ?? wideBodyHeight) - 2)
-			const rawScreenOffset = scroll ? selectedDiffCommentAnchor.renderLine - scroll.scrollTop : DIFF_STICKY_HEADER_LINES
+			const rawScreenOffset = scroll ? selectedDiffCommentAnchor.renderLine - Math.floor(scroll.scrollTop) : DIFF_STICKY_HEADER_LINES
 			pendingDiffLocationRestoreRef.current = {
 				anchor: selectedDiffCommentAnchor,
 				screenOffset: Math.max(DIFF_STICKY_HEADER_LINES, Math.min(maxScreenOffset, rawScreenOffset)),
 			}
 		}
+	}
+
+	const toggleDiffRenderView = () => {
+		preserveCurrentDiffLocation()
+		setDiffRenderView((current) => (current === "unified" ? "split" : "unified"))
+	}
+
+	const toggleDiffWrapMode = () => {
+		preserveCurrentDiffLocation()
+		setDiffWrapMode((current) => (current === "none" ? "word" : "none"))
+	}
+
+	const toggleDiffWhitespaceMode = () => {
+		const next = diffWhitespaceMode === "ignore" ? "show" : "ignore"
+		preserveCurrentDiffLocation()
 		setDiffWhitespaceMode(next)
 		void Effect.runPromise(saveStoredDiffWhitespaceMode(next)).catch((error) => flashNotice(errorMessage(error)))
 	}
@@ -2904,8 +2985,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				loadPullRequestDiff(selectedPullRequest, { force: true, includeComments: true })
 				flashNotice(`Refreshing diff for #${selectedPullRequest.number}`)
 			},
-			toggleDiffRenderView: () => setDiffRenderView((current) => (current === "unified" ? "split" : "unified")),
-			toggleDiffWrapMode: () => setDiffWrapMode((current) => (current === "none" ? "word" : "none")),
+			toggleDiffRenderView,
+			toggleDiffWrapMode,
 			toggleDiffWhitespaceMode,
 			openChangedFilesModal,
 			jumpDiffFile,
