@@ -132,13 +132,7 @@ import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHin
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
 import { SplitPane } from "./ui/paneLayout.js"
 import { Divider, Filler, fitCell, PlainLine } from "./ui/primitives.js"
-import { CommandPalette } from "./ui/CommandPalette.js"
 import {
-	ChangedFilesModal,
-	CloseModal,
-	CommentModal,
-	CommentThreadModal,
-	DeleteCommentModal,
 	filterChangedFiles,
 	filterLabels,
 	initialChangedFilesModalState,
@@ -154,14 +148,8 @@ import {
 	initialPullRequestStateModalState,
 	initialSubmitReviewModalState,
 	initialThemeModalState,
-	LabelModal,
-	MergeModal,
 	Modal,
-	OpenRepositoryModal,
-	PullRequestStateModal,
 	submitReviewOptions,
-	SubmitReviewModal,
-	ThemeModal,
 	type ChangedFilesModalState,
 	type CloseModalState,
 	type CommandPaletteState,
@@ -185,6 +173,7 @@ import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } fr
 import { type RepositoryListItem } from "./ui/RepoList.js"
 import { IssuesWorkspace } from "./surfaces/IssuesWorkspace.js"
 import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
+import { WorkspaceModals } from "./surfaces/WorkspaceModals.js"
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
 import { getIssueDetailJunctionRows, IssueDetailPane } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
@@ -3715,50 +3704,32 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		: []
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
-	const labelModalWidth = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
-	const labelModalHeight = Math.min(20, terminalHeight - 4)
-	const labelModalLeft = centeredOffset(contentWidth, labelModalWidth)
-	const labelModalTop = centeredOffset(terminalHeight, labelModalHeight)
 	const longestDiffFileName = changedFilesModalActive ? readyDiffFiles.reduce((max, file) => Math.max(max, file.name.length), 0) : 0
-	const changedFilesModalWidth = changedFilesModalActive ? Math.min(Math.max(46, longestDiffFileName + 16), 88, contentWidth - 4) : 46
-	const changedFilesModalHeight = Math.min(22, terminalHeight - 4)
-	const changedFilesModalLeft = centeredOffset(contentWidth, changedFilesModalWidth)
-	const changedFilesModalTop = centeredOffset(terminalHeight, changedFilesModalHeight)
 	const sizedModal = (minW: number, maxW: number, padX: number, maxH: number) => {
 		const w = Math.min(maxW, Math.max(minW, contentWidth - padX))
 		const h = Math.min(maxH, terminalHeight - 4)
 		return { width: w, height: h, left: centeredOffset(contentWidth, w), top: centeredOffset(terminalHeight, h) }
 	}
+	const labelLayout = (() => {
+		const width = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
+		const height = Math.min(20, terminalHeight - 4)
+		return { width, height, left: centeredOffset(contentWidth, width), top: centeredOffset(terminalHeight, height) }
+	})()
+	const changedFilesLayout = (() => {
+		const width = changedFilesModalActive ? Math.min(Math.max(46, longestDiffFileName + 16), 88, contentWidth - 4) : 46
+		const height = Math.min(22, terminalHeight - 4)
+		return { width, height, left: centeredOffset(contentWidth, width), top: centeredOffset(terminalHeight, height) }
+	})()
 	const closeLayout = sizedModal(46, 68, 12, 12)
-	const closeModalWidth = closeLayout.width
-	const closeModalHeight = closeLayout.height
-	const closeModalLeft = closeLayout.left
-	const closeModalTop = closeLayout.top
 	const deleteCommentLayout = sizedModal(46, 68, 12, 12)
-	const deleteCommentModalWidth = deleteCommentLayout.width
-	const deleteCommentModalHeight = deleteCommentLayout.height
-	const deleteCommentModalLeft = deleteCommentLayout.left
-	const deleteCommentModalTop = deleteCommentLayout.top
 	const pullRequestStateLayout = sizedModal(46, 68, 12, 9)
-	const pullRequestStateModalWidth = pullRequestStateLayout.width
-	const pullRequestStateModalHeight = pullRequestStateLayout.height
-	const pullRequestStateModalLeft = pullRequestStateLayout.left
-	const pullRequestStateModalTop = pullRequestStateLayout.top
 	const commentLayout = sizedModal(46, 76, 8, 16)
-	const commentModalWidth = commentLayout.width
-	const commentModalHeight = commentLayout.height
-	const commentModalLeft = commentLayout.left
-	const commentModalTop = commentLayout.top
 	const commentThreadLayout = sizedModal(50, 86, 8, 22)
-	const commentThreadModalWidth = commentThreadLayout.width
-	const commentThreadModalHeight = commentThreadLayout.height
-	const commentThreadModalLeft = commentThreadLayout.left
-	const commentThreadModalTop = commentThreadLayout.top
 	const submitReviewLayout = sizedModal(54, 84, 8, 18)
-	const submitReviewModalWidth = submitReviewLayout.width
-	const submitReviewModalHeight = submitReviewLayout.height
-	const submitReviewModalLeft = submitReviewLayout.left
-	const submitReviewModalTop = submitReviewLayout.top
+	const mergeLayout = sizedModal(46, 68, 14, 20)
+	const themeLayout = sizedModal(38, 58, 12, 16)
+	const openRepositoryLayout = sizedModal(46, 76, 8, 8)
+	const commandPaletteLayout = sizedModal(50, 88, 8, 24)
 	const commentAnchorLabel = ((): string => {
 		if (commentModalActive) {
 			if (commentModal.target.kind === "issue") return selectedCommentSubject ? `New comment on #${selectedCommentSubject.number}` : "New comment"
@@ -3767,26 +3738,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 		return selectedDiffCommentAnchor && selectedDiffCommentLabel ? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}` : "No diff line selected"
 	})()
-	const mergeLayout = sizedModal(46, 68, 14, 20)
-	const mergeModalWidth = mergeLayout.width
-	const mergeModalHeight = mergeLayout.height
-	const mergeModalLeft = mergeLayout.left
-	const mergeModalTop = mergeLayout.top
-	const themeLayout = sizedModal(38, 58, 12, 16)
-	const themeModalWidth = themeLayout.width
-	const themeModalHeight = themeLayout.height
-	const themeModalLeft = themeLayout.left
-	const themeModalTop = themeLayout.top
-	const openRepositoryLayout = sizedModal(46, 76, 8, 8)
-	const openRepositoryModalWidth = openRepositoryLayout.width
-	const openRepositoryModalHeight = openRepositoryLayout.height
-	const openRepositoryModalLeft = openRepositoryLayout.left
-	const openRepositoryModalTop = openRepositoryLayout.top
-	const commandPaletteLayout = sizedModal(50, 88, 8, 24)
-	const commandPaletteWidth = commandPaletteLayout.width
-	const commandPaletteHeight = commandPaletteLayout.height
-	const commandPaletteLeft = commandPaletteLayout.left
-	const commandPaletteTop = commandPaletteLayout.top
 
 	return (
 		<box width={terminalWidth} height={terminalHeight} flexDirection="column" backgroundColor={colors.background}>
@@ -4090,123 +4041,54 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					/>
 				)}
 			</box>
-			{labelModalActive ? (
-				<LabelModal
-					state={labelModal}
-					currentLabels={selectedItemLabels}
-					modalWidth={labelModalWidth}
-					modalHeight={labelModalHeight}
-					offsetLeft={labelModalLeft}
-					offsetTop={labelModalTop}
-					loadingIndicator={loadingIndicator}
-				/>
-			) : null}
-			{closeModalActive ? (
-				<CloseModal
-					state={closeModal}
-					modalWidth={closeModalWidth}
-					modalHeight={closeModalHeight}
-					offsetLeft={closeModalLeft}
-					offsetTop={closeModalTop}
-					loadingIndicator={loadingIndicator}
-				/>
-			) : null}
-			{pullRequestStateModalActive ? (
-				<PullRequestStateModal
-					state={pullRequestStateModal}
-					modalWidth={pullRequestStateModalWidth}
-					modalHeight={pullRequestStateModalHeight}
-					offsetLeft={pullRequestStateModalLeft}
-					offsetTop={pullRequestStateModalTop}
-					loadingIndicator={loadingIndicator}
-				/>
-			) : null}
-			{commentModalActive ? (
-				<CommentModal
-					state={commentModal}
-					anchorLabel={commentAnchorLabel}
-					modalWidth={commentModalWidth}
-					modalHeight={commentModalHeight}
-					offsetLeft={commentModalLeft}
-					offsetTop={commentModalTop}
-				/>
-			) : null}
-			{deleteCommentModalActive ? (
-				<DeleteCommentModal
-					state={deleteCommentModal}
-					modalWidth={deleteCommentModalWidth}
-					modalHeight={deleteCommentModalHeight}
-					offsetLeft={deleteCommentModalLeft}
-					offsetTop={deleteCommentModalTop}
-					loadingIndicator={loadingIndicator}
-				/>
-			) : null}
-			{commentThreadModalActive ? (
-				<CommentThreadModal
-					state={commentThreadModal}
-					anchorLabel={commentAnchorLabel}
-					comments={selectedDiffCommentThread}
-					modalWidth={commentThreadModalWidth}
-					modalHeight={commentThreadModalHeight}
-					offsetLeft={commentThreadModalLeft}
-					offsetTop={commentThreadModalTop}
-				/>
-			) : null}
-			{changedFilesModalActive ? (
-				<ChangedFilesModal
-					state={changedFilesModal}
-					results={changedFileResults}
-					totalCount={readyDiffFiles.length}
-					modalWidth={changedFilesModalWidth}
-					modalHeight={changedFilesModalHeight}
-					offsetLeft={changedFilesModalLeft}
-					offsetTop={changedFilesModalTop}
-				/>
-			) : null}
-			{submitReviewModalActive ? (
-				<SubmitReviewModal
-					state={submitReviewModal}
-					modalWidth={submitReviewModalWidth}
-					modalHeight={submitReviewModalHeight}
-					offsetLeft={submitReviewModalLeft}
-					offsetTop={submitReviewModalTop}
-				/>
-			) : null}
-			{mergeModalActive ? (
-				<MergeModal
-					state={mergeModal}
-					modalWidth={mergeModalWidth}
-					modalHeight={mergeModalHeight}
-					offsetLeft={mergeModalLeft}
-					offsetTop={mergeModalTop}
-					loadingIndicator={loadingIndicator}
-				/>
-			) : null}
-			{themeModalActive ? (
-				<ThemeModal state={themeModal} modalWidth={themeModalWidth} modalHeight={themeModalHeight} offsetLeft={themeModalLeft} offsetTop={themeModalTop} />
-			) : null}
-			{openRepositoryModalActive ? (
-				<OpenRepositoryModal
-					state={openRepositoryModal}
-					modalWidth={openRepositoryModalWidth}
-					modalHeight={openRepositoryModalHeight}
-					offsetLeft={openRepositoryModalLeft}
-					offsetTop={openRepositoryModalTop}
-				/>
-			) : null}
-			{commandPaletteActive ? (
-				<CommandPalette
-					commands={commandPaletteCommands}
-					query={commandPalette.query}
-					selectedIndex={selectedCommandIndex}
-					modalWidth={commandPaletteWidth}
-					modalHeight={commandPaletteHeight}
-					offsetLeft={commandPaletteLeft}
-					offsetTop={commandPaletteTop}
-					onSelectCommandIndex={selectCommandPaletteIndex}
-					onRunCommand={runCommandPaletteCommand}
-				/>
-			) : null}
+			<WorkspaceModals
+				loadingIndicator={loadingIndicator}
+				selectedItemLabels={selectedItemLabels}
+				commentAnchorLabel={commentAnchorLabel}
+				selectedDiffCommentThread={selectedDiffCommentThread}
+				changedFileResults={changedFileResults}
+				readyDiffFileCount={readyDiffFiles.length}
+				commandPaletteCommands={commandPaletteCommands}
+				selectedCommandIndex={selectedCommandIndex}
+				onSelectCommandIndex={selectCommandPaletteIndex}
+				onRunCommand={runCommandPaletteCommand}
+				labelModalActive={labelModalActive}
+				closeModalActive={closeModalActive}
+				pullRequestStateModalActive={pullRequestStateModalActive}
+				commentModalActive={commentModalActive}
+				deleteCommentModalActive={deleteCommentModalActive}
+				commentThreadModalActive={commentThreadModalActive}
+				changedFilesModalActive={changedFilesModalActive}
+				submitReviewModalActive={submitReviewModalActive}
+				mergeModalActive={mergeModalActive}
+				themeModalActive={themeModalActive}
+				openRepositoryModalActive={openRepositoryModalActive}
+				commandPaletteActive={commandPaletteActive}
+				labelModal={labelModal}
+				closeModal={closeModal}
+				pullRequestStateModal={pullRequestStateModal}
+				commentModal={commentModal}
+				deleteCommentModal={deleteCommentModal}
+				commentThreadModal={commentThreadModal}
+				changedFilesModal={changedFilesModal}
+				submitReviewModal={submitReviewModal}
+				mergeModal={mergeModal}
+				themeModal={themeModal}
+				openRepositoryModal={openRepositoryModal}
+				commandPalette={commandPalette}
+				labelLayout={labelLayout}
+				closeLayout={closeLayout}
+				pullRequestStateLayout={pullRequestStateLayout}
+				commentLayout={commentLayout}
+				deleteCommentLayout={deleteCommentLayout}
+				commentThreadLayout={commentThreadLayout}
+				changedFilesLayout={changedFilesLayout}
+				submitReviewLayout={submitReviewLayout}
+				mergeLayout={mergeLayout}
+				themeLayout={themeLayout}
+				openRepositoryLayout={openRepositoryLayout}
+				commandPaletteLayout={commandPaletteLayout}
+			/>
 		</box>
 	)
 }
