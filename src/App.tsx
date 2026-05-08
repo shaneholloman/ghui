@@ -58,6 +58,7 @@ import { detectSystemAppearance } from "./systemAppearance.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+import { favoriteRepositoriesAtom, selectedRepositoryIndexAtom, workspaceSurfaceAtom } from "./workspace/atoms.js"
 import { commentsViewActiveAtom, commentsViewSelectionAtom, pullRequestCommentsAtom, pullRequestCommentsLoadedAtom } from "./ui/comments/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
@@ -396,9 +397,6 @@ const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index
 const selectedIndexAtom = Atom.make(0)
 const selectedIssueIndexAtom = Atom.make(0)
 const noticeAtom = Atom.make<string | null>(null)
-const workspaceSurfaceAtom = Atom.make<WorkspaceSurface>("pullRequests")
-const selectedRepositoryIndexAtom = Atom.make(0)
-const favoriteRepositoriesAtom = Atom.make<Record<string, true>>({}).pipe(Atom.keepAlive)
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
