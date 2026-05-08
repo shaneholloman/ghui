@@ -54,7 +54,6 @@ import { CacheService, type PullRequestCacheKey } from "./services/CacheService.
 import { Clipboard } from "./services/Clipboard.js"
 import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
-import { detectSystemAppearance } from "./systemAppearance.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
@@ -89,6 +88,7 @@ import {
 	pullRequestDiffCacheAtom,
 } from "./ui/diff/atoms.js"
 import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
+import { useSystemAppearancePolling } from "./ui/theme/useSystemAppearancePolling.js"
 import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
 import {
 	buildStackedDiffFiles,
@@ -986,24 +986,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		renderer.setBackgroundColor(colors.background)
 	}, [renderer, themeId, systemThemeGeneration])
 
-	useEffect(() => {
-		if (themeConfig.mode !== "system") return
-		let cancelled = false
-		const refreshAppearance = () => {
-			void detectSystemAppearance().then((appearance) => {
-				if (cancelled || appearance === systemAppearanceRef.current) return
-				systemAppearanceRef.current = appearance
-				setSystemAppearance(appearance)
-				previewActiveTheme(resolveThemeId(themeConfigRef.current, appearance))
-			})
-		}
-		const interval = globalThis.setInterval(refreshAppearance, 1000)
-		refreshAppearance()
-		return () => {
-			cancelled = true
-			globalThis.clearInterval(interval)
-		}
-	}, [themeConfig.mode])
+	useSystemAppearancePolling({
+		enabled: themeConfig.mode === "system",
+		systemAppearanceRef,
+		themeConfigRef,
+		setSystemAppearance,
+		previewActiveTheme,
+	})
 
 	useEffect(
 		() => () => {
