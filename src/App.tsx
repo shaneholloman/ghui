@@ -58,6 +58,7 @@ import { detectSystemAppearance } from "./systemAppearance.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+import { commentsViewActiveAtom, commentsViewSelectionAtom, pullRequestCommentsAtom, pullRequestCommentsLoadedAtom } from "./ui/comments/atoms.js"
 import {
 	diffCommentAnchorIndexAtom,
 	diffCommentRangeStartIndexAtom,
@@ -402,10 +403,6 @@ const favoriteRepositoriesAtom = Atom.make<Record<string, true>>({}).pipe(Atom.k
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 const detailFullViewAtom = Atom.make(false)
 const detailScrollOffsetAtom = Atom.make(0)
-const commentsViewActiveAtom = Atom.make(false)
-const commentsViewSelectionAtom = Atom.make(0)
-const pullRequestCommentsAtom = Atom.make<Record<string, readonly PullRequestComment[]>>({}).pipe(Atom.keepAlive)
-const pullRequestCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
 const activeModalAtom = Atom.make<Modal>(initialModal)
