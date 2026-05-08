@@ -7,7 +7,6 @@ import { useOpenTuiSubscribe } from "./keyboard/opentuiAdapter.js"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
-import * as Atom from "effect/unstable/reactivity/Atom"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
 import { useContext, useEffect, useMemo, useRef, useState } from "react"
 import { buildAppCommands } from "./appCommands.js"
@@ -38,7 +37,14 @@ import { activePullRequestViews, nextView, parseRepositoryInput, type PullReques
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
-import { favoriteRepositoriesAtom, readWorkspacePreferencesAtom, selectedRepositoryIndexAtom, workspaceSurfaceAtom, writeWorkspacePreferencesAtom } from "./workspace/atoms.js"
+import {
+	favoriteRepositoriesAtom,
+	readWorkspacePreferencesAtom,
+	recentRepositoriesAtom,
+	selectedRepositoryIndexAtom,
+	workspaceSurfaceAtom,
+	writeWorkspacePreferencesAtom,
+} from "./workspace/atoms.js"
 import { useWorkspacePreferencesPersistence } from "./workspace/useWorkspacePreferencesPersistence.js"
 import {
 	commentsViewActiveAtom,
@@ -68,8 +74,10 @@ import {
 	appendPullRequestPage,
 	cacheViewerFor,
 	closePullRequestAtom,
+	displayedPullRequestsAtom,
 	getPullRequestMergeInfoAtom,
 	getRepositoryMergeMethodsAtom,
+	groupStartsAtom,
 	issueOverridesAtom,
 	labelCacheAtom,
 	lastUsedMergeMethodAtom,
@@ -79,9 +87,11 @@ import {
 	pruneCacheAtom,
 	pullRequestDetailKey,
 	pullRequestDetailsAtom,
+	pullRequestLoadAtom,
 	pullRequestOverridesAtom,
 	pullRequestRevisionAtomKey,
 	pullRequestsAtom,
+	pullRequestStatusAtom,
 	queueLoadCacheAtom,
 	queueSelectionAtom,
 	readCachedPullRequestAtom,
@@ -89,8 +99,11 @@ import {
 	removePullRequestLabelAtom,
 	repoMergeMethodsCacheAtom,
 	retryProgressAtom,
+	selectedPullRequestAtom,
 	toggleDraftAtom,
 	usernameAtom,
+	visibleGroupsAtom,
+	visiblePullRequestsAtom,
 	writeCachedPullRequestAtom,
 	writeQueueCacheAtom,
 } from "./ui/pullRequests/atoms.js"
@@ -112,6 +125,8 @@ import {
 	listPullRequestReviewCommentsAtom,
 	pullRequestDiffAtom,
 	pullRequestDiffCacheAtom,
+	selectedDiffKeyAtom,
+	selectedDiffStateAtom,
 } from "./ui/diff/atoms.js"
 import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
 import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
@@ -189,7 +204,7 @@ import {
 	type SubmitReviewModalState,
 	type ThemeModalState,
 } from "./ui/modals.js"
-import { groupBy, pullRequestMetadataText } from "./ui/pullRequests.js"
+import { pullRequestMetadataText } from "./ui/pullRequests.js"
 import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
@@ -208,15 +223,7 @@ import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
-import {
-	detectedRepository,
-	initialRecentRepositories,
-	mockPrCount,
-	mockRepositoryCatalog,
-	mockUserIssues,
-	mockWorkspacePreferencesPath,
-	pullRequestPageSize,
-} from "./services/runtime.js"
+import { detectedRepository, mockPrCount, mockRepositoryCatalog, mockUserIssues, mockWorkspacePreferencesPath, pullRequestPageSize } from "./services/runtime.js"
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
@@ -284,96 +291,6 @@ const DETAIL_PREFETCH_AHEAD = 3
 const DETAIL_PREFETCH_CONCURRENCY = 3
 const DETAIL_PREFETCH_DELAY_MS = 120
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
-const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
-
-const pullRequestLoadAtom = Atom.make((get) => {
-	const view = get(activeViewAtom)
-	const cacheKey = viewCacheKey(view)
-	const cache = get(queueLoadCacheAtom)
-	const result = get(pullRequestsAtom)
-	const resolved = AsyncResult.getOrElse(result, () => null)
-	return cache[cacheKey] ?? (resolved && viewCacheKey(resolved.view) === cacheKey ? resolved : null)
-})
-
-const isLoadingQueueModeAtom = Atom.make((get) => {
-	const cacheKey = viewCacheKey(get(activeViewAtom))
-	const resolved = AsyncResult.getOrElse(get(pullRequestsAtom), () => null)
-	return resolved !== null && viewCacheKey(resolved.view) !== cacheKey
-})
-
-const pullRequestStatusAtom = Atom.make((get): LoadStatus => {
-	const result = get(pullRequestsAtom)
-	const load = get(pullRequestLoadAtom)
-	const isLoadingQueue = get(isLoadingQueueModeAtom)
-	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
-	if (AsyncResult.isFailure(result) && load === null) return "error"
-	return "ready"
-})
-
-const displayedPullRequestsAtom = Atom.make((get) => {
-	const load = get(pullRequestLoadAtom)
-	const overrides = get(pullRequestOverridesAtom)
-	const recentlyCompleted = get(recentlyCompletedPullRequestsAtom)
-	const source = load?.data ?? []
-	const seenUrls = new Set<string>()
-	const open = source.map((pullRequest) => {
-		seenUrls.add(pullRequest.url)
-		return recentlyCompleted[pullRequest.url] ?? overrides[pullRequest.url] ?? pullRequest
-	})
-	return [...open, ...Object.values(recentlyCompleted).filter((pullRequest) => !seenUrls.has(pullRequest.url))]
-})
-
-const effectiveFilterQueryAtom = Atom.make((get) => (get(filterModeAtom) ? get(filterDraftAtom) : get(filterQueryAtom)).trim().toLowerCase())
-
-const filteredPullRequestsAtom = Atom.make((get) => {
-	const pullRequests = get(displayedPullRequestsAtom)
-	const query = get(effectiveFilterQueryAtom)
-	if (query.length === 0) return pullRequests
-	return pullRequests
-		.flatMap((pullRequest) => {
-			const score = pullRequestFilterScore(pullRequest, query)
-			return score === null ? [] : [{ pullRequest, score }]
-		})
-		.sort((left, right) => left.score - right.score || right.pullRequest.createdAt.getTime() - left.pullRequest.createdAt.getTime())
-		.map(({ pullRequest }) => pullRequest)
-})
-
-const visibleRepoOrderAtom = Atom.make((get) => {
-	const query = get(effectiveFilterQueryAtom)
-	if (query.length === 0) return [] as readonly string[]
-	return [...new Set(get(filteredPullRequestsAtom).map((pullRequest) => pullRequest.repository))]
-})
-
-const visibleGroupsAtom = Atom.make((get) => groupBy(get(filteredPullRequestsAtom), (pullRequest) => pullRequest.repository, get(visibleRepoOrderAtom)))
-
-const visiblePullRequestsAtom = Atom.make((get) => get(visibleGroupsAtom).flatMap(([, pullRequests]) => pullRequests))
-
-const groupStartsAtom = Atom.make((get) => {
-	const groups = get(visibleGroupsAtom)
-	const starts: number[] = []
-	for (let index = 0; index < groups.length; index++) {
-		if (index === 0) starts.push(0)
-		else starts.push(starts[index - 1]! + groups[index - 1]![1].length)
-	}
-	return starts
-})
-
-const selectedPullRequestAtom = Atom.make((get) => {
-	const pullRequests = get(visiblePullRequestsAtom)
-	const index = get(selectedIndexAtom)
-	return pullRequests[index] ?? null
-})
-
-const selectedDiffKeyAtom = Atom.make((get) => {
-	const pullRequest = get(selectedPullRequestAtom)
-	return pullRequest ? pullRequestDiffKey(pullRequest) : null
-})
-
-const selectedDiffStateAtom = Atom.make((get) => {
-	const key = get(selectedDiffKeyAtom)
-	if (!key) return undefined
-	return get(pullRequestDiffCacheAtom)[key]
-})
 
 const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferred: PullRequestMergeMethod | undefined): PullRequestMergeMethod => {
 	if (!allowed) return preferred ?? pullRequestMergeMethods[0]
@@ -382,17 +299,6 @@ const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferre
 }
 
 const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inner) / 2)
-
-const pullRequestFilterScore = (pullRequest: PullRequestItem, query: string) => {
-	const normalized = query.trim().toLowerCase()
-	if (normalized.length === 0) return 0
-	const fields = [pullRequest.title.toLowerCase(), pullRequest.repository.toLowerCase(), pullRequest.headRefName.toLowerCase(), String(pullRequest.number)]
-	const scores = fields.flatMap((field, index) => {
-		const matchIndex = field.indexOf(normalized)
-		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
-	})
-	return scores.length > 0 ? Math.min(...scores) : null
-}
 
 const repositoryFilterScore = (repository: RepositoryListItem, query: string) => {
 	const normalized = query.trim().toLowerCase()

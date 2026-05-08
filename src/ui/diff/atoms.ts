@@ -4,8 +4,8 @@ import type { DiffCommentSide, PullRequestReviewComment } from "../../domain.js"
 import { loadStoredDiffWhitespaceMode } from "../../themeStore.js"
 import { GitHubService } from "../../services/GitHubService.js"
 import { githubRuntime } from "../../services/runtime.js"
-import { parsePullRequestRevisionAtomKey } from "../pullRequests/atoms.js"
-import { type DiffView, type DiffWhitespaceMode, type DiffWrapMode, type PullRequestDiffState } from "../diff.js"
+import { parsePullRequestRevisionAtomKey, selectedPullRequestAtom } from "../pullRequests/atoms.js"
+import { type DiffView, type DiffWhitespaceMode, type DiffWrapMode, type PullRequestDiffState, pullRequestDiffKey } from "../diff.js"
 
 export const initialDiffWhitespaceMode = await Effect.runPromise(loadStoredDiffWhitespaceMode)
 
@@ -32,3 +32,15 @@ export const pullRequestDiffAtom = Atom.family((key: string) => {
 export const listPullRequestReviewCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestReviewComments(input.repository, input.number)),
 )
+
+// === Derived selection atoms ===
+export const selectedDiffKeyAtom = Atom.make((get) => {
+	const pullRequest = get(selectedPullRequestAtom)
+	return pullRequest ? pullRequestDiffKey(pullRequest) : null
+})
+
+export const selectedDiffStateAtom = Atom.make((get) => {
+	const key = get(selectedDiffKeyAtom)
+	if (!key) return undefined
+	return get(pullRequestDiffCacheAtom)[key]
+})

@@ -1,9 +1,11 @@
 import { Effect, Schedule } from "effect"
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import { config } from "../../config.js"
 import type {
 	IssueItem,
 	ListPullRequestPageInput,
+	LoadStatus,
 	PullRequestItem,
 	PullRequestLabel,
 	PullRequestMergeAction,
@@ -16,7 +18,10 @@ import { initialPullRequestView, type PullRequestView, viewCacheKey, viewMode, v
 import { CacheService, type PullRequestCacheKey } from "../../services/CacheService.js"
 import { GitHubService } from "../../services/GitHubService.js"
 import { detectedRepository, githubRuntime, pullRequestPageSize } from "../../services/runtime.js"
+import { effectiveFilterQueryAtom } from "../filter/atoms.js"
 import { initialRetryProgress, RetryProgress } from "../FooterHints.js"
+import { selectedIndexAtom } from "../listSelection/atoms.js"
+import { groupBy } from "../pullRequests.js"
 
 export const PR_FETCH_RETRIES = 6
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
@@ -160,3 +165,91 @@ export const mergePullRequestAtom = githubRuntime.fn<{ readonly repository: stri
 export const closePullRequestAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.closePullRequest(input.repository, input.number)),
 )
+
+// === Derived atoms (PR list pipeline) ===
+const pullRequestFilterScore = (pullRequest: PullRequestItem, query: string) => {
+	const normalized = query.trim().toLowerCase()
+	if (normalized.length === 0) return 0
+	const fields = [pullRequest.title.toLowerCase(), pullRequest.repository.toLowerCase(), pullRequest.headRefName.toLowerCase(), String(pullRequest.number)]
+	const scores = fields.flatMap((field, index) => {
+		const matchIndex = field.indexOf(normalized)
+		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
+	})
+	return scores.length > 0 ? Math.min(...scores) : null
+}
+
+export const pullRequestLoadAtom = Atom.make((get) => {
+	const view = get(activeViewAtom)
+	const cacheKey = viewCacheKey(view)
+	const cache = get(queueLoadCacheAtom)
+	const result = get(pullRequestsAtom)
+	const resolved = AsyncResult.getOrElse(result, () => null)
+	return cache[cacheKey] ?? (resolved && viewCacheKey(resolved.view) === cacheKey ? resolved : null)
+})
+
+export const isLoadingQueueModeAtom = Atom.make((get) => {
+	const cacheKey = viewCacheKey(get(activeViewAtom))
+	const resolved = AsyncResult.getOrElse(get(pullRequestsAtom), () => null)
+	return resolved !== null && viewCacheKey(resolved.view) !== cacheKey
+})
+
+export const pullRequestStatusAtom = Atom.make((get): LoadStatus => {
+	const result = get(pullRequestsAtom)
+	const load = get(pullRequestLoadAtom)
+	const isLoadingQueue = get(isLoadingQueueModeAtom)
+	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
+	if (AsyncResult.isFailure(result) && load === null) return "error"
+	return "ready"
+})
+
+export const displayedPullRequestsAtom = Atom.make((get) => {
+	const load = get(pullRequestLoadAtom)
+	const overrides = get(pullRequestOverridesAtom)
+	const recentlyCompleted = get(recentlyCompletedPullRequestsAtom)
+	const source = load?.data ?? []
+	const seenUrls = new Set<string>()
+	const open = source.map((pullRequest) => {
+		seenUrls.add(pullRequest.url)
+		return recentlyCompleted[pullRequest.url] ?? overrides[pullRequest.url] ?? pullRequest
+	})
+	return [...open, ...Object.values(recentlyCompleted).filter((pullRequest) => !seenUrls.has(pullRequest.url))]
+})
+
+export const filteredPullRequestsAtom = Atom.make((get) => {
+	const pullRequests = get(displayedPullRequestsAtom)
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return pullRequests
+	return pullRequests
+		.flatMap((pullRequest) => {
+			const score = pullRequestFilterScore(pullRequest, query)
+			return score === null ? [] : [{ pullRequest, score }]
+		})
+		.sort((left, right) => left.score - right.score || right.pullRequest.createdAt.getTime() - left.pullRequest.createdAt.getTime())
+		.map(({ pullRequest }) => pullRequest)
+})
+
+export const visibleRepoOrderAtom = Atom.make((get) => {
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return [] as readonly string[]
+	return [...new Set(get(filteredPullRequestsAtom).map((pullRequest) => pullRequest.repository))]
+})
+
+export const visibleGroupsAtom = Atom.make((get) => groupBy(get(filteredPullRequestsAtom), (pullRequest) => pullRequest.repository, get(visibleRepoOrderAtom)))
+
+export const visiblePullRequestsAtom = Atom.make((get) => get(visibleGroupsAtom).flatMap(([, pullRequests]) => pullRequests))
+
+export const groupStartsAtom = Atom.make((get) => {
+	const groups = get(visibleGroupsAtom)
+	const starts: number[] = []
+	for (let index = 0; index < groups.length; index++) {
+		if (index === 0) starts.push(0)
+		else starts.push(starts[index - 1]! + groups[index - 1]![1].length)
+	}
+	return starts
+})
+
+export const selectedPullRequestAtom = Atom.make((get) => {
+	const pullRequests = get(visiblePullRequestsAtom)
+	const index = get(selectedIndexAtom)
+	return pullRequests[index] ?? null
+})
