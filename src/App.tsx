@@ -62,6 +62,8 @@ import { favoriteRepositoriesAtom, selectedRepositoryIndexAtom, workspaceSurface
 import { commentsViewActiveAtom, commentsViewSelectionAtom, pullRequestCommentsAtom, pullRequestCommentsLoadedAtom } from "./ui/comments/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
+import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
+import { noticeAtom } from "./ui/notice/atoms.js"
 import {
 	diffCommentAnchorIndexAtom,
 	diffCommentRangeStartIndexAtom,
@@ -394,9 +396,6 @@ const issuesAtom = githubRuntime
 	)
 	.pipe(Atom.keepAlive)
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
-const selectedIndexAtom = Atom.make(0)
-const selectedIssueIndexAtom = Atom.make(0)
-const noticeAtom = Atom.make<string | null>(null)
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
@@ -593,6 +592,50 @@ const pullRequestFilterScore = (pullRequest: PullRequestItem, query: string) => 
 		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
 	})
 	return scores.length > 0 ? Math.min(...scores) : null
+}
+
+const repositoryFilterScore = (repository: RepositoryListItem, query: string) => {
+	const normalized = query.trim().toLowerCase()
+	if (normalized.length === 0) return 0
+	const fields = [repository.repository.toLowerCase(), repository.description?.toLowerCase() ?? "", repository.favorite ? "favorite" : "", repository.recent ? "recent" : ""]
+	const scores = fields.flatMap((field, index) => {
+		const matchIndex = field.indexOf(normalized)
+		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
+	})
+	return scores.length > 0 ? Math.min(...scores) : null
+}
+
+const issueFilterScore = (issue: IssueItem, query: string) => {
+	const normalized = query.trim().toLowerCase()
+	if (normalized.length === 0) return 0
+	const fields = [
+		issue.title.toLowerCase(),
+		issue.repository.toLowerCase(),
+		String(issue.number),
+		issue.author.toLowerCase(),
+		issue.labels
+			.map((label) => label.name)
+			.join(" ")
+			.toLowerCase(),
+		issue.body.toLowerCase(),
+	]
+	const scores = fields.flatMap((field, index) => {
+		const matchIndex = field.indexOf(normalized)
+		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
+	})
+	return scores.length > 0 ? Math.min(...scores) : null
+}
+
+const filterByScore = <Item,>(items: readonly Item[], query: string, scoreItem: (item: Item, query: string) => number | null, getTime: (item: Item) => number) => {
+	const normalized = query.trim().toLowerCase()
+	if (normalized.length === 0) return items
+	return items
+		.flatMap((item) => {
+			const score = scoreItem(item, normalized)
+			return score === null ? [] : [{ item, score }]
+		})
+		.sort((left, right) => left.score - right.score || getTime(right.item) - getTime(left.item))
+		.map(({ item }) => item)
 }
 
 const pullRequestDetailKey = (pullRequest: PullRequestItem) => `${pullRequest.url}:${pullRequest.headRefOid}`
