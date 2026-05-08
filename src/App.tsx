@@ -2,6 +2,7 @@ import type { DiffRenderable, PasteEvent, ScrollBoxRenderable } from "@opentui/c
 import { RegistryContext, useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
 import { useKeymap } from "@ghui/keymap/react"
 import { appKeymap, type AppCtx } from "./keymap/all.js"
+import { buildAppCtx } from "./keymap/contexts/appCtx.js"
 import { useOpenTuiSubscribe } from "./keyboard/opentuiAdapter.js"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect, Layer, Schedule } from "effect"
@@ -57,23 +58,7 @@ import { detectSystemAppearance } from "./systemAppearance.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { loadStoredDiffWhitespaceMode, loadStoredThemeConfig, saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
-import {
-	backspace as editorBackspace,
-	deleteForward as editorDeleteForward,
-	deleteToLineEnd,
-	deleteToLineStart,
-	deleteWordBackward,
-	deleteWordForward,
-	insertText,
-	moveLeft as editorMoveLeft,
-	moveLineEnd,
-	moveLineStart,
-	moveRight as editorMoveRight,
-	moveVertically,
-	moveWordBackward,
-	moveWordForward,
-	type CommentEditorValue,
-} from "./ui/commentEditor.js"
+import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
 import {
 	buildStackedDiffFiles,
 	diffAnchorOnSide,
@@ -1270,7 +1255,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		refreshGenerationRef.current += 1
 		setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
 		setActiveView(view)
-		refreshPullRequestsAtom()
 		setSelectedIndex(registry.get(queueSelectionAtom)[viewCacheKey(view)] ?? 0)
 		setSelectedIssueIndex(0)
 		setRecentlyCompletedPullRequests({})
@@ -3522,200 +3506,79 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	// === Build the keymap context ===
-	const appCtx: AppCtx = {
-		closeModalActive,
-		pullRequestStateModalActive,
-		mergeModalActive,
-		commentThreadModalActive,
-		changedFilesModalActive,
-		submitReviewModalActive,
-		labelModalActive,
-		themeModalActive,
-		openRepositoryModalActive,
-		commentModalActive,
-		deleteCommentModalActive,
-		commandPaletteActive,
-		filterMode,
-		diffFullView,
-		detailFullView,
-		commentsViewActive,
-		textInputActive:
-			commentModalActive ||
-			commandPaletteActive ||
-			openRepositoryModalActive ||
-			changedFilesModalActive ||
-			submitReviewModalActive ||
-			labelModalActive ||
-			filterMode ||
-			(themeModalActive && themeModal.filterMode),
-		closeModal: {
-			closeModal: closeActiveModal,
-			confirmClose: confirmClosePullRequest,
+	const appCtx: AppCtx = buildAppCtx({
+		flags: {
+			closeModalActive,
+			pullRequestStateModalActive,
+			mergeModalActive,
+			commentThreadModalActive,
+			changedFilesModalActive,
+			submitReviewModalActive,
+			labelModalActive,
+			themeModalActive,
+			openRepositoryModalActive,
+			commentModalActive,
+			deleteCommentModalActive,
+			commandPaletteActive,
+			filterMode,
+			diffFullView,
+			detailFullView,
+			commentsViewActive,
+			textInputActive:
+				commentModalActive ||
+				commandPaletteActive ||
+				openRepositoryModalActive ||
+				changedFilesModalActive ||
+				submitReviewModalActive ||
+				labelModalActive ||
+				filterMode ||
+				(themeModalActive && themeModal.filterMode),
 		},
-		pullRequestStateModal: {
-			closeModal: closeActiveModal,
-			confirmStateChange: confirmPullRequestStateChange,
-			moveSelection: movePullRequestStateSelection,
-		},
-		mergeModal: {
-			availableActionCount: visibleMergeKinds(mergeModal.info, mergeModal.allowedMethods, mergeModal.selectedMethod).length,
-			multipleMethodsAllowed: mergeModal.allowedMethods ? allowedMergeMethodList(mergeModal.allowedMethods).length > 1 : false,
-			inConfirmMode: mergeModal.pendingConfirm !== null,
-			closeOrBackOut: cancelOrCloseMergeModal,
-			confirmMerge: confirmMergeAction,
-			cycleMethod: cycleMergeMethod,
-			moveSelection: moveMergeSelection,
-		},
-		commentThreadModal: {
-			halfPage,
-			closeModal: closeActiveModal,
-			openInlineComment: openDiffCommentModal,
-			scrollBy: scrollCommentThread,
-		},
-		changedFilesModal: {
-			hasResults: changedFileResults.length > 0,
-			closeModal: closeActiveModal,
-			selectFile: selectChangedFile,
-			moveSelection: moveChangedFileSelection,
-		},
-		submitReviewModal: {
-			summaryFocused: submitReviewModal.focus === "body",
-			handleEscape: () => {
-				if (submitReviewModal.focus === "body") setSubmitReviewModal((current) => ({ ...current, focus: "action" }))
-				else closeActiveModal()
-			},
-			submit: confirmSubmitReview,
-			focusSummary: () => setSubmitReviewModal((current) => ({ ...current, focus: "body", error: null })),
-			insertNewline: () => editSubmitReview((state) => insertText(state, "\n")),
-			moveActionSelection: moveSubmitReviewActionSelection,
-			moveLeft: () => editSubmitReview(editorMoveLeft),
-			moveRight: () => editSubmitReview(editorMoveRight),
-			moveUp: () => editSubmitReview((state) => moveVertically(state, -1)),
-			moveDown: () => editSubmitReview((state) => moveVertically(state, 1)),
-			moveLineStart: () => editSubmitReview(moveLineStart),
-			moveLineEnd: () => editSubmitReview(moveLineEnd),
-			moveWordBackward: () => editSubmitReview(moveWordBackward),
-			moveWordForward: () => editSubmitReview(moveWordForward),
-			backspace: () => editSubmitReview(editorBackspace),
-			deleteForward: () => editSubmitReview(editorDeleteForward),
-			deleteWordBackward: () => editSubmitReview(deleteWordBackward),
-			deleteWordForward: () => editSubmitReview(deleteWordForward),
-			deleteToLineStart: () => editSubmitReview(deleteToLineStart),
-			deleteToLineEnd: () => editSubmitReview(deleteToLineEnd),
-		},
-		labelModal: {
-			closeModal: closeActiveModal,
-			toggleSelected: toggleLabelAtIndex,
-			moveSelection: moveLabelSelection,
-		},
-		themeModal: {
-			filterMode: themeModal.filterMode,
-			hasFilteredResults: filterThemeDefinitions(themeModal.query, themeModal.tone).length > 0,
-			closeWithoutSaving: () => closeThemeModal(false),
-			clearFilter: () => updateThemeQuery("", { filterMode: false }),
-			enterFilterMode: () => updateThemeQuery("", { filterMode: true }),
-			toggleMode: toggleThemeMode,
-			toggleTone: toggleThemeTone,
-			confirmSelection: () => closeThemeModal(true),
-			moveSelection: moveThemeSelection,
-		},
-		openRepositoryModal: {
-			closeModal: closeActiveModal,
-			openFromInput: openRepositoryFromInput,
-		},
-		commentModal: {
-			closeModal: closeActiveModal,
-			submit: submitCommentModal,
-			insertNewline: () => editComment((state) => insertText(state, "\n")),
-			moveLeft: () => editComment(editorMoveLeft),
-			moveRight: () => editComment(editorMoveRight),
-			moveUp: () => editComment((state) => moveVertically(state, -1)),
-			moveDown: () => editComment((state) => moveVertically(state, 1)),
-			moveLineStart: () => editComment(moveLineStart),
-			moveLineEnd: () => editComment(moveLineEnd),
-			moveWordBackward: () => editComment(moveWordBackward),
-			moveWordForward: () => editComment(moveWordForward),
-			backspace: () => editComment(editorBackspace),
-			deleteForward: () => editComment(editorDeleteForward),
-			deleteWordBackward: () => editComment(deleteWordBackward),
-			deleteWordForward: () => editComment(deleteWordForward),
-			deleteToLineStart: () => editComment(deleteToLineStart),
-			deleteToLineEnd: () => editComment(deleteToLineEnd),
-		},
-		deleteCommentModal: {
-			closeModal: closeActiveModal,
-			confirmDelete: confirmDeleteComment,
-		},
-		commandPalette: {
-			closeModal: closeActiveModal,
-			runSelected: () => {
-				if (selectedCommand) runCommandPaletteCommand(selectedCommand)
-			},
-			moveSelection: moveCommandPaletteSelection,
-		},
+		closeModal: { closeActiveModal, confirmClosePullRequest },
+		pullRequestStateModal: { closeActiveModal, confirmPullRequestStateChange, movePullRequestStateSelection },
+		mergeModal: { mergeModal, cancelOrCloseMergeModal, confirmMergeAction, cycleMergeMethod, moveMergeSelection },
+		commentThreadModal: { halfPage, closeActiveModal, openDiffCommentModal, scrollCommentThread },
+		changedFilesModal: { hasResults: changedFileResults.length > 0, closeActiveModal, selectChangedFile, moveChangedFileSelection },
+		submitReviewModal: { submitReviewModal, closeActiveModal, setSubmitReviewModal, confirmSubmitReview, editSubmitReview, moveSubmitReviewActionSelection },
+		labelModal: { closeActiveModal, toggleLabelAtIndex, moveLabelSelection },
+		themeModal: { themeModal, closeThemeModal, updateThemeQuery, toggleThemeMode, toggleThemeTone, moveThemeSelection },
+		openRepositoryModal: { closeActiveModal, openRepositoryFromInput },
+		commentModal: { closeActiveModal, submitCommentModal, editComment },
+		deleteCommentModal: { closeActiveModal, confirmDeleteComment },
+		commandPalette: { closeActiveModal, selectedCommand, runCommandPaletteCommand, moveCommandPaletteSelection },
 		filterModeCtx: {
-			cancel: () => {
+			cancelFilter: () => {
 				setFilterDraft(filterQuery)
 				setFilterMode(false)
 			},
-			commit: () => {
+			commitFilter: () => {
 				setFilterQuery(filterDraft)
 				setFilterMode(false)
 			},
 		},
 		diff: {
 			halfPage,
-			handleEscape: () => {
-				if (diffCommentRangeActive) setDiffCommentRangeStartIndex(null)
-				else runCommandById("diff.close")
-			},
-			openSelectedComment: openSelectedDiffComment,
-			toggleRange: () => runCommandById("diff.toggle-range"),
-			toggleView: () => runCommandById("diff.toggle-view"),
-			toggleWrap: () => runCommandById("diff.toggle-wrap"),
-			reload: () => runCommandById("diff.reload"),
-			nextThread: () => runCommandById("diff.next-thread"),
-			previousThread: () => runCommandById("diff.previous-thread"),
-			moveAnchor: moveDiffCommentAnchor,
-			moveAnchorToBoundary: moveDiffCommentToBoundary,
-			alignAnchor: alignSelectedDiffCommentAnchor,
-			selectSide: selectDiffCommentSide,
-			openChangedFiles: () => runCommandById("diff.changed-files"),
-			openSubmitReview: () => runCommandById("pull.submit-review"),
-			nextFile: () => runCommandById("diff.next-file"),
-			previousFile: () => runCommandById("diff.previous-file"),
-			openInBrowser: () => runCommandById("pull.open-browser"),
+			diffCommentRangeActive,
+			setDiffCommentRangeStartIndex,
+			runCommandById,
+			openSelectedDiffComment,
+			moveDiffCommentAnchor,
+			moveDiffCommentToBoundary,
+			alignSelectedDiffCommentAnchor,
+			selectDiffCommentSide,
 		},
-		detail: {
-			halfPage,
-			scrollBy: scrollDetailFullViewBy,
-			scrollTo: scrollDetailFullViewTo,
-			closeDetail: () => runCommandById("detail.close"),
-			openTheme: () => runCommandById("theme.open"),
-			openDiff: () => runCommandById("diff.open"),
-			openComments: () => runCommandById("comments.open"),
-			closePullRequest: () => runCommandById("pull.close"),
-			openLabels: () => runCommandById("pull.labels"),
-			openMerge: () => runCommandById("pull.merge"),
-			toggleDraft: () => runCommandById("pull.toggle-draft"),
-			openReview: () => runCommandById("pull.submit-review"),
-			refresh: () => runCommandById("pull.refresh"),
-			openInBrowser: () => runCommandById("pull.open-browser"),
-			copyMetadata: () => runCommandById("pull.copy-metadata"),
-		},
+		detail: { halfPage, scrollDetailFullViewBy, scrollDetailFullViewTo, runCommandById },
 		commentsView: {
 			halfPage,
-			scrollBy: moveCommentsSelection,
-			scrollTo: setCommentsSelection,
 			visibleCount: commentsRowCount,
 			canEditSelected: canEditComment(selectedOrderedComment),
+			moveCommentsSelection,
+			setCommentsSelection,
 			closeCommentsView,
-			openInBrowser: openSelectedCommentInBrowser,
-			refresh: refreshSelectedComments,
-			newComment: () => runCommandById("comments.new"),
-			confirmSelection: confirmCommentSelection,
-			editSelected: () => runCommandById("comments.edit"),
-			deleteSelected: () => runCommandById("comments.delete"),
+			openSelectedCommentInBrowser,
+			refreshSelectedComments,
+			confirmCommentSelection,
+			runCommandById,
 		},
 		listNav: {
 			halfPage,
@@ -3728,9 +3591,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				(activeWorkspaceSurface === "pullRequests" && selectedPullRequest !== null) ||
 				(activeWorkspaceSurface === "issues" && !isWideLayout && selectedIssue !== null) ||
 				(activeWorkspaceSurface === "repos" && !isWideLayout && selectedRepositoryItem !== null),
-			runCommandById: (id) => {
-				runCommandById(id)
-			},
+			runCommandById,
 			openSelection: () => {
 				if (activeWorkspaceSurface === "repos") openSelectedRepository()
 				else runCommandById("detail.open")
@@ -3744,9 +3605,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			cycleWorkspaceSurface,
 			scrollDetailPreviewBy,
 			scrollDetailPreviewTo,
-			clearFilter: () => {
-				runCommandById("filter.clear")
-			},
 			stepSelected,
 			stepSelectedUp,
 			stepSelectedDown,
@@ -3757,11 +3615,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			setSelected: (index) =>
 				activeWorkspaceSurface === "repos" ? setSelectedRepositoryIndex(index) : activeWorkspaceSurface === "issues" ? setSelectedIssueIndex(index) : setSelectedIndex(index),
 		},
-		openCommandPalette: () => {
-			runCommandById("command.open")
-		},
+		openCommandPalette: () => runCommandById("command.open"),
 		handleQuitOrClose,
-	}
+	})
 
 	useKeymap(appKeymap, appCtx, useOpenTuiSubscribe())
 
@@ -4087,9 +3943,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 							</box>
 						)}
 						<Divider width={contentWidth} />
-						<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowRepoDetailHeight} flexGrow={0}>
-							<RepoDetailPane repository={selectedRepositoryItem} width={contentWidth} height={narrowRepoDetailHeight} descriptionLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
-						</scrollbox>
+						<RepoDetailPane
+							repository={selectedRepositoryItem}
+							width={contentWidth}
+							height={narrowRepoDetailHeight}
+							descriptionLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+							descriptionScrollRef={detailPreviewScrollRef}
+						/>
 					</box>
 				)
 			) : activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
