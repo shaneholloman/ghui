@@ -184,6 +184,7 @@ import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.
 import { getIssueDetailJunctionRows, IssueDetailPane, IssueList } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
+import { useClampedIndex } from "./ui/useClampedIndex.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { readWorkspacePreferencesFile, writeWorkspacePreferencesFile } from "./workspacePreferenceFile.js"
@@ -1556,26 +1557,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		return () => globalThis.clearTimeout(timeout)
 	}, [terminalFocused, pullRequestLoad?.fetchedAt])
 
-	useEffect(() => {
-		setSelectedIndex((current) => {
-			if (visiblePullRequests.length === 0) return 0
-			return Math.max(0, Math.min(current, visiblePullRequests.length - 1))
-		})
-	}, [visiblePullRequests.length])
-
-	useEffect(() => {
-		setSelectedIssueIndex((current) => {
-			if (issues.length === 0) return 0
-			return Math.max(0, Math.min(current, issues.length - 1))
-		})
-	}, [issues.length])
-
-	useEffect(() => {
-		setSelectedRepositoryIndex((current) => {
-			if (repositoryItems.length === 0) return 0
-			return Math.max(0, Math.min(current, repositoryItems.length - 1))
-		})
-	}, [repositoryItems.length])
+	useClampedIndex(visiblePullRequests.length, setSelectedIndex)
+	useClampedIndex(issues.length, setSelectedIssueIndex)
+	useClampedIndex(repositoryItems.length, setSelectedRepositoryIndex)
 
 	useEffect(() => {
 		if (!username) return
