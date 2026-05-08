@@ -2,10 +2,14 @@ import { Effect } from "effect"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import type { DiffCommentSide, PullRequestReviewComment } from "../../domain.js"
 import { loadStoredDiffWhitespaceMode } from "../../themeStore.js"
+import { GitHubService } from "../../services/GitHubService.js"
+import { githubRuntime } from "../../services/runtime.js"
+import { parsePullRequestRevisionAtomKey } from "../pullRequests/atoms.js"
 import { type DiffView, type DiffWhitespaceMode, type DiffWrapMode, type PullRequestDiffState } from "../diff.js"
 
 export const initialDiffWhitespaceMode = await Effect.runPromise(loadStoredDiffWhitespaceMode)
 
+// === UI state atoms ===
 export const diffFullViewAtom = Atom.make(false)
 export const diffFileIndexAtom = Atom.make(0)
 export const diffScrollTopAtom = Atom.make(0)
@@ -18,3 +22,13 @@ export const diffCommentRangeStartIndexAtom = Atom.make<number | null>(null)
 export const diffCommentThreadsAtom = Atom.make<Record<string, readonly PullRequestReviewComment[]>>({}).pipe(Atom.keepAlive)
 export const diffCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
 export const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
+
+// === Data-fetching atoms ===
+export const pullRequestDiffAtom = Atom.family((key: string) => {
+	const { repository, number } = parsePullRequestRevisionAtomKey(key, "diff")
+	return githubRuntime.atom(GitHubService.use((github) => github.getPullRequestDiff(repository, number)))
+})
+
+export const listPullRequestReviewCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listPullRequestReviewComments(input.repository, input.number)),
+)

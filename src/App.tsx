@@ -34,16 +34,28 @@ import { errorMessage } from "./errors.js"
 import { getMergeKindDefinition, mergeInfoFromPullRequest, requiresMarkReady, visibleMergeKinds } from "./mergeActions.js"
 import type { PullRequestLoad } from "./pullRequestLoad.js"
 import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewLabel, viewMode, viewRepository } from "./pullRequestViews.js"
-import { BrowserOpener } from "./services/BrowserOpener.js"
-import { CacheService } from "./services/CacheService.js"
-import { Clipboard } from "./services/Clipboard.js"
-import { GitHubService } from "./services/GitHubService.js"
+
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
-import { favoriteRepositoriesAtom, selectedRepositoryIndexAtom, workspaceSurfaceAtom } from "./workspace/atoms.js"
+import { favoriteRepositoriesAtom, readWorkspacePreferencesAtom, selectedRepositoryIndexAtom, workspaceSurfaceAtom, writeWorkspacePreferencesAtom } from "./workspace/atoms.js"
 import { useWorkspacePreferencesPersistence } from "./workspace/useWorkspacePreferencesPersistence.js"
-import { commentsViewActiveAtom, commentsViewSelectionAtom, pullRequestCommentsAtom, pullRequestCommentsLoadedAtom } from "./ui/comments/atoms.js"
+import {
+	commentsViewActiveAtom,
+	commentsViewSelectionAtom,
+	createPullRequestCommentAtom,
+	createPullRequestIssueCommentAtom,
+	deletePullRequestIssueCommentAtom,
+	deleteReviewCommentAtom,
+	editPullRequestIssueCommentAtom,
+	editReviewCommentAtom,
+	listIssueCommentsAtom,
+	listPullRequestCommentsAtom,
+	pullRequestCommentsAtom,
+	pullRequestCommentsLoadedAtom,
+	replyToReviewCommentAtom,
+} from "./ui/comments/atoms.js"
+import { addIssueLabelAtom, issuesAtom, removeIssueLabelAtom } from "./ui/issues/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
 import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
@@ -65,7 +77,6 @@ import {
 	listRepoLabelsAtom,
 	mergePullRequestAtom,
 	pruneCacheAtom,
-	parsePullRequestRevisionAtomKey,
 	pullRequestDetailKey,
 	pullRequestDetailsAtom,
 	pullRequestOverridesAtom,
@@ -84,10 +95,8 @@ import {
 	writeQueueCacheAtom,
 } from "./ui/pullRequests/atoms.js"
 
-const pullRequestDetailAtomKey = pullRequestRevisionAtomKey
-const pullRequestDiffAtomKey = pullRequestRevisionAtomKey
-const parsePullRequestDiffAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "diff")
 import { useIdleRefresh } from "./ui/pullRequests/useIdleRefresh.js"
+import { copyToClipboardAtom, openInBrowserAtom, openUrlAtom, submitPullRequestReviewAtom } from "./services/systemAtoms.js"
 import {
 	diffCommentAnchorIndexAtom,
 	diffCommentRangeStartIndexAtom,
@@ -100,6 +109,8 @@ import {
 	diffScrollTopAtom,
 	diffWhitespaceModeAtom,
 	diffWrapModeAtom,
+	listPullRequestReviewCommentsAtom,
+	pullRequestDiffAtom,
 	pullRequestDiffCacheAtom,
 } from "./ui/diff/atoms.js"
 import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
@@ -197,10 +208,8 @@ import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
-import type { ViewerId, WorkspacePreferences } from "./workspacePreferences.js"
 import {
 	detectedRepository,
-	githubRuntime,
 	initialRecentRepositories,
 	mockPrCount,
 	mockRepositoryCatalog,
@@ -274,18 +283,6 @@ const DETAIL_PREFETCH_BEHIND = 1
 const DETAIL_PREFETCH_AHEAD = 3
 const DETAIL_PREFETCH_CONCURRENCY = 3
 const DETAIL_PREFETCH_DELAY_MS = 120
-const issuesAtom = githubRuntime
-	.atom(
-		GitHubService.use((github) =>
-			Effect.gen(function* () {
-				const view = yield* Atom.get(activeViewAtom)
-				const repository = viewRepository(view)
-				if (!repository) return [] as readonly IssueItem[]
-				return yield* github.listOpenIssues(repository)
-			}),
-		),
-	)
-	.pipe(Atom.keepAlive)
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 
@@ -377,51 +374,6 @@ const selectedDiffStateAtom = Atom.make((get) => {
 	if (!key) return undefined
 	return get(pullRequestDiffCacheAtom)[key]
 })
-
-const readWorkspacePreferencesAtom = githubRuntime.fn<ViewerId>()((viewer) => CacheService.use((cache) => cache.readWorkspacePreferences(viewer)))
-const writeWorkspacePreferencesAtom = githubRuntime.fn<WorkspacePreferences>()((preferences) => CacheService.use((cache) => cache.writeWorkspacePreferences(preferences)))
-const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
-	GitHubService.use((github) => github.addIssueLabel(input.repository, input.number, input.label)),
-)
-const removeIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
-	GitHubService.use((github) => github.removeIssueLabel(input.repository, input.number, input.label)),
-)
-const pullRequestDiffAtom = Atom.family((key: string) => {
-	const { repository, number } = parsePullRequestDiffAtomKey(key)
-	return githubRuntime.atom(GitHubService.use((github) => github.getPullRequestDiff(repository, number)))
-})
-const listPullRequestReviewCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
-	GitHubService.use((github) => github.listPullRequestReviewComments(input.repository, input.number)),
-)
-const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
-	GitHubService.use((github) => github.listPullRequestComments(input.repository, input.number)),
-)
-const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
-	GitHubService.use((github) => github.listIssueComments(input.repository, input.number)),
-)
-const createPullRequestCommentAtom = githubRuntime.fn<CreatePullRequestCommentInput>()((input) => GitHubService.use((github) => github.createPullRequestComment(input)))
-const createPullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly body: string }>()((input) =>
-	GitHubService.use((github) => github.createPullRequestIssueComment(input.repository, input.number, input.body)),
-)
-const replyToReviewCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly inReplyTo: string; readonly body: string }>()((input) =>
-	GitHubService.use((github) => github.replyToReviewComment(input.repository, input.number, input.inReplyTo, input.body)),
-)
-const editPullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string; readonly body: string }>()((input) =>
-	GitHubService.use((github) => github.editPullRequestIssueComment(input.repository, input.commentId, input.body)),
-)
-const editReviewCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string; readonly body: string }>()((input) =>
-	GitHubService.use((github) => github.editReviewComment(input.repository, input.commentId, input.body)),
-)
-const deletePullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string }>()((input) =>
-	GitHubService.use((github) => github.deletePullRequestIssueComment(input.repository, input.commentId)),
-)
-const deleteReviewCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly commentId: string }>()((input) =>
-	GitHubService.use((github) => github.deleteReviewComment(input.repository, input.commentId)),
-)
-const submitPullRequestReviewAtom = githubRuntime.fn<SubmitPullRequestReviewInput>()((input) => GitHubService.use((github) => github.submitPullRequestReview(input)))
-const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
-const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
-const openUrlAtom = githubRuntime.fn<string>()((url) => BrowserOpener.use((browser) => browser.openUrl(url)))
 
 const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferred: PullRequestMergeMethod | undefined): PullRequestMergeMethod => {
 	if (!allowed) return preferred ?? pullRequestMergeMethods[0]
@@ -1235,7 +1187,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				})
 				.catch(() => {})
 		}
-		const atom = pullRequestDetailsAtom(pullRequestDetailAtomKey(pullRequest))
+		const atom = pullRequestDetailsAtom(pullRequestRevisionAtomKey(pullRequest))
 		if (forceRefresh) registry.refresh(atom)
 		void Effect.runPromise(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }))
 			.then((detail) => {
@@ -1685,7 +1637,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		if (!force && existing && (existing._tag === "Ready" || existing._tag === "Loading")) return
 
 		setPullRequestDiffCache((current) => ({ ...current, [key]: PullRequestDiffState.Loading() }))
-		const atom = pullRequestDiffAtom(pullRequestDiffAtomKey(pullRequest))
+		const atom = pullRequestDiffAtom(pullRequestRevisionAtomKey(pullRequest))
 		if (force) registry.refresh(atom)
 		void Effect.runPromise(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }))
 			.then((patch) => {
