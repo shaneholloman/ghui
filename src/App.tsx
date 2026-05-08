@@ -65,6 +65,7 @@ import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/at
 import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
 import { activeModalAtom } from "./ui/modals/atoms.js"
 import { noticeAtom } from "./ui/notice/atoms.js"
+import { useFlashNotice } from "./ui/notice/useFlashNotice.js"
 import {
 	issueOverridesAtom,
 	labelCacheAtom,
@@ -942,7 +943,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const wideDetailLines = Math.max(8, terminalHeight - 10)
 	const showWorkspaceTabs = !detailFullView && !diffFullView && !commentsViewActive
 	const wideBodyHeight = Math.max(8, terminalHeight - (showWorkspaceTabs ? 6 : 4))
-	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
@@ -968,15 +968,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const suppressNextDiffCommentScrollRef = useRef(false)
 	const headerFooterWidth = Math.max(24, contentWidth - 2)
 
-	const flashNotice = (message: string) => {
-		if (noticeTimeoutRef.current !== null) {
-			clearTimeout(noticeTimeoutRef.current)
-		}
-		setNotice(message)
-		noticeTimeoutRef.current = globalThis.setTimeout(() => {
-			setNotice((current) => (current === message ? null : current))
-		}, 2500)
-	}
+	const flashNotice = useFlashNotice()
 
 	const previewActiveTheme = (id: ThemeId) => {
 		setActiveTheme(id)
@@ -1017,9 +1009,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		() => () => {
 			refreshGenerationRef.current += 1
 			detailHydrationRef.current.clear()
-			if (noticeTimeoutRef.current !== null) {
-				clearTimeout(noticeTimeoutRef.current)
-			}
 			if (diffPrefetchTimeoutRef.current !== null) {
 				clearTimeout(diffPrefetchTimeoutRef.current)
 			}
