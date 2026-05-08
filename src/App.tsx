@@ -5,7 +5,7 @@ import { appKeymap, type AppCtx } from "./keymap/all.js"
 import { buildAppCtx } from "./keymap/contexts/appCtx.js"
 import { useOpenTuiSubscribe } from "./keyboard/opentuiAdapter.js"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { Cause, Effect, Layer, Schedule } from "effect"
+import { Cause, Effect, Schedule } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
@@ -32,9 +32,7 @@ import {
 import { allowedMergeMethodList, pullRequestMergeMethods } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
-import { detectCurrentGitHubRepository } from "./gitRemotes.js"
 import { getMergeKindDefinition, mergeInfoFromPullRequest, requiresMarkReady, visibleMergeKinds } from "./mergeActions.js"
-import { Observability } from "./observability.js"
 import { mergeCachedDetails } from "./pullRequestCache.js"
 import type { PullRequestLoad } from "./pullRequestLoad.js"
 import {
@@ -52,7 +50,6 @@ import {
 import { BrowserOpener } from "./services/BrowserOpener.js"
 import { CacheService, type PullRequestCacheKey } from "./services/CacheService.js"
 import { Clipboard } from "./services/Clipboard.js"
-import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
@@ -185,67 +182,16 @@ import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import type { ViewerId, WorkspacePreferences } from "./workspacePreferences.js"
-
-const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
-	if (value === undefined) return fallback
-	const parsed = Number.parseInt(value, 10)
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const mockPrCount = parseOptionalPositiveInt(process.env.GHUI_MOCK_PR_COUNT, null)
-const mockRepository = process.env.GHUI_MOCK_REPOSITORY?.trim() || null
-const detectedRepository = mockPrCount === null ? detectCurrentGitHubRepository() : mockRepository
-const mockUsername = process.env.GHUI_MOCK_USERNAME?.trim() || (mockPrCount !== null ? "kitlangton" : undefined)
-const mockWorkspacePreferencesPath = (() => {
-	if (mockPrCount === null) return null
-	const value = process.env.GHUI_MOCK_WORKSPACE_PREFERENCES_PATH?.trim()
-	if (value === "off" || value === "0" || value === "false") return null
-	return value && value.length > 0 ? value : ".ghui/mock-workspace-preferences.json"
-})()
-const mockRepositoryCatalog =
-	mockPrCount === null || !mockRepository
-		? []
-		: [
-				{ repository: mockRepository ?? "anomalyco/opencode", pullRequestCount: 0, issueCount: 0, description: "OpenCode project workspace" },
-				{ repository: "kitlangton/ghui", pullRequestCount: 7, issueCount: 4, description: "Terminal UI for GitHub pull requests" },
-				{ repository: "kitlangton/homebrew-tap", pullRequestCount: 0, issueCount: 0, description: "Homebrew formula automation" },
-				{ repository: "Effect-TS/effect", pullRequestCount: 31, issueCount: 9, description: "Effect TypeScript runtime and libraries" },
-			]
-const initialRecentRepositories = mockRepositoryCatalog.length > 0 ? mockRepositoryCatalog.map((repo) => repo.repository) : detectedRepository ? [detectedRepository] : []
-const mockUserIssues = mockRepositoryCatalog.flatMap(
-	(repo, index) =>
-		Array.from({ length: Math.min(3, Math.max(0, repo.issueCount)) }, (_, issueIndex) => ({
-			repository: repo.repository,
-			number: 42 + index * 10 + issueIndex,
-			title: ["Workspace hub filters", "Release automation follow-up", "Improve issue detail rendering"][(index + issueIndex) % 3]!,
-			body: `Mock user issue for ${repo.repository}.`,
-			author: mockUsername ?? "kitlangton",
-			labels: issueIndex % 2 === 0 ? [{ name: "enhancement", color: "a2eeef" }] : [{ name: "bug", color: "d73a4a" }],
-			commentCount: issueIndex,
-			createdAt: new Date(Date.now() - (index * 3 + issueIndex) * 86_400_000),
-			updatedAt: new Date(Date.now() - (index + issueIndex) * 3_600_000),
-			url: `https://github.com/${repo.repository}/issues/${42 + index * 10 + issueIndex}`,
-		})) satisfies readonly IssueItem[],
-)
-const pullRequestPageSize = Math.min(100, parseOptionalPositiveInt(process.env.GHUI_PR_PAGE_SIZE, config.prPageSize) ?? config.prPageSize)
-const githubServiceLayer =
-	mockPrCount !== null
-		? (await import("./services/MockGitHubService.js")).MockGitHubService.layer({
-				prCount: mockPrCount,
-				repoCount: parseOptionalPositiveInt(process.env.GHUI_MOCK_REPO_COUNT, 4) ?? 4,
-				repository: mockRepository,
-				repositories: mockRepositoryCatalog.map((repo) => repo.repository),
-				...(mockUsername ? { username: mockUsername } : {}),
-			})
-		: GitHubService.layerNoDeps
-const cacheServiceLayer = mockPrCount !== null ? CacheService.disabledLayer : CacheService.layerFromPath(config.cachePath)
-
-const githubRuntime = Atom.runtime(
-	Layer.mergeAll(githubServiceLayer, cacheServiceLayer, Clipboard.layerNoDeps, BrowserOpener.layerNoDeps).pipe(
-		Layer.provide(CommandRunner.layer),
-		Layer.provideMerge(Observability.layer),
-	),
-)
+import {
+	detectedRepository,
+	githubRuntime,
+	initialRecentRepositories,
+	mockPrCount,
+	mockRepositoryCatalog,
+	mockUserIssues,
+	mockWorkspacePreferencesPath,
+	pullRequestPageSize,
+} from "./services/runtime.js"
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
