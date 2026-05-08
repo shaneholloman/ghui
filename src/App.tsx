@@ -58,6 +58,7 @@ import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfi
 import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
 import { favoriteRepositoriesAtom, selectedRepositoryIndexAtom, workspaceSurfaceAtom } from "./workspace/atoms.js"
+import { useWorkspacePreferencesPersistence } from "./workspace/useWorkspacePreferencesPersistence.js"
 import { commentsViewActiveAtom, commentsViewSelectionAtom, pullRequestCommentsAtom, pullRequestCommentsLoadedAtom } from "./ui/comments/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
@@ -191,8 +192,7 @@ import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
-import { readWorkspacePreferencesFile, writeWorkspacePreferencesFile } from "./workspacePreferenceFile.js"
-import { makeWorkspacePreferences, repositoryId, viewerId, type ViewerId, type WorkspacePreferences } from "./workspacePreferences.js"
+import type { ViewerId, WorkspacePreferences } from "./workspacePreferences.js"
 
 const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
 	if (value === undefined) return fallback
@@ -896,7 +896,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const retryProgress = useAtomValue(retryProgressAtom)
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
-	const [workspacePreferencesLoadedViewer, setWorkspacePreferencesLoadedViewer] = useState<string | null>(null)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
 	const usernameResult = useAtomValue(usernameAtom)
@@ -1541,41 +1540,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	useClampedIndex(issues.length, setSelectedIssueIndex)
 	useClampedIndex(repositoryItems.length, setSelectedRepositoryIndex)
 
-	useEffect(() => {
-		if (!username) return
-		let cancelled = false
-		const viewer = viewerId(username)
-		setWorkspacePreferencesLoadedViewer(null)
-		const loadPreferences = mockWorkspacePreferencesPath ? Effect.runPromise(readWorkspacePreferencesFile(mockWorkspacePreferencesPath, viewer)) : readWorkspacePreferences(viewer)
-		void loadPreferences
-			.then((preferences) => {
-				if (cancelled) return
-				if (preferences) {
-					setFavoriteRepositories(Object.fromEntries(preferences.favoriteRepositories.map((repository) => [repository, true])))
-					setRecentRepositories(preferences.recentRepositories)
-				}
-				setWorkspacePreferencesLoadedViewer(username)
-			})
-			.catch(() => {
-				if (!cancelled) setWorkspacePreferencesLoadedViewer(username)
-			})
-		return () => {
-			cancelled = true
-		}
-	}, [username, readWorkspacePreferences])
-
-	useEffect(() => {
-		if (!username || workspacePreferencesLoadedViewer !== username) return
-		const preferences = makeWorkspacePreferences({
-			viewer: viewerId(username),
-			favoriteRepositories: Object.keys(favoriteRepositories).map(repositoryId),
-			recentRepositories: recentRepositories.map(repositoryId).slice(0, 20),
-		})
-		const savePreferences = mockWorkspacePreferencesPath
-			? Effect.runPromise(writeWorkspacePreferencesFile(mockWorkspacePreferencesPath, preferences))
-			: writeWorkspacePreferences(preferences)
-		void savePreferences.catch(() => undefined)
-	}, [favoriteRepositories, recentRepositories, username, workspacePreferencesLoadedViewer, writeWorkspacePreferences])
+	useWorkspacePreferencesPersistence({
+		username,
+		favoriteRepositories,
+		recentRepositories,
+		mockPath: mockWorkspacePreferencesPath,
+		readPreferences: readWorkspacePreferences,
+		writePreferences: writeWorkspacePreferences,
+		setFavoriteRepositories,
+		setRecentRepositories,
+	})
 
 	useEffect(() => {
 		setQueueSelection((current) => (current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex }))
