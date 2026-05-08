@@ -1,4 +1,4 @@
-import type { DiffRenderable, ScrollBoxRenderable } from "@opentui/core"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { RegistryContext, useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
 import { useKeymap } from "@ghui/keymap/react"
 import { appKeymap, type AppCtx } from "./keymap/all.js"
@@ -30,7 +30,7 @@ import type { PullRequestLoad } from "./pullRequestLoad.js"
 import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewLabel, viewMode, viewRepository } from "./pullRequestViews.js"
 
 import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
-import { colors, mixHex } from "./ui/colors.js"
+import { colors } from "./ui/colors.js"
 import {
 	favoriteRepositoriesAtom,
 	readWorkspacePreferencesAtom,
@@ -117,6 +117,7 @@ import {
 	selectedDiffKeyAtom,
 	selectedDiffStateAtom,
 } from "./ui/diff/atoms.js"
+import { useDiffLineColors } from "./ui/diff/useDiffLineColors.js"
 import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
 import { themeIdAtom } from "./ui/theme/atoms.js"
 import { useThemeModal } from "./ui/theme/useThemeModal.js"
@@ -139,8 +140,6 @@ import {
 	splitPatchFiles,
 	stackedDiffFileIndexAtLine,
 	type DiffCommentAnchor,
-	type DiffCommentKind,
-	type DiffView,
 	type StackedDiffCommentAnchor,
 	verticalDiffAnchor,
 } from "./ui/diff.js"
@@ -223,31 +222,6 @@ interface DetailPlaceholderInput {
 	readonly filterText: string
 }
 
-type DiffLineColorConfig = {
-	readonly gutter: string
-	readonly content: string
-}
-
-type DiffSideRenderable = {
-	readonly setLineColor: (line: number, color: DiffLineColorConfig) => void
-}
-
-type DiffRenderableRuntimeSides = {
-	readonly leftSide?: DiffSideRenderable
-	readonly rightSide?: DiffSideRenderable
-}
-
-interface AppliedDiffLineColor {
-	readonly anchor: StackedDiffCommentAnchor
-	readonly view: DiffView
-	readonly color: DiffLineColorConfig
-}
-
-interface AppliedDiffLineColorState {
-	readonly contextKey: string | null
-	readonly entries: readonly AppliedDiffLineColor[]
-}
-
 interface PendingDiffLocationRestore {
 	readonly anchor: StackedDiffCommentAnchor
 	readonly screenOffset: number
@@ -273,7 +247,6 @@ const AUTO_REFRESH_JITTER_MS = 10_000
 const DIFF_STICKY_HEADER_LINES = 2
 const DIFF_LAYOUT_RETRY_MS = 16
 const DIFF_SCROLL_RESTORE_ATTEMPTS = 6
-const DIFF_LINE_COLOR_REAPPLY_ATTEMPTS = 8
 const LOAD_MORE_SELECTION_THRESHOLD = 8
 const LOAD_MORE_SCROLL_THRESHOLD = 3
 const DETAIL_PREFETCH_BEHIND = 1
@@ -370,36 +343,6 @@ const reviewStatusAfterSubmit = {
 	REQUEST_CHANGES: "changes",
 } satisfies Record<SubmitPullRequestReviewInput["event"], PullRequestItem["reviewStatus"] | null>
 
-const originalDiffLineColor = (anchor: DiffCommentAnchor): DiffLineColorConfig => {
-	if (anchor.kind === "addition") {
-		return { gutter: colors.diff.addedLineNumberBg, content: colors.diff.addedBg }
-	}
-	if (anchor.kind === "deletion") {
-		return { gutter: colors.diff.removedLineNumberBg, content: colors.diff.removedBg }
-	}
-	return { gutter: colors.diff.lineNumberBg, content: colors.diff.contextBg }
-}
-
-const selectedDiffCommentAccentByKind = {
-	addition: () => colors.status.passing,
-	deletion: () => colors.status.failing,
-	context: () => colors.muted,
-} satisfies Record<DiffCommentKind, () => string>
-
-const selectedDiffCommentAccent = (kind: DiffCommentKind) => selectedDiffCommentAccentByKind[kind]()
-
-const mixDiffLineContentColor = (base: string, accent: string, amount: number) => mixHex(base === "transparent" ? colors.background : base, accent, amount)
-
-const diffCommentLineColor = (anchor: DiffCommentAnchor, kind: "selected" | "range" | "thread"): DiffLineColorConfig => {
-	const original = originalDiffLineColor(anchor)
-	const accent = kind === "thread" ? colors.status.pending : selectedDiffCommentAccent(anchor.kind)
-	if (kind === "thread") return { ...original, gutter: mixHex(original.gutter, accent, 0.3) }
-	return {
-		gutter: mixHex(original.gutter, accent, kind === "selected" ? 0.38 : 0.26),
-		content: mixDiffLineContentColor(original.content, accent, kind === "selected" ? 0.2 : 0.1),
-	}
-}
-
 const sameDiffCommentTarget = (left: DiffCommentAnchor, right: DiffCommentAnchor) => left.path === right.path && left.side === right.side
 
 const diffCommentRangeSelection = (start: StackedDiffCommentAnchor | null, end: StackedDiffCommentAnchor | null): DiffCommentRangeSelection | null => {
@@ -414,21 +357,6 @@ const diffCommentRangeLabel = (range: DiffCommentRangeSelection) =>
 	range.start.line === range.end.line
 		? diffCommentAnchorLabel(range.end)
 		: `${diffCommentSideLabel(range.end)} ${diffCommentLineLabel(range.start)}-${diffCommentLineLabel(range.end)}`
-
-const diffSideTargets = (diff: DiffRenderable, anchor: DiffCommentAnchor, view: DiffView) => {
-	const withSides = diff as unknown as DiffRenderableRuntimeSides
-	if (view === "split") {
-		const target = anchor.side === "LEFT" ? withSides.leftSide : withSides.rightSide
-		return target ? [target] : []
-	}
-	return withSides.leftSide ? [withSides.leftSide] : []
-}
-
-const setDiffCommentLineColor = (diff: DiffRenderable, entry: AppliedDiffLineColor) => {
-	for (const target of diffSideTargets(diff, entry.anchor, entry.view)) {
-		target.setLineColor(entry.anchor.colorLine, entry.color)
-	}
-}
 
 const getDetailPlaceholderContent = ({ status, retryProgress, loadingIndicator, visibleCount, filterText }: DetailPlaceholderInput): DetailPlaceholderContent => {
 	if (status === "loading") {
@@ -614,9 +542,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const prListScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const issueListScrollRef = useRef<ScrollBoxRenderable | null>(null)
-	const diffRenderableRefs = useRef(new Map<number, DiffRenderable>())
-	const diffCommentLineColorsRef = useRef<AppliedDiffLineColorState>({ contextKey: null, entries: [] })
-	const diffLineColorRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffLocationRestoreTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const pendingDiffLocationRestoreRef = useRef<PendingDiffLocationRestore | null>(null)
 	const suppressNextDiffCommentScrollRef = useRef(false)
@@ -636,9 +561,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			detailHydrationRef.current.clear()
 			if (detailPrefetchTimeoutRef.current !== null) {
 				clearTimeout(detailPrefetchTimeoutRef.current)
-			}
-			if (diffLineColorRetryTimeoutRef.current !== null) {
-				clearTimeout(diffLineColorRetryTimeoutRef.current)
 			}
 			if (diffLocationRestoreTimeoutRef.current !== null) {
 				clearTimeout(diffLocationRestoreTimeoutRef.current)
@@ -1283,85 +1205,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		diffLocationRestoreTimeoutRef.current = globalThis.setTimeout(restoreScroll, DIFF_LAYOUT_RETRY_MS)
 	}, [diffFullView, diffWhitespaceMode, diffCommentAnchors])
 
-	useEffect(() => {
-		const applyEntries = (entries: readonly AppliedDiffLineColor[]) => {
-			for (const entry of entries) {
-				const diff = diffRenderableRefs.current.get(entry.anchor.fileIndex)
-				if (diff) setDiffCommentLineColor(diff, entry)
-			}
-		}
-
-		const previous = diffCommentLineColorsRef.current
-		const contextChanged = previous.contextKey !== diffLineColorContextKey
-		if (previous.contextKey === diffLineColorContextKey) {
-			for (const entry of previous.entries) {
-				const diff = diffRenderableRefs.current.get(entry.anchor.fileIndex)
-				if (diff) setDiffCommentLineColor(diff, { ...entry, color: originalDiffLineColor(entry.anchor) })
-			}
-		}
-
-		const nextEntries: AppliedDiffLineColor[] = []
-		const appliedKeys = new Set<string>()
-		const applyLineColor = (anchor: StackedDiffCommentAnchor, color: DiffLineColorConfig, override = false) => {
-			const key = `${effectiveDiffRenderView}:${anchor.side}:${anchor.renderLine}`
-			if (appliedKeys.has(key) && !override) return
-			appliedKeys.add(key)
-			const entry = { anchor, view: effectiveDiffRenderView, color } satisfies AppliedDiffLineColor
-			const diff = diffRenderableRefs.current.get(anchor.fileIndex)
-			if (diff) setDiffCommentLineColor(diff, entry)
-			if (!nextEntries.some((existing) => existing.view === entry.view && existing.anchor.side === anchor.side && existing.anchor.renderLine === anchor.renderLine)) {
-				nextEntries.push(entry)
-			}
-		}
-
-		for (const anchor of diffCommentThreadAnchors) {
-			applyLineColor(anchor, diffCommentLineColor(anchor, "thread"))
-		}
-		if (selectedDiffCommentRangeAnchors.length > 0) {
-			for (const anchor of selectedDiffCommentRangeAnchors) {
-				applyLineColor(anchor, diffCommentLineColor(anchor, "range"), true)
-			}
-		}
-		if (selectedDiffCommentAnchor) {
-			applyLineColor(selectedDiffCommentAnchor, diffCommentLineColor(selectedDiffCommentAnchor, "selected"), true)
-			if (suppressNextDiffCommentScrollRef.current) {
-				suppressNextDiffCommentScrollRef.current = false
-			} else {
-				ensureDiffLineVisible(selectedDiffCommentAnchor.renderLine)
-			}
-		} else {
-			suppressNextDiffCommentScrollRef.current = false
-		}
-		diffCommentLineColorsRef.current = { contextKey: diffLineColorContextKey, entries: nextEntries }
-		if (contextChanged && diffLineColorRetryTimeoutRef.current !== null) clearTimeout(diffLineColorRetryTimeoutRef.current)
-		if (contextChanged && diffLineColorContextKey && nextEntries.length > 0) {
-			const contextKey = diffLineColorContextKey
-			let attempts = 0
-			const reapplyLineColors = () => {
-				attempts++
-				if (diffCommentLineColorsRef.current.contextKey !== contextKey) {
-					diffLineColorRetryTimeoutRef.current = null
-					return
-				}
-				applyEntries(diffCommentLineColorsRef.current.entries)
-				if (attempts < DIFF_LINE_COLOR_REAPPLY_ATTEMPTS) {
-					diffLineColorRetryTimeoutRef.current = globalThis.setTimeout(reapplyLineColors, DIFF_LAYOUT_RETRY_MS)
-				} else {
-					diffLineColorRetryTimeoutRef.current = null
-				}
-			}
-			diffLineColorRetryTimeoutRef.current = globalThis.setTimeout(reapplyLineColors, DIFF_LAYOUT_RETRY_MS)
-		}
-	}, [
-		selectedDiffCommentAnchor?.renderLine,
-		selectedDiffCommentAnchor?.colorLine,
-		selectedDiffCommentAnchor?.side,
-		selectedDiffCommentAnchor?.fileIndex,
-		selectedDiffCommentRangeAnchors,
+	const { setDiffRenderableRef, resetDiffLineColors } = useDiffLineColors({
 		diffLineColorContextKey,
 		effectiveDiffRenderView,
+		selectedDiffCommentAnchor,
+		selectedDiffCommentRangeAnchors,
 		diffCommentThreadAnchors,
-	])
+		suppressNextDiffCommentScrollRef,
+		ensureDiffLineVisible: (line) => ensureDiffLineVisible(line),
+	})
 
 	// Scroll the selected line into view when the diff view is opened. Previously
 	// opentui's `focused` scrollbox did this auto-scroll on mount; with the keymap
@@ -1520,8 +1372,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const openDiffView = () => {
 		if (!selectedPullRequest) return
-		diffRenderableRefs.current.clear()
-		diffCommentLineColorsRef.current = { contextKey: null, entries: [] }
+		resetDiffLineColors()
 		setDiffFullView(true)
 		setDetailFullView(false)
 		setCommentsViewActive(false)
@@ -1592,17 +1443,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			if (selectedIssue) loadIssueComments(selectedIssue, true)
 		} else if (selectedPullRequest) {
 			loadPullRequestComments(selectedPullRequest, true)
-		}
-	}
-
-	const setDiffRenderableRef = (index: number, diff: DiffRenderable | null) => {
-		if (diff) {
-			diffRenderableRefs.current.set(index, diff)
-			for (const entry of diffCommentLineColorsRef.current.entries) {
-				if (entry.anchor.fileIndex === index) setDiffCommentLineColor(diff, entry)
-			}
-		} else {
-			diffRenderableRefs.current.delete(index)
 		}
 	}
 
