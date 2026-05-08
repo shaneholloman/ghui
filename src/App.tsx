@@ -14,11 +14,9 @@ import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
 import { config } from "./config.js"
 import {
-	type CreatePullRequestCommentInput,
 	type DiffCommentSide,
 	type IssueItem,
 	type LoadStatus,
-	type PullRequestComment,
 	type PullRequestItem,
 	type PullRequestLabel,
 	type PullRequestReviewComment,
@@ -43,17 +41,10 @@ import { useWorkspacePreferencesPersistence } from "./workspace/useWorkspacePref
 import {
 	commentsViewActiveAtom,
 	commentsViewSelectionAtom,
-	createPullRequestCommentAtom,
-	createPullRequestIssueCommentAtom,
-	deletePullRequestIssueCommentAtom,
-	deleteReviewCommentAtom,
-	editPullRequestIssueCommentAtom,
-	editReviewCommentAtom,
 	listIssueCommentsAtom,
 	listPullRequestCommentsAtom,
 	pullRequestCommentsAtom,
 	pullRequestCommentsLoadedAtom,
-	replyToReviewCommentAtom,
 } from "./ui/comments/atoms.js"
 import { addIssueLabelAtom, issuesAtom, removeIssueLabelAtom } from "./ui/issues/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
@@ -62,6 +53,7 @@ import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/at
 import { activeModalAtom } from "./ui/modals/atoms.js"
 import { noticeAtom } from "./ui/notice/atoms.js"
 import { useFlashNotice } from "./ui/notice/useFlashNotice.js"
+import { canEditComment, useCommentMutations } from "./ui/comments/useCommentMutations.js"
 import {
 	activeViewAtom,
 	addPullRequestLabelAtom,
@@ -194,7 +186,6 @@ import {
 	type ThemeModalState,
 } from "./ui/modals.js"
 import { pullRequestMetadataText } from "./ui/pullRequests.js"
-import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
@@ -232,6 +223,8 @@ interface DetailHydration {
 	readonly token: symbol
 	notifyError: boolean
 }
+
+type DetailHydrationState = { readonly _tag: "Loading" } | { readonly _tag: "Error"; readonly message: string }
 
 interface AppProps {
 	readonly systemThemeGeneration?: number
@@ -312,24 +305,6 @@ const groupDiffCommentThreads = (pullRequest: PullRequestItem, comments: readonl
 }
 
 const isLocalDiffComment = (comment: PullRequestReviewComment) => comment.id.startsWith("local:")
-
-const reviewCommentAsPullRequestComment = (comment: PullRequestReviewComment): PullRequestComment => ({ _tag: "review-comment", ...comment })
-
-// Walk the inReplyTo chain to find the thread root id. The /replies endpoint
-// rejects ids that aren't roots with "parent comment not found".
-const findReviewThreadRootId = (comments: readonly PullRequestComment[], commentId: string): string => {
-	const reviewById = new Map<string, PullRequestComment & { readonly _tag: "review-comment" }>()
-	for (const entry of comments) if (entry._tag === "review-comment") reviewById.set(entry.id, entry)
-	let cursor = reviewById.get(commentId)
-	const seen = new Set<string>()
-	while (cursor && cursor.inReplyTo && !seen.has(cursor.id)) {
-		seen.add(cursor.id)
-		const parent = reviewById.get(cursor.inReplyTo)
-		if (!parent) break
-		cursor = parent
-	}
-	return cursor?.id ?? commentId
-}
 
 const reviewStatusAfterSubmit = {
 	COMMENT: null,
@@ -479,6 +454,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
+	const [detailHydrationState, setDetailHydrationState] = useState<Record<string, DetailHydrationState>>({})
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
@@ -497,13 +473,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const writeWorkspacePreferences = useAtomSet(writeWorkspacePreferencesAtom, { mode: "promise" })
 	const pruneCache = useAtomSet(pruneCacheAtom, { mode: "promise" })
 	const closePullRequest = useAtomSet(closePullRequestAtom, { mode: "promise" })
-	const createPullRequestComment = useAtomSet(createPullRequestCommentAtom, { mode: "promise" })
-	const createPullRequestIssueComment = useAtomSet(createPullRequestIssueCommentAtom, { mode: "promise" })
-	const replyToReviewComment = useAtomSet(replyToReviewCommentAtom, { mode: "promise" })
-	const editPullRequestIssueComment = useAtomSet(editPullRequestIssueCommentAtom, { mode: "promise" })
-	const editReviewComment = useAtomSet(editReviewCommentAtom, { mode: "promise" })
-	const deletePullRequestIssueComment = useAtomSet(deletePullRequestIssueCommentAtom, { mode: "promise" })
-	const deleteReviewComment = useAtomSet(deleteReviewCommentAtom, { mode: "promise" })
 	const submitPullRequestReview = useAtomSet(submitPullRequestReviewAtom, { mode: "promise" })
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
@@ -792,6 +761,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const refreshPullRequests = (message?: string, options: { readonly resetTransientState?: boolean } = {}) => {
 		refreshGenerationRef.current += 1
 		detailHydrationRef.current.clear()
+		setDetailHydrationState({})
 		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
 		setLoadingMoreKey(null)
 		setPullRequestOverrides({})
@@ -817,6 +787,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setSelectedIssueIndex(0)
 		setRecentlyCompletedPullRequests({})
 		detailHydrationRef.current.clear()
+		setDetailHydrationState({})
 		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
 		setLoadingMoreKey(null)
 		setDetailFullView(false)
@@ -944,6 +915,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		if (!notifyError && detailHydrationRef.current.size >= DETAIL_PREFETCH_CONCURRENCY) return false
 		const entry: DetailHydration = { token: Symbol(detailKey), notifyError }
 		detailHydrationRef.current.set(detailKey, entry)
+		if (notifyError) setDetailHydrationState((current) => ({ ...current, [detailKey]: { _tag: "Loading" } }))
 		const generation = refreshGenerationRef.current
 		if (!pullRequest.detailLoaded) {
 			void readCachedPullRequest({ repository: pullRequest.repository, number: pullRequest.number })
@@ -961,12 +933,24 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			.then((detail) => {
 				if (generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) {
 					cachedDetailKeysRef.current.delete(detailKey)
+					if (entry.notifyError) {
+						setDetailHydrationState((current) => {
+							if (!(detailKey in current)) return current
+							const next = { ...current }
+							delete next[detailKey]
+							return next
+						})
+					}
 					applyPullRequestDetail(detail)
 					void writeCachedPullRequest(detail).catch(() => {})
 				}
 			})
 			.catch((error) => {
-				if (entry.notifyError && generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) flashNotice(errorMessage(error))
+				if (entry.notifyError && generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) {
+					const message = errorMessage(error)
+					setDetailHydrationState((current) => ({ ...current, [detailKey]: { _tag: "Error", message } }))
+					flashNotice(message)
+				}
 			})
 			.finally(() => {
 				if (detailHydrationRef.current.get(detailKey) === entry) detailHydrationRef.current.delete(detailKey)
@@ -1185,7 +1169,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		ensureDiffLineVisible(selectedDiffCommentAnchor.renderLine)
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [diffFullView])
-	const isHydratingPullRequestDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
+	const selectedPullRequestDetailKey = selectedPullRequest ? pullRequestDetailKey(selectedPullRequest) : null
+	const selectedPullRequestDetailHydrationState = selectedPullRequestDetailKey ? (detailHydrationState[selectedPullRequestDetailKey] ?? null) : null
+	const selectedPullRequestDetailError = selectedPullRequestDetailHydrationState?._tag === "Error" ? selectedPullRequestDetailHydrationState.message : null
+	const isHydratingPullRequestDetails = selectedPullRequestDetailHydrationState?._tag === "Loading"
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
 	const isActiveSurfaceLoading =
 		(activeWorkspaceSurface === "pullRequests" && (pullRequestStatus === "loading" || isRefreshingPullRequests || isHydratingPullRequestDetails || isLoadingMorePullRequests)) ||
@@ -1256,7 +1243,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		visibleCount: visiblePullRequests.length,
 		filterText: visibleFilterText,
 	})
-	const isSelectedPullRequestDetailLoading = selectedPullRequest !== null && !selectedPullRequest.detailLoaded
+	const isSelectedPullRequestDetailLoading = selectedPullRequest !== null && !selectedPullRequest.detailLoaded && selectedPullRequestDetailError === null
+	const isSelectedPullRequestDetailError = selectedPullRequest !== null && !selectedPullRequest.detailLoaded && selectedPullRequestDetailError !== null
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
 	const loadPullRequestReviewComments = (pullRequest: PullRequestItem, force = false) => {
@@ -1632,388 +1620,33 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setDiffFileIndex(nextAnchor.fileIndex)
 	}
 
-	const submitDiffComment = () => {
-		if (!selectedPullRequest || !selectedDiffCommentAnchor) return
-		const body = requireCommentBody()
-		if (body === null) return
-
-		const targetRange = selectedDiffCommentRange
-		const target = targetRange?.end ?? selectedDiffCommentAnchor
-		const key = pullRequestDiffKey(selectedPullRequest)
-		const threadKey = selectedDiffKey ? diffCommentThreadMapKey(selectedDiffKey, target) : null
-		const optimisticReview = {
-			id: `local:${Date.now()}`,
-			path: target.path,
-			line: target.line,
-			side: target.side,
-			author: username ?? "you",
-			body,
-			createdAt: new Date(),
-			url: null,
-			inReplyTo: null,
-		} satisfies PullRequestReviewComment
-		const rangeInput = targetRange && targetRange.start.line !== targetRange.end.line ? { startLine: targetRange.start.line, startSide: targetRange.start.side } : {}
-		const input = {
-			repository: selectedPullRequest.repository,
-			number: selectedPullRequest.number,
-			commitId: selectedPullRequest.headRefOid,
-			path: target.path,
-			line: target.line,
-			side: target.side,
-			body,
-			...rangeInput,
-		} satisfies CreatePullRequestCommentInput
-
-		submitOptimisticComment({
-			key,
-			optimistic: reviewCommentAsPullRequestComment(optimisticReview),
-			postingMessage: `Commenting on ${target.path}:${target.line}`,
-			successMessage: `Commented on ${target.path}:${target.line}`,
-			request: () => createPullRequestComment(input).then(reviewCommentAsPullRequestComment),
-			onOptimistic: () => {
-				if (threadKey) {
-					setDiffCommentThreads((current) => ({
-						...current,
-						[threadKey]: [...(current[threadKey] ?? []), optimisticReview],
-					}))
-				}
-				setDiffCommentRangeStartIndex(null)
-			},
-			onCreated: (_optimistic, created) => {
-				if (!threadKey || created._tag !== "review-comment") return
-				setDiffCommentThreads((current) => ({
-					...current,
-					[threadKey]: (current[threadKey] ?? []).map((existing) => (existing.id === optimisticReview.id ? created : existing)),
-				}))
-			},
-			onRevert: () => {
-				if (!threadKey) return
-				setDiffCommentThreads((current) => {
-					const next = { ...current }
-					const comments = (next[threadKey] ?? []).filter((comment) => comment.id !== optimisticReview.id)
-					if (comments.length > 0) next[threadKey] = comments
-					else delete next[threadKey]
-					return next
-				})
-			},
+	const { submitCommentModal, openNewIssueCommentModal, openReplyToSelectedComment, openEditSelectedComment, openDeleteSelectedComment, confirmDeleteComment } =
+		useCommentMutations({
+			selectedPullRequest,
+			selectedCommentSubject,
+			selectedCommentKey,
+			selectedDiffCommentAnchor,
+			selectedDiffCommentRange,
+			selectedDiffKey,
+			selectedOrderedComment,
+			selectedComments,
+			username,
+			activeWorkspaceSurface,
+			selectedIssue,
+			pullRequestComments,
+			diffCommentThreads,
+			commentModal,
+			deleteCommentModal,
+			setCommentModal,
+			setDeleteCommentModal,
+			setPullRequestComments,
+			setDiffCommentThreads,
+			setDiffCommentRangeStartIndex,
+			closeActiveModal,
+			flashNotice,
+			updateIssue,
+			diffCommentThreadMapKey,
 		})
-	}
-
-	const openNewIssueCommentModal = () => {
-		if (!selectedCommentSubject) return
-		setCommentModal({ ...initialCommentModalState, target: { kind: "issue" } })
-	}
-
-	const openReplyToSelectedComment = () => {
-		if (!selectedCommentSubject) return
-		const comment = selectedOrderedComment
-		if (!comment) {
-			flashNotice("No comment selected")
-			return
-		}
-		if (comment._tag !== "review-comment") {
-			// Issue comments don't thread on GitHub; pre-fill a quote so the reply
-			// reads as a response in the chronological list.
-			const quote = quotedReplyBody(comment.author, comment.body)
-			setCommentModal({ ...initialCommentModalState, body: quote, cursor: quote.length, target: { kind: "issue" } })
-			return
-		}
-		// GitHub /comments/{id}/replies wants the *thread root* id; replying via a
-		// reply id can return "parent comment not found".
-		const rootId = findReviewThreadRootId(selectedComments, comment.id)
-		const anchor = `${comment.path}:${comment.line}`
-		setCommentModal({ ...initialCommentModalState, target: { kind: "reply", inReplyTo: rootId, anchorLabel: anchor } })
-	}
-
-	// Optimistic insert + post + swap-or-revert. Shared by issue and reply.
-	const submitOptimisticComment = (input: {
-		readonly key: string
-		readonly optimistic: PullRequestComment
-		readonly postingMessage: string
-		readonly successMessage: string
-		readonly request: () => Promise<PullRequestComment>
-		readonly onOptimistic?: (comment: PullRequestComment) => void
-		readonly onCreated?: (optimistic: PullRequestComment, created: PullRequestComment) => void
-		readonly onRevert?: (comment: PullRequestComment) => void
-	}) => {
-		const { key, optimistic, postingMessage, successMessage, request, onOptimistic, onCreated, onRevert } = input
-		setPullRequestComments((current) => ({ ...current, [key]: [...(current[key] ?? []), optimistic] }))
-		onOptimistic?.(optimistic)
-		closeActiveModal()
-		flashNotice(postingMessage)
-		void request()
-			.then((created) => {
-				setPullRequestComments((current) => ({ ...current, [key]: (current[key] ?? []).map((entry) => (entry.id === optimistic.id ? created : entry)) }))
-				onCreated?.(optimistic, created)
-				flashNotice(successMessage)
-			})
-			.catch((error) => {
-				setPullRequestComments((current) => ({ ...current, [key]: (current[key] ?? []).filter((entry) => entry.id !== optimistic.id) }))
-				onRevert?.(optimistic)
-				flashNotice(errorMessage(error))
-			})
-	}
-
-	const requireCommentBody = (): string | null => {
-		const body = commentModal.body.trim()
-		if (body.length === 0) {
-			setCommentModal((current) => ({ ...current, error: "Write a comment before saving." }))
-			return null
-		}
-		return body
-	}
-
-	const submitIssueComment = () => {
-		if (!selectedCommentSubject || !selectedCommentKey) return
-		const body = requireCommentBody()
-		if (body === null) return
-		const { repository, number } = selectedCommentSubject
-		const selectedIssueUrl = activeWorkspaceSurface === "issues" ? selectedIssue?.url : null
-		submitOptimisticComment({
-			key: selectedCommentKey,
-			optimistic: { _tag: "comment", id: `local:issue:${Date.now()}`, author: username ?? "you", body, createdAt: new Date(), url: null },
-			postingMessage: `Posting comment on #${number}`,
-			successMessage: `Commented on #${number}`,
-			request: () => createPullRequestIssueComment({ repository, number, body }),
-			onOptimistic: () => {
-				if (selectedIssueUrl) updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: issue.commentCount + 1 }))
-			},
-			onRevert: () => {
-				if (selectedIssueUrl) updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: Math.max(0, issue.commentCount - 1) }))
-			},
-		})
-	}
-
-	const submitReplyComment = () => {
-		if (!selectedPullRequest || commentModal.target.kind !== "reply") return
-		const body = requireCommentBody()
-		if (body === null) return
-		const { repository, number } = selectedPullRequest
-		const target = commentModal.target
-		const parent = selectedComments.find((entry) => entry._tag === "review-comment" && entry.id === target.inReplyTo)
-		const reviewParent = parent?._tag === "review-comment" ? parent : null
-		const key = pullRequestDiffKey(selectedPullRequest)
-		const threadKey = reviewParent ? diffCommentThreadMapKey(key, reviewParent) : null
-		submitOptimisticComment({
-			key,
-			optimistic: {
-				_tag: "review-comment",
-				id: `local:reply:${Date.now()}`,
-				path: reviewParent?.path ?? "",
-				line: reviewParent?.line ?? 0,
-				side: reviewParent?.side ?? "RIGHT",
-				author: username ?? "you",
-				body,
-				createdAt: new Date(),
-				url: null,
-				inReplyTo: target.inReplyTo,
-			},
-			postingMessage: `Replying on ${target.anchorLabel}`,
-			successMessage: `Replied on ${target.anchorLabel}`,
-			request: () => replyToReviewComment({ repository, number, inReplyTo: target.inReplyTo, body }),
-			onOptimistic: (comment) => {
-				if (!threadKey || comment._tag !== "review-comment") return
-				setDiffCommentThreads((current) => ({ ...current, [threadKey]: [...(current[threadKey] ?? []), comment] }))
-			},
-			onCreated: (optimistic, created) => {
-				if (!threadKey || created._tag !== "review-comment") return
-				setDiffCommentThreads((current) => ({
-					...current,
-					[threadKey]: (current[threadKey] ?? []).map((comment) => (comment.id === optimistic.id ? created : comment)),
-				}))
-			},
-			onRevert: (comment) => {
-				if (!threadKey) return
-				setDiffCommentThreads((current) => {
-					const next = { ...current }
-					const comments = (next[threadKey] ?? []).filter((entry) => entry.id !== comment.id)
-					if (comments.length > 0) next[threadKey] = comments
-					else delete next[threadKey]
-					return next
-				})
-			},
-		})
-	}
-
-	// Selected comment must belong to the viewer and have a server id (not the
-	// optimistic `local:` prefix) before we offer edit/delete affordances.
-	const canEditComment = (comment: PullRequestComment | null): comment is PullRequestComment =>
-		comment !== null && username !== null && comment.author === username && !comment.id.startsWith("local:")
-
-	const openEditSelectedComment = () => {
-		if (!selectedCommentSubject) return
-		const comment = selectedOrderedComment
-		if (!canEditComment(comment)) {
-			flashNotice(comment ? "Can't edit this comment" : "No comment selected")
-			return
-		}
-		const anchorLabel = comment._tag === "review-comment" ? `Editing ${comment.path}:${comment.line}` : `Editing comment on #${selectedCommentSubject.number}`
-		setCommentModal({
-			body: comment.body,
-			cursor: comment.body.length,
-			error: null,
-			target: { kind: "edit", commentId: comment.id, commentTag: comment._tag, anchorLabel },
-		})
-	}
-
-	const submitEditComment = () => {
-		if (!selectedCommentSubject || !selectedCommentKey || commentModal.target.kind !== "edit") return
-		const body = requireCommentBody()
-		if (body === null) return
-		const target = commentModal.target
-		const key = selectedCommentKey
-		const previous = (pullRequestComments[key] ?? []).find((entry) => entry.id === target.commentId)
-		if (!previous) {
-			setCommentModal((current) => ({ ...current, error: "Comment not found in cache." }))
-			return
-		}
-		const repository = selectedCommentSubject.repository
-
-		// Optimistically swap the body in both caches; restore the previous on failure.
-		const previousReview = previous._tag === "review-comment" ? previous : null
-		const threadKey = previousReview ? diffCommentThreadMapKey(key, previousReview) : null
-		const replaceInList = <T extends { readonly id: string }>(list: readonly T[], next: T) => list.map((entry) => (entry.id === target.commentId ? next : entry))
-
-		setPullRequestComments((current) => ({ ...current, [key]: replaceInList(current[key] ?? [], { ...previous, body }) }))
-		if (threadKey && previousReview) {
-			setDiffCommentThreads((current) => ({
-				...current,
-				[threadKey]: replaceInList(current[threadKey] ?? [], { ...previousReview, body }),
-			}))
-		}
-		closeActiveModal()
-		flashNotice("Saving comment edit")
-
-		const request =
-			target.commentTag === "comment"
-				? () => editPullRequestIssueComment({ repository, commentId: target.commentId, body })
-				: () => editReviewComment({ repository, commentId: target.commentId, body })
-
-		void request()
-			.then((updated) => {
-				setPullRequestComments((current) => ({ ...current, [key]: replaceInList(current[key] ?? [], updated) }))
-				if (threadKey && updated._tag === "review-comment") {
-					setDiffCommentThreads((current) => ({
-						...current,
-						[threadKey]: replaceInList(current[threadKey] ?? [], updated),
-					}))
-				}
-				flashNotice("Comment updated")
-			})
-			.catch((error) => {
-				setPullRequestComments((current) => ({ ...current, [key]: replaceInList(current[key] ?? [], previous) }))
-				if (threadKey && previousReview) {
-					setDiffCommentThreads((current) => ({
-						...current,
-						[threadKey]: replaceInList(current[threadKey] ?? [], previousReview),
-					}))
-				}
-				flashNotice(errorMessage(error))
-			})
-	}
-
-	const submitCommentModal = () => {
-		switch (commentModal.target.kind) {
-			case "diff":
-				submitDiffComment()
-				return
-			case "issue":
-				submitIssueComment()
-				return
-			case "reply":
-				submitReplyComment()
-				return
-			case "edit":
-				submitEditComment()
-				return
-		}
-	}
-
-	const openDeleteSelectedComment = () => {
-		if (!selectedCommentSubject) return
-		const comment = selectedOrderedComment
-		if (!canEditComment(comment)) {
-			flashNotice(comment ? "Can't delete this comment" : "No comment selected")
-			return
-		}
-		const firstLine = comment.body.split("\n").find((line) => line.trim().length > 0) ?? ""
-		const preview = firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine
-		setDeleteCommentModal({
-			commentId: comment.id,
-			commentTag: comment._tag,
-			author: comment.author,
-			preview,
-			running: false,
-			error: null,
-		})
-	}
-
-	const confirmDeleteComment = () => {
-		if (!selectedCommentSubject || !selectedCommentKey || deleteCommentModal.running) return
-		const target = { commentId: deleteCommentModal.commentId, commentTag: deleteCommentModal.commentTag }
-		const key = selectedCommentKey
-		const list = pullRequestComments[key] ?? []
-		const previousIndex = list.findIndex((entry) => entry.id === target.commentId)
-		const previous = previousIndex >= 0 ? list[previousIndex] : undefined
-		if (!previous) {
-			setDeleteCommentModal((current) => ({ ...current, error: "Comment not found in cache." }))
-			return
-		}
-		const previousReview = previous._tag === "review-comment" ? previous : null
-		const threadKey = previousReview ? diffCommentThreadMapKey(key, previousReview) : null
-		const previousThread = threadKey ? (diffCommentThreads[threadKey] ?? []) : []
-		const previousThreadIndex = previousReview ? previousThread.findIndex((entry) => entry.id === previous.id) : -1
-		const repository = selectedCommentSubject.repository
-		const selectedIssueUrl = activeWorkspaceSurface === "issues" ? selectedIssue?.url : null
-
-		setPullRequestComments((current) => ({
-			...current,
-			[key]: (current[key] ?? []).filter((entry) => entry.id !== target.commentId),
-		}))
-		if (threadKey) {
-			setDiffCommentThreads((current) => {
-				const next = { ...current }
-				const filtered = (next[threadKey] ?? []).filter((entry) => entry.id !== target.commentId)
-				if (filtered.length > 0) next[threadKey] = filtered
-				else delete next[threadKey]
-				return next
-			})
-		}
-		closeActiveModal()
-		flashNotice("Deleting comment")
-
-		const request =
-			target.commentTag === "comment"
-				? () => deletePullRequestIssueComment({ repository, commentId: target.commentId })
-				: () => deleteReviewComment({ repository, commentId: target.commentId })
-
-		if (selectedIssueUrl && target.commentTag === "comment") updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: Math.max(0, issue.commentCount - 1) }))
-
-		void request()
-			.then(() => flashNotice("Comment deleted"))
-			.catch((error) => {
-				// Splice the previous entry back at its original index in both caches.
-				setPullRequestComments((current) => {
-					const arr = current[key] ?? []
-					if (arr.some((entry) => entry.id === previous.id)) return current
-					const restored = [...arr]
-					restored.splice(Math.min(previousIndex, restored.length), 0, previous)
-					return { ...current, [key]: restored }
-				})
-				if (threadKey && previousReview) {
-					setDiffCommentThreads((current) => {
-						const arr = current[threadKey] ?? []
-						if (arr.some((entry) => entry.id === previousReview.id)) return current
-						const restored = [...arr]
-						const insertIndex = previousThreadIndex >= 0 ? previousThreadIndex : restored.length
-						restored.splice(Math.min(insertIndex, restored.length), 0, previousReview)
-						return { ...current, [threadKey]: restored }
-					})
-				}
-				if (selectedIssueUrl && target.commentTag === "comment") updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: issue.commentCount + 1 }))
-				flashNotice(errorMessage(error))
-			})
-	}
 
 	const confirmSubmitReview = () => {
 		if (!submitReviewModal.repository || submitReviewModal.number === null || submitReviewModal.running) return
@@ -2311,7 +1944,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		diffFullView,
 		commentsViewActive,
 		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
-		canEditSelectedComment: canEditComment(selectedOrderedComment),
+		canEditSelectedComment: canEditComment(selectedOrderedComment, username),
 		diffReady: selectedDiffState?._tag === "Ready",
 		effectiveDiffRenderView,
 		diffWrapMode,
@@ -2631,7 +2264,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		commentsView: {
 			halfPage,
 			visibleCount: commentsRowCount,
-			canEditSelected: canEditComment(selectedOrderedComment),
+			canEditSelected: canEditComment(selectedOrderedComment, username),
 			moveCommentsSelection,
 			setCommentsSelection,
 			closeCommentsView,
@@ -2947,6 +2580,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				/>
 			) : detailFullView && activeWorkspaceSurface === "issues" ? (
 				<IssueDetailPane issue={selectedIssue} width={contentWidth} height={wideBodyHeight} />
+			) : detailFullView && isSelectedPullRequestDetailError && selectedPullRequest ? (
+				<box flexGrow={1} flexDirection="column">
+					<DetailHeader
+						pullRequest={selectedPullRequest}
+						contentWidth={fullscreenContentWidth}
+						paneWidth={contentWidth}
+						showChecks={false}
+						comments={selectedComments}
+						commentsStatus={selectedCommentsStatus}
+					/>
+					<PlainLine text="- Could not load pull request details." fg={colors.error} />
+					<PlainLine text={`- ${selectedPullRequestDetailError}`} fg={colors.muted} />
+					<Filler rows={Math.max(0, wideBodyHeight - fullscreenDetailHeaderHeight - 2)} prefix="detail-error-full" />
+				</box>
 			) : detailFullView && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 				<box flexGrow={1} flexDirection="column">
 					<DetailHeader
@@ -3015,7 +2662,21 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						)
 					}
 					right={
-						isSelectedPullRequestDetailLoading && selectedPullRequest ? (
+						isSelectedPullRequestDetailError && selectedPullRequest ? (
+							<>
+								<DetailHeader
+									pullRequest={selectedPullRequest}
+									contentWidth={rightContentWidth}
+									paneWidth={rightPaneWidth}
+									showChecks={false}
+									comments={selectedComments}
+									commentsStatus={selectedCommentsStatus}
+								/>
+								<PlainLine text="- Could not load pull request details." fg={colors.error} />
+								<PlainLine text={`- ${selectedPullRequestDetailError}`} fg={colors.muted} />
+								<Filler rows={Math.max(0, wideBodyHeight - wideDetailHeaderHeight - 2)} prefix="detail-error-preview" />
+							</>
+						) : isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 							<>
 								<DetailHeader
 									pullRequest={selectedPullRequest}
@@ -3057,7 +2718,21 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				/>
 			) : detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
-					{selectedPullRequest ? (
+					{isSelectedPullRequestDetailError && selectedPullRequest ? (
+						<>
+							<DetailHeader
+								pullRequest={selectedPullRequest}
+								contentWidth={fullscreenContentWidth}
+								paneWidth={contentWidth}
+								showChecks={false}
+								comments={selectedComments}
+								commentsStatus={selectedCommentsStatus}
+							/>
+							<PlainLine text="- Could not load pull request details." fg={colors.error} />
+							<PlainLine text={`- ${selectedPullRequestDetailError}`} fg={colors.muted} />
+							<Filler rows={Math.max(0, wideBodyHeight - fullscreenDetailHeaderHeight - 2)} prefix="detail-error-full-narrow" />
+						</>
+					) : selectedPullRequest ? (
 						<>
 							<DetailHeader
 								pullRequest={selectedPullRequest}
@@ -3111,18 +2786,33 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						flexGrow={0}
 						verticalScrollbarOptions={{ visible: narrowDetailsPaneNeedsScroll }}
 					>
-						<DetailsPane
-							pullRequest={selectedPullRequest}
-							contentWidth={fullscreenContentWidth}
-							paneWidth={contentWidth}
-							comments={selectedComments}
-							commentsStatus={selectedCommentsStatus}
-							placeholderContent={detailPlaceholderContent}
-							loadingIndicator={loadingIndicator}
-							themeId={themeId}
-							themeGeneration={systemThemeGeneration}
-							onLinkOpen={openLinkInBrowser}
-						/>
+						{isSelectedPullRequestDetailError && selectedPullRequest ? (
+							<box flexDirection="column">
+								<DetailHeader
+									pullRequest={selectedPullRequest}
+									contentWidth={fullscreenContentWidth}
+									paneWidth={contentWidth}
+									showChecks={false}
+									comments={selectedComments}
+									commentsStatus={selectedCommentsStatus}
+								/>
+								<PlainLine text="- Could not load pull request details." fg={colors.error} />
+								<PlainLine text={`- ${selectedPullRequestDetailError}`} fg={colors.muted} />
+							</box>
+						) : (
+							<DetailsPane
+								pullRequest={selectedPullRequest}
+								contentWidth={fullscreenContentWidth}
+								paneWidth={contentWidth}
+								comments={selectedComments}
+								commentsStatus={selectedCommentsStatus}
+								placeholderContent={detailPlaceholderContent}
+								loadingIndicator={loadingIndicator}
+								themeId={themeId}
+								themeGeneration={systemThemeGeneration}
+								onLinkOpen={openLinkInBrowser}
+							/>
+						)}
 					</scrollbox>
 				</box>
 			)}
@@ -3140,7 +2830,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						diffRangeActive={diffCommentRangeActive}
 						commentsViewActive={commentsViewActive}
 						commentsViewOnRealComment={commentsViewActive && selectedCommentsStatus === "ready" && selectedOrderedComment !== null}
-						commentsViewCanEditSelected={canEditComment(selectedOrderedComment)}
+						commentsViewCanEditSelected={canEditComment(selectedOrderedComment, username)}
 						commentsViewCount={selectedComments.length}
 						hasSelection={selectedCommentSubject !== null}
 						canOpenDetails={selectedCommentSubject !== null}
