@@ -4,7 +4,7 @@ import { useKeymap } from "@ghui/keymap/react"
 import { appKeymap, type AppCtx } from "./keymap/all.js"
 import { buildAppCtx } from "./keymap/contexts/appCtx.js"
 import { useOpenTuiSubscribe } from "./keyboard/opentuiAdapter.js"
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
@@ -204,13 +204,14 @@ import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
 import { WorkspaceModals } from "./surfaces/WorkspaceModals.js"
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
 import { getIssueDetailJunctionRows, IssueDetailPane } from "./ui/IssueList.js"
-import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
+import { singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
 import { usePasteHandler } from "./ui/usePasteHandler.js"
 import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
+import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { detectedRepository, mockPrCount, mockRepositoryCatalog, mockUserIssues, mockWorkspacePreferencesPath, pullRequestPageSize } from "./services/runtime.js"
 
@@ -2693,93 +2694,31 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	useKeymap(appKeymap, appCtx, useOpenTuiSubscribe())
 
-	useKeyboard((key) => {
-		if (commandPaletteActive) {
-			if (isSingleLineInputKey(key)) {
-				setCommandPalette((current) => {
-					const query = editSingleLineInput(current.query, key) ?? current.query
-					return current.query === query && current.selectedIndex === 0 ? current : { ...current, query, selectedIndex: 0 }
-				})
-			}
-			return
-		}
-
-		if (openRepositoryModalActive) {
-			if (isSingleLineInputKey(key)) {
-				setOpenRepositoryModal((current) => ({
-					...current,
-					query: editSingleLineInput(current.query, key) ?? current.query,
-					error: null,
-				}))
-			}
-			return
-		}
-
-		if (!filterMode && !detailFullView && !diffFullView && !commentsViewActive) {
-			const text = printableKeyText(key)
-			if (text === "1") {
-				switchWorkspaceSurface(workspaceTabSurfaces[0] ?? activeWorkspaceSurface)
-				return
-			}
-			if (text === "2") {
-				switchWorkspaceSurface(workspaceTabSurfaces[1] ?? activeWorkspaceSurface)
-				return
-			}
-			if (text === "3") {
-				switchWorkspaceSurface(workspaceTabSurfaces[2] ?? activeWorkspaceSurface)
-				return
-			}
-		}
-
-		// q / ctrl+c quit/close-modal logic now lives in the keymap layer
-		// (handleQuitOrClose). This useKeyboard callback only handles raw text
-		// input for modals that need character-by-character accumulation.
-
-		if (themeModalActive) {
-			if (themeModal.filterMode && isSingleLineInputKey(key)) {
-				editThemeQuery((query) => editSingleLineInput(query, key) ?? query)
-			}
-			return
-		}
-
-		if (commentModalActive) {
-			const text = printableKeyText(key)
-			if (text) editComment((state) => insertText(state, text))
-			return
-		}
-
-		if (submitReviewModalActive) {
-			if (submitReviewModal.focus !== "body") return
-			const text = printableKeyText(key)
-			if (text) editSubmitReview((state) => insertText(state, text))
-			return
-		}
-
-		if (changedFilesModalActive) {
-			if (isSingleLineInputKey(key)) {
-				setChangedFilesModal((current) => {
-					const query = editSingleLineInput(current.query, key) ?? current.query
-					return query === current.query ? current : { ...current, query, selectedIndex: 0 }
-				})
-			}
-			return
-		}
-		if (labelModalActive) {
-			if (isSingleLineInputKey(key)) {
-				setLabelModal((current) => ({
-					...current,
-					query: editSingleLineInput(current.query, key) ?? current.query,
-					selectedIndex: 0,
-				}))
-			}
-			return
-		}
-
-		if (filterMode) {
-			if (isSingleLineInputKey(key)) {
-				setFilterDraft((current) => editSingleLineInput(current, key) ?? current)
-			}
-		}
+	useTextInputDispatcher({
+		commandPaletteActive,
+		openRepositoryModalActive,
+		themeModalActive,
+		commentModalActive,
+		submitReviewModalActive,
+		changedFilesModalActive,
+		labelModalActive,
+		filterMode,
+		detailFullView,
+		diffFullView,
+		commentsViewActive,
+		themeModal,
+		submitReviewModal,
+		workspaceTabSurfaces,
+		activeWorkspaceSurface,
+		switchWorkspaceSurface,
+		setCommandPalette,
+		setOpenRepositoryModal,
+		setChangedFilesModal,
+		setLabelModal,
+		setFilterDraft,
+		editThemeQuery,
+		editComment,
+		editSubmitReview,
 	})
 
 	if (isInitialLoading) {
