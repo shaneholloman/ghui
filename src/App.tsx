@@ -165,7 +165,7 @@ import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./u
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
 import { WorkspaceTabs } from "./ui/WorkspaceTabs.js"
-import { IssueList } from "./ui/IssueList.js"
+import { IssueDetailPane, IssueList } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
 import { nextWorkspaceSurface, type WorkspaceSurface } from "./workspaceSurfaces.js"
@@ -177,7 +177,8 @@ const parseOptionalPositiveInt = (value: string | undefined, fallback: number | 
 }
 
 const mockPrCount = parseOptionalPositiveInt(process.env.GHUI_MOCK_PR_COUNT, null)
-const detectedRepository = mockPrCount === null ? detectCurrentGitHubRepository() : null
+const mockRepository = process.env.GHUI_MOCK_REPOSITORY?.trim() || null
+const detectedRepository = mockPrCount === null ? detectCurrentGitHubRepository() : mockRepository
 const pullRequestPageSize = Math.min(100, parseOptionalPositiveInt(process.env.GHUI_PR_PAGE_SIZE, config.prPageSize) ?? config.prPageSize)
 const githubServiceLayer =
 	mockPrCount !== null
@@ -971,6 +972,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const issues = AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
 	const issuesStatus: LoadStatus = selectedRepository === null ? "ready" : issuesResult.waiting ? "loading" : AsyncResult.isFailure(issuesResult) ? "error" : "ready"
 	const issuesError = AsyncResult.isFailure(issuesResult) ? errorMessage(Cause.squash(issuesResult.cause)) : null
+	const selectedIssue = issues[Math.max(0, Math.min(selectedIssueIndex, issues.length - 1))] ?? null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 
@@ -3588,6 +3590,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		isLoadingMore: isLoadingMorePullRequests,
 		loadingIndicator,
 		onSelectPullRequest: selectPullRequestByUrl,
+		showTitle: false,
 		showRepositoryGroups: selectedRepository === null,
 	} as const
 	const widePullRequestList = (
@@ -3601,6 +3604,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		</box>
 	)
 	const showWideSplit = activeWorkspaceSurface === "pullRequests" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
+	const showIssueSplit = activeWorkspaceSurface === "issues" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
+	const showPaneSplit = showWideSplit || showIssueSplit
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
 	const labelModalWidth = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
@@ -3685,19 +3690,37 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
 				<WorkspaceTabs activeSurface={activeWorkspaceSurface} width={headerFooterWidth} onSelect={switchWorkspaceSurface} />
 			</box>
-			{showWideSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" /> : <Divider width={contentWidth} />}
+			{showPaneSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" /> : <Divider width={contentWidth} />}
 			{activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
-				<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-					<IssueList
-						issues={issues}
-						selectedIndex={selectedIssueIndex}
-						status={issuesStatus}
-						error={issuesError}
-						repository={selectedRepository}
-						contentWidth={fullscreenContentWidth}
-						onSelectIssue={setSelectedIssueIndex}
-					/>
-				</box>
+				isWideLayout ? (
+					<box key="wide-issues" flexGrow={1} flexDirection="row">
+						<box width={leftPaneWidth} height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
+							<IssueList
+								issues={issues}
+								selectedIndex={selectedIssueIndex}
+								status={issuesStatus}
+								error={issuesError}
+								repository={selectedRepository}
+								contentWidth={leftContentWidth}
+								onSelectIssue={setSelectedIssueIndex}
+							/>
+						</box>
+						<SeparatorColumn height={wideBodyHeight} />
+						<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} />
+					</box>
+				) : (
+					<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+						<IssueList
+							issues={issues}
+							selectedIndex={selectedIssueIndex}
+							status={issuesStatus}
+							error={issuesError}
+							repository={selectedRepository}
+							contentWidth={fullscreenContentWidth}
+							onSelectIssue={setSelectedIssueIndex}
+						/>
+					</box>
+				)
 			) : commentsViewActive && selectedPullRequest ? (
 				<CommentsPane
 					pullRequest={selectedPullRequest}
@@ -3911,7 +3934,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				</box>
 			)}
 
-			{showWideSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" /> : <Divider width={contentWidth} />}
+			{showPaneSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" /> : <Divider width={contentWidth} />}
 			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
 				{footerNotice ? (
 					<PlainLine text={footerNotice} fg={colors.count} />

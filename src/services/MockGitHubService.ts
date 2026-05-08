@@ -6,7 +6,6 @@ import type {
 	Mergeable,
 	PullRequestComment,
 	PullRequestItem,
-	PullRequestLabel,
 	PullRequestMergeInfo,
 	PullRequestPage,
 	PullRequestQueueMode,
@@ -14,6 +13,7 @@ import type {
 	ReviewStatus,
 } from "../domain.js"
 import { mergeInfoFromPullRequest } from "../mergeActions.js"
+import { mockAuthor, mockBody, mockIssueTitle, mockLabels, mockPullRequestBranch, mockPullRequestTitle } from "./mockData.js"
 import { GitHubService } from "./GitHubService.js"
 
 export interface MockOptions {
@@ -37,16 +37,6 @@ const synthCheckSummary = (passed: number, total: number): Pick<PullRequestItem,
 	return { checkStatus: "failing", checkSummary: `${passed}/${total}`, checks }
 }
 
-const synthLabels = (index: number): readonly PullRequestLabel[] => {
-	if (index % 5 === 0) return [{ name: "bug", color: "#d73a4a" }]
-	if (index % 7 === 0)
-		return [
-			{ name: "enhancement", color: "#a2eeef" },
-			{ name: "tests", color: "#0e8a16" },
-		]
-	return []
-}
-
 const buildPullRequest = (index: number, options: Required<MockOptions>): PullRequestItem => {
 	const repoIndex = index % options.repoCount
 	const repository = `mock-org/repo-${repoIndex}`
@@ -58,13 +48,13 @@ const buildPullRequest = (index: number, options: Required<MockOptions>): PullRe
 
 	return {
 		repository,
-		author: options.username,
+		author: index % 4 === 0 ? options.username : mockAuthor(index),
 		headRefOid: `deadbeef${index.toString(16).padStart(8, "0")}`,
-		headRefName: `mock-branch-${index}`,
+		headRefName: mockPullRequestBranch(index),
 		number,
-		title: `Mock PR ${number}: example change ${index}`,
-		body: `This is mock pull request #${number}.\n\nLine A.\nLine B.`,
-		labels: synthLabels(index),
+		title: mockPullRequestTitle(index),
+		body: mockBody("pull-request", index),
+		labels: mockLabels(index),
 		additions: 10 + index,
 		deletions: 5 + (index % 11),
 		changedFiles: 1 + (index % 7),
@@ -103,9 +93,11 @@ const buildMockIssues = (options: MockOptions): readonly IssueItem[] => {
 		return {
 			repository,
 			number,
-			title: `Mock issue ${number}: project task ${index}`,
-			author: index % 2 === 0 ? resolved.username : "mock-reporter",
-			labels: synthLabels(index),
+			title: mockIssueTitle(index),
+			body: mockBody("issue", index),
+			author: index % 2 === 0 ? resolved.username : mockAuthor(index),
+			labels: mockLabels(index),
+			commentCount: index % 6,
 			createdAt: new Date(Date.now() - index * 43_200_000),
 			updatedAt: new Date(Date.now() - index * 3_600_000),
 			url: `https://github.com/${repository}/issues/${number}`,

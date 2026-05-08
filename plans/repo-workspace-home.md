@@ -23,6 +23,18 @@ When launched inside or pointed at a GitHub repository, ghui should feel like a 
 - Add a lightweight Issues placeholder component before adding `GitHubService` issue APIs.
 - Later: introduce a repository detection/context model and persist per-repo surface/filter preferences.
 
+### Pane Layout Extraction
+
+The workspace shell is exposing repeated layout code that should become a small pane library instead of staying embedded in `App.tsx`:
+
+- `PaneShell`: owns header rows, surface tabs, body, footer, and the divider rows between them.
+- `SplitPane`: renders left/right panes and owns the top/bottom divider junction characters (`┬` / `┴`) plus the vertical separator.
+- `PaneSection`: wraps pane content with standard padding/height semantics.
+- `ListWithPreview`: composes a selectable list on the left and a detail/placeholder panel on the right.
+- `ModalFrame` already has junction-row lessons; the same idea should be generalized so dividers never look detached.
+
+The goal is for PRs, Issues, Actions, Releases, and future modals to ask for "split list/detail" or "single pane" rather than reimplementing border math, padding, and junctions by hand.
+
 ## Open Questions
 
 - Should global/non-repo launch still default to authored PRs, or a global home dashboard?

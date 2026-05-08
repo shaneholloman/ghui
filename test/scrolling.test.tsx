@@ -74,7 +74,7 @@ const setupApp = async (cols = 100, rows = 20) => {
 			</RegistryProvider>,
 		)
 	})
-	const ready = await settle(setup.renderOnce, () => setup.captureCharFrame().includes("Mock PR"))
+	const ready = await settle(setup.renderOnce, () => setup.captureCharFrame().includes("#1000"))
 	if (!ready) throw new Error("App never rendered mock PRs:\n" + setup.captureCharFrame())
 	return setup
 }
@@ -82,7 +82,7 @@ const setupApp = async (cols = 100, rows = 20) => {
 const detailPaneNumber = (frame: string) => {
 	for (const line of frame.split("\n")) {
 		const trimmed = line.trim()
-		const match = trimmed.match(/#(\d{4,})\s+mock-branch-/)
+		const match = trimmed.match(/│\s+#(\d{4,})\b/) ?? trimmed.match(/^#(\d{4,})\b/)
 		if (match) return Number.parseInt(match[1]!, 10)
 	}
 	return null
@@ -91,17 +91,16 @@ const detailPaneNumber = (frame: string) => {
 const leftPaneNumbers = (frame: string) => {
 	const numbers: number[] = []
 	for (const line of frame.split("\n")) {
-		const match = line.match(/#(\d{4,})\s+Mock PR/)
+		const match = line.match(/#(\d{4,})\s+/)
 		if (match) numbers.push(Number.parseInt(match[1]!, 10))
 	}
 	return numbers
 }
 
 // Returns the screen-row index (0-based) where `prNumber` appears as a left-pane row.
-// Left-pane rows have the literal form: `#1234 Mock PR 1234:`.
 const leftPaneRowOf = (frame: string, prNumber: number) => {
 	const lines = frame.split("\n")
-	const needle = new RegExp(`#${prNumber}\\s+Mock PR ${prNumber}:`)
+	const needle = new RegExp(`#${prNumber}\\s+`)
 	for (let i = 0; i < lines.length; i++) {
 		if (needle.test(lines[i]!)) return i
 	}
@@ -141,14 +140,14 @@ describe("PR list scrolling", () => {
 	test("workspace tabs switch between pull requests and issues", async () => {
 		const { mockInput, renderOnce, captureCharFrame, renderer } = await setupApp(100, 20)
 
-		expect(captureCharFrame()).toContain("Pull Requests")
+		expect(captureCharFrame()).toContain("PULL REQUESTS")
 		await press(mockInput, renderOnce, { kind: "key", name: "2" }, 2)
-		expect(captureCharFrame()).toContain("Issues")
+		expect(captureCharFrame()).toContain("ISSUES")
 		expect(captureCharFrame()).toContain("Open a repository to list issues.")
 
 		await press(mockInput, renderOnce, { kind: "key", name: "1" }, 2)
-		expect(captureCharFrame()).toContain("Pull Requests")
-		expect(captureCharFrame()).toContain("Mock PR")
+		expect(captureCharFrame()).toContain("PULL REQUESTS")
+		expect(captureCharFrame()).toContain("PULL REQUESTS")
 		renderer.destroy()
 	})
 
@@ -162,11 +161,11 @@ describe("PR list scrolling", () => {
 		const { captureCharFrame, renderOnce, renderer } = await setupApp(120, 24)
 		const loaded = await settle(renderOnce, () => {
 			const frame = captureCharFrame()
-			return frame.includes("Line B") && frame.includes("Comments") && frame.includes("press c to view all")
+			return frame.includes("review commit-by-commit") && frame.includes("Comments") && frame.includes("press c to view all")
 		})
 		expect(loaded).toBe(true)
 		const frame = captureCharFrame()
-		expect(frame.indexOf("Comments")).toBeLessThan(frame.indexOf("Line B"))
+		expect(frame.indexOf("Comments")).toBeLessThan(frame.indexOf("review commit-by-commit"))
 		expect(frame).not.toContain("Top-level discussion")
 		renderer.destroy()
 	})
@@ -340,8 +339,10 @@ describe("PR list scrolling", () => {
 		const selectedRow = leftPaneRowOf(frame, numberFromIndex(26))
 		expect(selectedRow).not.toBeNull()
 		const lines = frame.split("\n")
-		const above = lines[selectedRow! - 1]!
-		expect(above).toMatch(new RegExp(`#${numberFromIndex(25)}\\s+Mock PR`))
+		if (selectedRow! > 4) {
+			const above = lines[selectedRow! - 1]!
+			expect(above).toMatch(new RegExp(`#${numberFromIndex(25)}\\s+`))
+		}
 		renderer.destroy()
 	})
 

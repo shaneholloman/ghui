@@ -3,8 +3,8 @@ export const workspaceSurfaces = ["pullRequests", "issues"] as const
 export type WorkspaceSurface = (typeof workspaceSurfaces)[number]
 
 export const workspaceSurfaceLabels: Record<WorkspaceSurface, string> = {
-	pullRequests: "Pull Requests",
-	issues: "Issues",
+	pullRequests: "PULL REQUESTS",
+	issues: "ISSUES",
 }
 
 export const nextWorkspaceSurface = (surface: WorkspaceSurface, delta: 1 | -1): WorkspaceSurface => {

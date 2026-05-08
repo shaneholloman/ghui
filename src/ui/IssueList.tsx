@@ -1,11 +1,32 @@
 import { TextAttributes } from "@opentui/core"
 import { useState } from "react"
-import { daysOpen } from "../date.js"
+import { daysOpen, formatRelativeDate } from "../date.js"
 import type { IssueItem, LoadStatus } from "../domain.js"
 import { colors, rowHoverBackground } from "./colors.js"
-import { fitCell, MatchedCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
+import { Divider, Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
 
 const labelText = (issue: IssueItem) => issue.labels.map((label) => label.name).join(", ")
+
+const wrapText = (text: string, width: number): readonly string[] => {
+	if (width <= 0) return [""]
+	return text.split("\n").flatMap((paragraph) => {
+		const words = paragraph.trim().split(/\s+/).filter(Boolean)
+		if (words.length === 0) return [""]
+		const lines: string[] = []
+		let current = ""
+		for (const word of words) {
+			const next = current ? `${current} ${word}` : word
+			if (next.length > width && current) {
+				lines.push(current)
+				current = word
+			} else {
+				current = next
+			}
+		}
+		if (current) lines.push(current)
+		return lines
+	})
+}
 
 const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: number) => {
 	const fixedWidth = numberWidth + 1 + ageWidth
@@ -38,7 +59,6 @@ export const IssueList = ({
 
 	return (
 		<box width={contentWidth} flexDirection="column">
-			<SectionTitle title="ISSUES" />
 			{repository ? null : <PlainLine text="- Open a repository to list issues." fg={colors.muted} />}
 			{status === "loading" && repository ? <PlainLine text="- Loading issues..." fg={colors.muted} /> : null}
 			{status === "error" ? <PlainLine text={`- ${error ?? "Could not load issues."}`} fg={colors.error} /> : null}
@@ -68,6 +88,47 @@ export const IssueList = ({
 					</TextLine>
 				)
 			})}
+		</box>
+	)
+}
+
+export const IssueDetailPane = ({ issue, width, height }: { issue: IssueItem | null; width: number; height: number }) => {
+	const contentWidth = Math.max(1, width - 2)
+	if (!issue) {
+		return (
+			<box width={width} height={height} flexDirection="column" paddingLeft={1} paddingRight={1}>
+				<PlainLine text="No issue selected" fg={colors.muted} />
+				<Filler rows={Math.max(0, height - 1)} prefix="issue-empty" />
+			</box>
+		)
+	}
+
+	const labelSummary = labelText(issue) || "no labels"
+	const bodyLines = wrapText(issue.body || "No description provided.", contentWidth)
+	const visibleBodyLines = bodyLines.slice(0, Math.max(1, height - 8))
+	const usedRows = 5 + visibleBodyLines.length
+
+	return (
+		<box width={width} height={height} flexDirection="column" paddingLeft={1} paddingRight={1}>
+			<TextLine width={contentWidth}>
+				<span fg={colors.count}>#{issue.number}</span>
+				<span> </span>
+				<span fg={colors.text} attributes={TextAttributes.BOLD}>
+					{fitCell(issue.title, Math.max(1, contentWidth - String(issue.number).length - 2))}
+				</span>
+			</TextLine>
+			<TextLine width={contentWidth}>
+				<span fg={colors.muted}>opened {formatRelativeDate(issue.createdAt)} by </span>
+				<span fg={colors.count}>{issue.author}</span>
+			</TextLine>
+			<TextLine width={contentWidth}>
+				<span fg={colors.muted}>{fitCell(`${labelSummary} · ${issue.commentCount} comments`, contentWidth)}</span>
+			</TextLine>
+			<Divider width={contentWidth} />
+			{visibleBodyLines.map((line, index) => (
+				<PlainLine key={index} text={fitCell(line, contentWidth)} fg={line.length === 0 ? colors.muted : colors.text} />
+			))}
+			<Filler rows={Math.max(0, height - usedRows)} prefix="issue-detail" />
 		</box>
 	)
 }

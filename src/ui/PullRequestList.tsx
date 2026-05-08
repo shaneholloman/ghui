@@ -57,6 +57,7 @@ export const buildPullRequestListRows = ({
 	hasMore,
 	isLoadingMore,
 	loadingIndicator = "-",
+	showTitle = true,
 	showRepositoryGroups = true,
 }: {
 	readonly groups: PullRequestGroups
@@ -68,10 +69,11 @@ export const buildPullRequestListRows = ({
 	readonly hasMore: boolean
 	readonly isLoadingMore: boolean
 	readonly loadingIndicator?: string
+	readonly showTitle?: boolean
 	readonly showRepositoryGroups?: boolean
 }): readonly PullRequestListRow[] => {
 	const itemCount = groups.reduce((count, [, pullRequests]) => count + pullRequests.length, 0)
-	const rows: PullRequestListRow[] = [{ _tag: "title" }]
+	const rows: PullRequestListRow[] = showTitle ? [{ _tag: "title" }] : []
 	if (showFilterBar) rows.push({ _tag: "filter" })
 	if (status === "loading" && itemCount === 0) rows.push({ _tag: "message", text: "- Loading pull requests...", color: colors.muted })
 	if (status === "error") rows.push({ _tag: "message", text: `- ${error ?? "Could not load pull requests."}`, color: colors.error })
@@ -155,6 +157,7 @@ export const PullRequestList = ({
 	isLoadingMore,
 	loadingIndicator,
 	onSelectPullRequest,
+	showTitle = true,
 	showRepositoryGroups = true,
 }: {
 	groups: PullRequestGroups
@@ -170,9 +173,22 @@ export const PullRequestList = ({
 	isLoadingMore: boolean
 	loadingIndicator: string
 	onSelectPullRequest: (url: string) => void
+	showTitle?: boolean
 	showRepositoryGroups?: boolean
 }) => {
-	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore, loadingIndicator, showRepositoryGroups })
+	const rows = buildPullRequestListRows({
+		groups,
+		status,
+		error,
+		filterText,
+		showFilterBar,
+		loadedCount,
+		hasMore,
+		isLoadingMore,
+		loadingIndicator,
+		showTitle,
+		showRepositoryGroups,
+	})
 	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
 
 	return (

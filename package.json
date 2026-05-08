@@ -45,6 +45,7 @@
 		"dev:logo": "bun --watch dev/loadingLogo.tsx",
 		"start": "bun run src/index.tsx",
 		"start:mock": "GHUI_MOCK_PR_COUNT=400 GHUI_MOCK_REPO_COUNT=4 bun run src/index.tsx",
+		"start:mock:repo": "GHUI_MOCK_PR_COUNT=400 GHUI_MOCK_REPO_COUNT=4 GHUI_MOCK_REPOSITORY=mock-org/repo-0 bun run src/index.tsx",
 		"test": "bun test test",
 		"typecheck": "tsc --noEmit",
 		"lint": "oxlint --tsconfig tsconfig.json src/ test/",

@@ -165,8 +165,10 @@ export interface IssueItem {
 	readonly repository: string
 	readonly number: number
 	readonly title: string
+	readonly body: string
 	readonly author: string
 	readonly labels: readonly PullRequestLabel[]
+	readonly commentCount: number
 	readonly createdAt: Date
 	readonly updatedAt: Date
 	readonly url: string

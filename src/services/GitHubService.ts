@@ -50,8 +50,10 @@ const RawLabelSchema = Schema.Struct({
 const RawIssueSchema = Schema.Struct({
 	number: Schema.Number,
 	title: Schema.String,
+	body: Schema.String,
 	author: RawAuthorSchema,
 	labels: Schema.Array(RawLabelSchema),
+	comments: Schema.Number,
 	createdAt: Schema.String,
 	updatedAt: Schema.String,
 	url: Schema.String,
@@ -468,8 +470,10 @@ const parseIssue = (repository: string, item: RawIssue): IssueItem => ({
 	repository,
 	number: item.number,
 	title: item.title,
+	body: item.body,
 	author: item.author.login,
 	labels: item.labels.map((label) => ({ name: label.name, color: label.color ? `#${label.color.replace(/^#/, "")}` : null })),
+	commentCount: item.comments,
 	createdAt: new Date(item.createdAt),
 	updatedAt: new Date(item.updatedAt),
 	url: item.url,
@@ -759,7 +763,7 @@ export class GitHubService extends Context.Service<
 					"--limit",
 					String(config.prFetchLimit),
 					"--json",
-					"number,title,author,labels,createdAt,updatedAt,url",
+					"number,title,body,author,labels,comments,createdAt,updatedAt,url",
 				]).pipe(Effect.map((issues) => issues.map((issue) => parseIssue(repository, issue))))
 
 			const getPullRequestDiff = (repository: string, number: number) =>
