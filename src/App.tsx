@@ -183,7 +183,8 @@ import { RepoDetailPane, RepoList, type RepositoryListItem } from "./ui/RepoList
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
 import { getIssueDetailJunctionRows, IssueDetailPane, IssueList } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
-import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
+import { SPINNER_FRAMES } from "./ui/spinner.js"
+import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { readWorkspacePreferencesFile, writeWorkspacePreferencesFile } from "./workspacePreferenceFile.js"
 import { makeWorkspacePreferences, repositoryId, viewerId, type ViewerId, type WorkspacePreferences } from "./workspacePreferences.js"
@@ -890,7 +891,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setIssueOverrides = useAtomSet(issueOverridesAtom)
 	const setRecentlyCompletedPullRequests = useAtomSet(recentlyCompletedPullRequestsAtom)
 	const retryProgress = useAtomValue(retryProgressAtom)
-	const [loadingFrame, setLoadingFrame] = useState(0)
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [workspacePreferencesLoadedViewer, setWorkspacePreferencesLoadedViewer] = useState<string | null>(null)
@@ -1835,19 +1835,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		mergeModal.running ||
 		submitReviewModal.running ||
 		selectedDiffState?._tag === "Loading"
+	const loadingFrame = useSpinnerFrame({ active: hasActiveLoadingIndicator, reset: isInitialLoading })
 	const loadingIndicator = SPINNER_FRAMES[loadingFrame % SPINNER_FRAMES.length]!
-
-	useEffect(() => {
-		if (!hasActiveLoadingIndicator) return
-		const interval = globalThis.setInterval(() => {
-			setLoadingFrame((current) => current + 1)
-		}, SPINNER_INTERVAL_MS)
-		return () => globalThis.clearInterval(interval)
-	}, [hasActiveLoadingIndicator])
-
-	useEffect(() => {
-		if (isInitialLoading) setLoadingFrame(0)
-	}, [isInitialLoading])
 
 	useEffect(() => {
 		if (startupLoadComplete || pullRequestStatus === "loading") return
