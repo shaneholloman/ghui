@@ -73,6 +73,7 @@ import {
 	recentlyCompletedPullRequestsAtom,
 	repoMergeMethodsCacheAtom,
 } from "./ui/pullRequests/atoms.js"
+import { useIdleRefresh } from "./ui/pullRequests/useIdleRefresh.js"
 import {
 	diffCommentAnchorIndexAtom,
 	diffCommentRangeStartIndexAtom,
@@ -1527,16 +1528,14 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		onFocusReturn: () => maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS),
 	})
 
-	useEffect(() => {
-		if (!terminalFocused) return
-		const lastRefreshAt = lastPullRequestRefreshAtRef.current || Date.now()
-		const ageMs = Date.now() - lastRefreshAt
-		const delayMs = Math.max(0, FOCUSED_IDLE_REFRESH_MS - ageMs) + Math.floor(Math.random() * AUTO_REFRESH_JITTER_MS)
-		const timeout = globalThis.setTimeout(() => {
-			maybeRefreshPullRequestsRef.current(FOCUSED_IDLE_REFRESH_MS)
-		}, delayMs)
-		return () => globalThis.clearTimeout(timeout)
-	}, [terminalFocused, pullRequestLoad?.fetchedAt])
+	useIdleRefresh({
+		enabled: terminalFocused,
+		lastRefreshAtRef: lastPullRequestRefreshAtRef,
+		idleAfterMs: FOCUSED_IDLE_REFRESH_MS,
+		jitterMs: AUTO_REFRESH_JITTER_MS,
+		onRefresh: (ms) => maybeRefreshPullRequestsRef.current(ms),
+		refreshGeneration: pullRequestLoad?.fetchedAt?.getTime(),
+	})
 
 	useClampedIndex(visiblePullRequests.length, setSelectedIndex)
 	useClampedIndex(issues.length, setSelectedIssueIndex)
