@@ -1,28 +1,49 @@
 import { TextAttributes } from "@opentui/core"
-import { colors } from "./colors.js"
+import { useState } from "react"
+import { colors, rowHoverBackground } from "./colors.js"
 import { fitCell, TextLine } from "./primitives.js"
 import { workspaceSurfaceLabels, workspaceSurfaces, type WorkspaceSurface } from "../workspaceSurfaces.js"
 
-export const WorkspaceTabs = ({ activeSurface, width }: { activeSurface: WorkspaceSurface; width: number }) => {
+export const WorkspaceTabs = ({ activeSurface, width, onSelect }: { activeSurface: WorkspaceSurface; width: number; onSelect: (surface: WorkspaceSurface) => void }) => {
+	const [hoveredSurface, setHoveredSurface] = useState<WorkspaceSurface | null>(null)
 	const rendered = workspaceSurfaces
-		.map((surface, index) => {
+		.map((surface) => {
 			const active = surface === activeSurface
-			const label = `${index + 1} ${workspaceSurfaceLabels[surface]}`
-			return { surface, active, text: active ? `[${label}]` : ` ${label} ` }
+			const label = workspaceSurfaceLabels[surface]
+			return { surface, active, text: ` ${label} ` }
 		})
 		.flatMap((tab, index) => (index === 0 ? [tab] : [{ surface: tab.surface, active: false, text: "  " }, tab]))
 	const textWidth = rendered.reduce((sum, tab) => sum + tab.text.length, 0)
 	const filler = Math.max(0, width - textWidth)
 
 	return (
-		<TextLine width={width}>
+		<box width={width} height={1} flexDirection="row">
 			{rendered.map((tab, index) => (
-				<span key={`${tab.surface}-${index}`} fg={tab.active ? colors.accent : colors.muted} attributes={tab.active ? TextAttributes.BOLD : 0}>
-					{tab.text}
-				</span>
+				<box
+					key={`${tab.surface}-${index}`}
+					width={tab.text.length}
+					height={1}
+					{...(tab.text.trim().length > 0
+						? {
+								onMouseDown: () => onSelect(tab.surface),
+								onMouseOver: () => setHoveredSurface(tab.surface),
+								onMouseOut: () => setHoveredSurface((current) => (current === tab.surface ? null : current)),
+							}
+						: {})}
+				>
+					<text
+						wrapMode="none"
+						truncate
+						fg={tab.active ? colors.accent : colors.muted}
+						{...(hoveredSurface === tab.surface && !tab.active ? { bg: rowHoverBackground() } : {})}
+						attributes={tab.active ? TextAttributes.BOLD : 0}
+					>
+						{tab.text}
+					</text>
+				</box>
 			))}
-			{filler > 0 ? <span>{fitCell("", filler)}</span> : null}
-		</TextLine>
+			{filler > 0 ? <TextLine width={filler}>{fitCell("", filler)}</TextLine> : null}
+		</box>
 	)
 }
 

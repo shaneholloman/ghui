@@ -57,6 +57,7 @@ export const buildPullRequestListRows = ({
 	hasMore,
 	isLoadingMore,
 	loadingIndicator = "-",
+	showRepositoryGroups = true,
 }: {
 	readonly groups: PullRequestGroups
 	readonly status: LoadStatus
@@ -67,6 +68,7 @@ export const buildPullRequestListRows = ({
 	readonly hasMore: boolean
 	readonly isLoadingMore: boolean
 	readonly loadingIndicator?: string
+	readonly showRepositoryGroups?: boolean
 }): readonly PullRequestListRow[] => {
 	const itemCount = groups.reduce((count, [, pullRequests]) => count + pullRequests.length, 0)
 	const rows: PullRequestListRow[] = [{ _tag: "title" }]
@@ -76,7 +78,7 @@ export const buildPullRequestListRows = ({
 	if (status === "ready" && itemCount === 0)
 		rows.push({ _tag: "message", text: filterText.length > 0 ? "- No matching pull requests." : "- No open pull requests.", color: colors.muted })
 	for (const [repository, pullRequests] of groups) {
-		rows.push({ _tag: "group", repository, pullRequests })
+		if (showRepositoryGroups) rows.push({ _tag: "group", repository, pullRequests })
 		const numberWidth = groupNumberWidth(pullRequests)
 		const ageWidth = groupAgeWidth(pullRequests)
 		for (const pullRequest of pullRequests) rows.push({ _tag: "pull-request", pullRequest, numberWidth, ageWidth })
@@ -153,6 +155,7 @@ export const PullRequestList = ({
 	isLoadingMore,
 	loadingIndicator,
 	onSelectPullRequest,
+	showRepositoryGroups = true,
 }: {
 	groups: PullRequestGroups
 	selectedUrl: string | null
@@ -167,8 +170,9 @@ export const PullRequestList = ({
 	isLoadingMore: boolean
 	loadingIndicator: string
 	onSelectPullRequest: (url: string) => void
+	showRepositoryGroups?: boolean
 }) => {
-	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore, loadingIndicator })
+	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore, loadingIndicator, showRepositoryGroups })
 	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
 
 	return (

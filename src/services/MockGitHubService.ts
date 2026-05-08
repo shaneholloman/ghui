@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect"
 import type {
 	CheckItem,
 	CreatePullRequestCommentInput,
+	IssueItem,
 	Mergeable,
 	PullRequestComment,
 	PullRequestItem,
@@ -88,6 +89,30 @@ export const buildMockPullRequests = (options: MockOptions): readonly PullReques
 	return Array.from({ length: resolved.prCount }, (_, index) => buildPullRequest(index, resolved))
 }
 
+const buildMockIssues = (options: MockOptions): readonly IssueItem[] => {
+	const resolved: Required<MockOptions> = {
+		prCount: options.prCount,
+		repoCount: options.repoCount ?? 4,
+		username: options.username ?? "mock-user",
+		seed: options.seed ?? 0,
+	}
+	return Array.from({ length: Math.max(8, Math.ceil(resolved.prCount / 3)) }, (_, index) => {
+		const repoIndex = index % resolved.repoCount
+		const repository = `mock-org/repo-${repoIndex}`
+		const number = 2000 + index
+		return {
+			repository,
+			number,
+			title: `Mock issue ${number}: project task ${index}`,
+			author: index % 2 === 0 ? resolved.username : "mock-reporter",
+			labels: synthLabels(index),
+			createdAt: new Date(Date.now() - index * 43_200_000),
+			updatedAt: new Date(Date.now() - index * 3_600_000),
+			url: `https://github.com/${repository}/issues/${number}`,
+		} satisfies IssueItem
+	})
+}
+
 const filterByView = (mode: PullRequestQueueMode, repository: string | null, source: readonly PullRequestItem[]) => {
 	if (mode === "repository") return repository ? source.filter((item) => item.repository === repository) : []
 	return source
@@ -121,6 +146,7 @@ const mockDiff = `diff --git a/src/mockDiff.ts b/src/mockDiff.ts
 export const MockGitHubService = {
 	layer: (options: MockOptions) => {
 		const items = buildMockPullRequests(options)
+		const issues = buildMockIssues(options)
 		const username = options.username ?? "mock-user"
 		const summaryItems = items.map(
 			(item) =>
@@ -135,6 +161,7 @@ export const MockGitHubService = {
 				}) satisfies PullRequestItem,
 		)
 		const findPullRequest = (repository: string, number: number) => items.find((item) => item.repository === repository && item.number === number) ?? items[0]!
+		const findIssues = (repository: string) => issues.filter((issue) => issue.repository === repository)
 		const comments = (repository: string, number: number): readonly PullRequestComment[] => [
 			{
 				_tag: "comment",
@@ -199,6 +226,7 @@ export const MockGitHubService = {
 				getPullRequestDiff: (_repo, _number) => Effect.succeed(mockDiff),
 				listPullRequestReviewComments: (repository, number) => Effect.succeed(reviewComments(repository, number)),
 				listPullRequestComments: (repository, number) => Effect.succeed(comments(repository, number)),
+				listOpenIssues: (repository) => Effect.succeed(findIssues(repository)),
 				getPullRequestMergeInfo: (repository, number) => {
 					const pr = findPullRequest(repository, number)
 					return Effect.succeed({

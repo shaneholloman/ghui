@@ -16,6 +16,7 @@ import { config } from "./config.js"
 import {
 	type CreatePullRequestCommentInput,
 	type DiffCommentSide,
+	type IssueItem,
 	type ListPullRequestPageInput,
 	type LoadStatus,
 	type PullRequestComment,
@@ -30,6 +31,7 @@ import {
 import { allowedMergeMethodList, pullRequestMergeMethods } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
+import { detectCurrentGitHubRepository } from "./gitRemotes.js"
 import { getMergeKindDefinition, mergeInfoFromPullRequest, requiresMarkReady, visibleMergeKinds } from "./mergeActions.js"
 import { Observability } from "./observability.js"
 import { mergeCachedDetails } from "./pullRequestCache.js"
@@ -162,10 +164,11 @@ import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
-import { IssuesPlaceholder, WorkspaceTabs } from "./ui/WorkspaceTabs.js"
+import { WorkspaceTabs } from "./ui/WorkspaceTabs.js"
+import { IssueList } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
-import { nextWorkspaceSurface, workspaceSurfaceLabels, type WorkspaceSurface } from "./workspaceSurfaces.js"
+import { nextWorkspaceSurface, type WorkspaceSurface } from "./workspaceSurfaces.js"
 
 const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
 	if (value === undefined) return fallback
@@ -174,6 +177,7 @@ const parseOptionalPositiveInt = (value: string | undefined, fallback: number | 
 }
 
 const mockPrCount = parseOptionalPositiveInt(process.env.GHUI_MOCK_PR_COUNT, null)
+const detectedRepository = mockPrCount === null ? detectCurrentGitHubRepository() : null
 const pullRequestPageSize = Math.min(100, parseOptionalPositiveInt(process.env.GHUI_PR_PAGE_SIZE, config.prPageSize) ?? config.prPageSize)
 const githubServiceLayer =
 	mockPrCount !== null
@@ -274,7 +278,7 @@ const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: r
 const cacheViewerFor = (view: PullRequestView, username: string | null) => (view._tag === "Repository" ? "anonymous" : username)
 
 const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
-const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView()).pipe(Atom.keepAlive)
+const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(detectedRepository)).pipe(Atom.keepAlive)
 const queueLoadCacheAtom = Atom.make<Partial<Record<string, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
 const queueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
 const trimQueueLoadCache = (cache: Partial<Record<string, PullRequestLoad>>) => {
@@ -343,8 +347,21 @@ const pullRequestsAtom = githubRuntime
 		),
 	)
 	.pipe(Atom.keepAlive)
+const issuesAtom = githubRuntime
+	.atom(
+		GitHubService.use((github) =>
+			Effect.gen(function* () {
+				const view = yield* Atom.get(activeViewAtom)
+				const repository = viewRepository(view)
+				if (!repository) return [] as readonly IssueItem[]
+				return yield* github.listOpenIssues(repository)
+			}),
+		),
+	)
+	.pipe(Atom.keepAlive)
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
 const selectedIndexAtom = Atom.make(0)
+const selectedIssueIndexAtom = Atom.make(0)
 const noticeAtom = Atom.make<string | null>(null)
 const filterQueryAtom = Atom.make("")
 const filterDraftAtom = Atom.make("")
@@ -847,8 +864,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const dividerJunctionAt = Math.max(1, leftPaneWidth)
 	const leftContentWidth = isWideLayout ? Math.max(24, leftPaneWidth - 2) : Math.max(24, contentWidth - sectionPadding * 2)
 	const rightContentWidth = isWideLayout ? Math.max(24, rightPaneWidth - sectionPadding * 2) : Math.max(24, contentWidth - sectionPadding * 2)
-	const wideDetailLines = Math.max(8, terminalHeight - 9)
-	const wideBodyHeight = Math.max(8, terminalHeight - 5)
+	const wideDetailLines = Math.max(8, terminalHeight - 10)
+	const wideBodyHeight = Math.max(8, terminalHeight - 6)
 	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -944,10 +961,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const pullRequestLoad = useAtomValue(pullRequestLoadAtom)
 	const [activeWorkspaceSurface, setActiveWorkspaceSurface] = useAtom(workspaceSurfaceAtom)
+	const issuesResult = useAtomValue(issuesAtom)
+	const [selectedIssueIndex, setSelectedIssueIndex] = useAtom(selectedIssueIndexAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
+	const selectedRepository = viewRepository(activeView)
 	const isInitialLoading = !startupLoadComplete && pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
+	const issues = AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
+	const issuesStatus: LoadStatus = selectedRepository === null ? "ready" : issuesResult.waiting ? "loading" : AsyncResult.isFailure(issuesResult) ? "error" : "ready"
+	const issuesError = AsyncResult.isFailure(issuesResult) ? errorMessage(Cause.squash(issuesResult.cause)) : null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 
@@ -957,7 +980,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
-	const selectedRepository = viewRepository(activeView)
 	const activeViews = activePullRequestViews(activeView)
 	const currentQueueCacheKey = viewCacheKey(activeView)
 	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
@@ -1056,9 +1078,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			: activeWorkspaceSurface === "pullRequests" && pullRequestStatus === "loading"
 				? "loading pull requests..."
 				: ""
-	const headerLeft = username
-		? `GHUI  ${username}  ${viewLabel(activeView)}  ·  ${workspaceSurfaceLabels[activeWorkspaceSurface]}`
-		: `GHUI  ${viewLabel(activeView)}  ·  ${workspaceSurfaceLabels[activeWorkspaceSurface]}`
+	const headerLeft = selectedRepository ?? (username ? `${username}  ·  ${viewLabel(activeView)}` : viewLabel(activeView))
 	const headerLine = `${fitCell(headerLeft, Math.max(0, headerFooterWidth - summaryRight.length))}${summaryRight}`
 	const footerNotice = notice ? fitCell(notice, headerFooterWidth) : null
 	const selectPullRequestByUrl = (url: string) => {
@@ -1117,6 +1137,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
 		setActiveView(view)
 		setSelectedIndex(registry.get(queueSelectionAtom)[viewCacheKey(view)] ?? 0)
+		setSelectedIssueIndex(0)
 		setRecentlyCompletedPullRequests({})
 		detailHydrationRef.current.clear()
 		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
@@ -1135,6 +1156,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const switchWorkspaceSurface = (surface: WorkspaceSurface) => {
 		if (surface === activeWorkspaceSurface) return
 		setActiveWorkspaceSurface(surface)
+		setSelectedIssueIndex(0)
 		setDetailFullView(false)
 		setDiffFullView(false)
 		setCommentsViewActive(false)
@@ -3125,6 +3147,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 	const moveSelectedToPreviousGroup = () =>
 		setSelectedIndex((current) => {
+			if (activeWorkspaceSurface !== "pullRequests") return current
 			if (visiblePullRequests.length === 0 || groupStarts.length === 0) return 0
 			const currentGroup = getCurrentGroupIndex(current)
 			if (currentGroup <= 0) return groupStarts[groupStarts.length - 1]!
@@ -3132,17 +3155,27 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	const moveSelectedToNextGroup = () =>
 		setSelectedIndex((current) => {
+			if (activeWorkspaceSurface !== "pullRequests") return current
 			if (visiblePullRequests.length === 0 || groupStarts.length === 0) return 0
 			const currentGroup = getCurrentGroupIndex(current)
 			if (currentGroup >= groupStarts.length - 1) return groupStarts[0]!
 			return groupStarts[currentGroup + 1]!
 		})
 	const stepSelected = (delta: number) =>
-		setSelectedIndex((current) => {
-			if (visiblePullRequests.length === 0) return 0
-			return Math.max(0, Math.min(visiblePullRequests.length - 1, current + delta))
-		})
+		activeWorkspaceSurface === "issues"
+			? setSelectedIssueIndex((current) => {
+					if (issues.length === 0) return 0
+					return Math.max(0, Math.min(issues.length - 1, current + delta))
+				})
+			: setSelectedIndex((current) => {
+					if (visiblePullRequests.length === 0) return 0
+					return Math.max(0, Math.min(visiblePullRequests.length - 1, current + delta))
+				})
 	const stepSelectedDown = (count = 1) => {
+		if (activeWorkspaceSurface === "issues") {
+			stepSelected(count)
+			return
+		}
 		if (visiblePullRequests.length === 0) return
 		if (selectedIndex + count >= visiblePullRequests.length && hasMorePullRequests) {
 			loadMorePullRequests()
@@ -3151,6 +3184,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 	const stepSelectedUp = (count = 1) => stepSelected(-count)
 	const stepSelectedDownWithLoadMore = () => {
+		if (activeWorkspaceSurface === "issues") {
+			setSelectedIssueIndex((current) => {
+				if (issues.length === 0) return 0
+				return current >= issues.length - 1 ? 0 : current + 1
+			})
+			return
+		}
 		if (visiblePullRequests.length > 0 && selectedIndex >= visiblePullRequests.length - 1 && hasMorePullRequests) {
 			loadMorePullRequests()
 			return
@@ -3161,10 +3201,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	}
 	const stepSelectedUpWrap = () =>
-		setSelectedIndex((current) => {
-			if (visiblePullRequests.length === 0) return 0
-			return current <= 0 ? visiblePullRequests.length - 1 : current - 1
-		})
+		activeWorkspaceSurface === "issues"
+			? setSelectedIssueIndex((current) => {
+					if (issues.length === 0) return 0
+					return current <= 0 ? issues.length - 1 : current - 1
+				})
+			: setSelectedIndex((current) => {
+					if (visiblePullRequests.length === 0) return 0
+					return current <= 0 ? visiblePullRequests.length - 1 : current - 1
+				})
 	const handleQuitOrClose = () => {
 		if (themeModalActive) {
 			closeThemeModal(false)
@@ -3375,7 +3420,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		},
 		listNav: {
 			halfPage,
-			visibleCount: activeWorkspaceSurface === "pullRequests" ? visiblePullRequests.length : 0,
+			visibleCount: activeWorkspaceSurface === "pullRequests" ? visiblePullRequests.length : issues.length,
 			hasFilter: activeWorkspaceSurface === "pullRequests" && filterQuery.length > 0,
 			activeSurface: activeWorkspaceSurface,
 			canScrollDetailPreview: activeWorkspaceSurface === "pullRequests" && isWideLayout && selectedPullRequest !== null,
@@ -3397,7 +3442,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			stepSelectedDownWithLoadMore,
 			moveSelectedToPreviousGroup,
 			moveSelectedToNextGroup,
-			setSelected: (index) => setSelectedIndex(index),
+			setSelected: (index) => (activeWorkspaceSurface === "issues" ? setSelectedIssueIndex(index) : setSelectedIndex(index)),
 		},
 		openCommandPalette: () => {
 			runCommandById("command.open")
@@ -3543,6 +3588,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		isLoadingMore: isLoadingMorePullRequests,
 		loadingIndicator,
 		onSelectPullRequest: selectPullRequestByUrl,
+		showRepositoryGroups: selectedRepository === null,
 	} as const
 	const widePullRequestList = (
 		<box paddingLeft={sectionPadding} paddingRight={0}>
@@ -3635,12 +3681,23 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			<box paddingLeft={1} paddingRight={1} flexDirection="column" backgroundColor={colors.background}>
 				<PlainLine text={headerLine} fg={colors.muted} bold />
 			</box>
+			<Divider width={contentWidth} />
 			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
-				<WorkspaceTabs activeSurface={activeWorkspaceSurface} width={headerFooterWidth} />
+				<WorkspaceTabs activeSurface={activeWorkspaceSurface} width={headerFooterWidth} onSelect={switchWorkspaceSurface} />
 			</box>
 			{showWideSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" /> : <Divider width={contentWidth} />}
 			{activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
-				<IssuesPlaceholder width={contentWidth} height={wideBodyHeight} repository={selectedRepository} />
+				<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+					<IssueList
+						issues={issues}
+						selectedIndex={selectedIssueIndex}
+						status={issuesStatus}
+						error={issuesError}
+						repository={selectedRepository}
+						contentWidth={fullscreenContentWidth}
+						onSelectIssue={setSelectedIssueIndex}
+					/>
+				</box>
 			) : commentsViewActive && selectedPullRequest ? (
 				<CommentsPane
 					pullRequest={selectedPullRequest}

@@ -102,8 +102,8 @@ export const listNavKeymap = List(
 	},
 
 	// Half-page steps
-	{ id: "list.half-up", title: "Half page up", keys: ["ctrl+u"], enabled: pullRequestsActive, run: (s) => s.stepSelected(-s.halfPage) },
-	{ id: "list.half-down", title: "Half page down", keys: ["ctrl+d"], enabled: pullRequestsActive, run: (s) => s.stepSelected(s.halfPage) },
+	{ id: "list.half-up", title: "Half page up", keys: ["ctrl+u"], run: (s) => s.stepSelected(-s.halfPage) },
+	{ id: "list.half-down", title: "Half page down", keys: ["ctrl+d"], run: (s) => s.stepSelected(s.halfPage) },
 
 	// Vim count prefixes
 	...countedVerticalBindings<ListNavCtx>((s, delta) => {
@@ -112,16 +112,15 @@ export const listNavKeymap = List(
 	}),
 
 	// Single-step (with wrap up, load-more on down)
-	{ id: "list.up", title: "Up", keys: ["up", "k"], enabled: pullRequestsActive, run: (s) => s.stepSelectedUpWrap() },
-	{ id: "list.down", title: "Down", keys: ["down", "j"], enabled: pullRequestsActive, run: (s) => s.stepSelectedDownWithLoadMore() },
+	{ id: "list.up", title: "Up", keys: ["up", "k"], run: (s) => s.stepSelectedUpWrap() },
+	{ id: "list.down", title: "Down", keys: ["down", "j"], run: (s) => s.stepSelectedDownWithLoadMore() },
 
 	// Top / bottom
-	{ id: "list.top", title: "Top", keys: ["g g"], enabled: pullRequestsActive, run: (s) => s.setSelected(0) },
+	{ id: "list.top", title: "Top", keys: ["g g"], run: (s) => s.setSelected(0) },
 	{
 		id: "list.bottom",
 		title: "Bottom",
 		keys: ["shift+g"],
-		enabled: pullRequestsActive,
 		run: (s) => s.setSelected(s.visibleCount === 0 ? 0 : s.visibleCount - 1),
 	},
 )

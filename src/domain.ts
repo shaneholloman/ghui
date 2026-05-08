@@ -161,6 +161,17 @@ export interface PullRequestPage {
 	readonly hasNextPage: boolean
 }
 
+export interface IssueItem {
+	readonly repository: string
+	readonly number: number
+	readonly title: string
+	readonly author: string
+	readonly labels: readonly PullRequestLabel[]
+	readonly createdAt: Date
+	readonly updatedAt: Date
+	readonly url: string
+}
+
 export interface ListPullRequestPageInput {
 	readonly mode: PullRequestQueueMode
 	readonly repository: string | null

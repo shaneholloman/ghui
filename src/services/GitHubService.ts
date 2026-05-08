@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { config } from "../config.js"
 import {
 	DiffCommentSide,
+	type IssueItem,
 	pullRequestQueueSearchQualifier,
 	type CheckItem,
 	type CreatePullRequestCommentInput,
@@ -44,6 +45,16 @@ const RawRepositorySchema = Schema.Struct({ nameWithOwner: Schema.String })
 const RawLabelSchema = Schema.Struct({
 	name: Schema.String,
 	color: OptionalNullableString,
+})
+
+const RawIssueSchema = Schema.Struct({
+	number: Schema.Number,
+	title: Schema.String,
+	author: RawAuthorSchema,
+	labels: Schema.Array(RawLabelSchema),
+	createdAt: Schema.String,
+	updatedAt: Schema.String,
+	url: Schema.String,
 })
 
 const RawStatusCheckRollupSchema = Schema.Struct({
@@ -185,12 +196,14 @@ const RepoLabelsResponseSchema = Schema.Array(
 		color: Schema.String,
 	}),
 )
+const IssuesResponseSchema = Schema.Array(RawIssueSchema)
 
 type RawPullRequestSummaryNode = Schema.Schema.Type<typeof RawPullRequestSummaryNodeSchema>
 type RawPullRequestNode = Schema.Schema.Type<typeof RawPullRequestNodeSchema>
 type RawCheckContext = Schema.Schema.Type<typeof RawCheckContextSchema>
 type RawPullRequestComment = Schema.Schema.Type<typeof PullRequestCommentSchema>
 type RawPullRequestFile = Schema.Schema.Type<typeof PullRequestFileSchema>
+type RawIssue = Schema.Schema.Type<typeof RawIssueSchema>
 
 type SearchResponse<Item> = {
 	readonly data: {
@@ -451,6 +464,17 @@ const parsePullRequest = (item: RawPullRequestNode): PullRequestItem => {
 	}
 }
 
+const parseIssue = (repository: string, item: RawIssue): IssueItem => ({
+	repository,
+	number: item.number,
+	title: item.title,
+	author: item.author.login,
+	labels: item.labels.map((label) => ({ name: label.name, color: label.color ? `#${label.color.replace(/^#/, "")}` : null })),
+	createdAt: new Date(item.createdAt),
+	updatedAt: new Date(item.updatedAt),
+	url: item.url,
+})
+
 const searchQuery = (mode: PullRequestQueueMode, repository: string | null) => {
 	const sort = mode === "repository" ? "sort:updated-desc" : "sort:created-desc"
 	return `${pullRequestQueueSearchQualifier(mode, repository)} is:pr is:open ${sort}`
@@ -589,6 +613,7 @@ export class GitHubService extends Context.Service<
 		readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
 		readonly listPullRequestReviewComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
 		readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestComment[], GitHubError>
+		readonly listOpenIssues: (repository: string) => Effect.Effect<readonly IssueItem[], GitHubError>
 		readonly getPullRequestMergeInfo: (repository: string, number: number) => Effect.Effect<PullRequestMergeInfo, GitHubError>
 		readonly getRepositoryMergeMethods: (repository: string) => Effect.Effect<RepositoryMergeMethods, GitHubError>
 		readonly mergePullRequest: (repository: string, number: number, action: PullRequestMergeAction) => Effect.Effect<void, CommandError>
@@ -723,6 +748,19 @@ export class GitHubService extends Context.Service<
 			})
 
 			const getAuthenticatedUser = () => ghJson("getAuthenticatedUser", ViewerSchema, ["api", "user"]).pipe(Effect.map((viewer) => viewer.login))
+			const listOpenIssues = (repository: string) =>
+				ghJson("listOpenIssues", IssuesResponseSchema, [
+					"issue",
+					"list",
+					"--repo",
+					repository,
+					"--state",
+					"open",
+					"--limit",
+					String(config.prFetchLimit),
+					"--json",
+					"number,title,author,labels,createdAt,updatedAt,url",
+				]).pipe(Effect.map((issues) => issues.map((issue) => parseIssue(repository, issue))))
 
 			const getPullRequestDiff = (repository: string, number: number) =>
 				ghJson("getPullRequestDiff", PullRequestFilesResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/files`]).pipe(
@@ -944,6 +982,7 @@ export class GitHubService extends Context.Service<
 				getPullRequestDiff,
 				listPullRequestReviewComments,
 				listPullRequestComments,
+				listOpenIssues,
 				getPullRequestMergeInfo,
 				getRepositoryMergeMethods,
 				mergePullRequest,

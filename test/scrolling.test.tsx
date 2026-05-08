@@ -141,13 +141,13 @@ describe("PR list scrolling", () => {
 	test("workspace tabs switch between pull requests and issues", async () => {
 		const { mockInput, renderOnce, captureCharFrame, renderer } = await setupApp(100, 20)
 
-		expect(captureCharFrame()).toContain("[1 Pull Requests]")
+		expect(captureCharFrame()).toContain("Pull Requests")
 		await press(mockInput, renderOnce, { kind: "key", name: "2" }, 2)
-		expect(captureCharFrame()).toContain("[2 Issues]")
-		expect(captureCharFrame()).toContain("Issue list/detail will live here.")
+		expect(captureCharFrame()).toContain("Issues")
+		expect(captureCharFrame()).toContain("Open a repository to list issues.")
 
 		await press(mockInput, renderOnce, { kind: "key", name: "1" }, 2)
-		expect(captureCharFrame()).toContain("[1 Pull Requests]")
+		expect(captureCharFrame()).toContain("Pull Requests")
 		expect(captureCharFrame()).toContain("Mock PR")
 		renderer.destroy()
 	})
