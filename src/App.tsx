@@ -56,8 +56,21 @@ import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { detectSystemAppearance } from "./systemAppearance.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
-import { loadStoredDiffWhitespaceMode, saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
+import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+import {
+	diffCommentAnchorIndexAtom,
+	diffCommentRangeStartIndexAtom,
+	diffCommentsLoadedAtom,
+	diffCommentThreadsAtom,
+	diffFileIndexAtom,
+	diffFullViewAtom,
+	diffPreferredSideAtom,
+	diffRenderViewAtom,
+	diffScrollTopAtom,
+	diffWhitespaceModeAtom,
+	diffWrapModeAtom,
+} from "./ui/diff/atoms.js"
 import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
 import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
 import {
@@ -79,8 +92,6 @@ import {
 	type DiffCommentAnchor,
 	type DiffCommentKind,
 	type DiffView,
-	type DiffWhitespaceMode,
-	type DiffWrapMode,
 	type StackedDiffCommentAnchor,
 	verticalDiffAnchor,
 } from "./ui/diff.js"
@@ -220,7 +231,6 @@ const githubRuntime = Atom.runtime(
 		Layer.provideMerge(Observability.layer),
 	),
 )
-const initialDiffWhitespaceMode = await Effect.runPromise(loadStoredDiffWhitespaceMode)
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
@@ -392,19 +402,8 @@ const favoriteRepositoriesAtom = Atom.make<Record<string, true>>({}).pipe(Atom.k
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 const detailFullViewAtom = Atom.make(false)
 const detailScrollOffsetAtom = Atom.make(0)
-const diffFullViewAtom = Atom.make(false)
 const commentsViewActiveAtom = Atom.make(false)
 const commentsViewSelectionAtom = Atom.make(0)
-const diffFileIndexAtom = Atom.make(0)
-const diffScrollTopAtom = Atom.make(0)
-const diffRenderViewAtom = Atom.make<DiffView>("split")
-const diffWrapModeAtom = Atom.make<DiffWrapMode>("none")
-const diffWhitespaceModeAtom = Atom.make<DiffWhitespaceMode>(initialDiffWhitespaceMode)
-const diffCommentAnchorIndexAtom = Atom.make(0)
-const diffPreferredSideAtom = Atom.make<DiffCommentSide | null>(null)
-const diffCommentRangeStartIndexAtom = Atom.make<number | null>(null)
-const diffCommentThreadsAtom = Atom.make<Record<string, readonly PullRequestReviewComment[]>>({}).pipe(Atom.keepAlive)
-const diffCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
 const pullRequestCommentsAtom = Atom.make<Record<string, readonly PullRequestComment[]>>({}).pipe(Atom.keepAlive)
 const pullRequestCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
