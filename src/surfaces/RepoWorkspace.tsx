@@ -1,0 +1,91 @@
+import type { ScrollBoxRenderable } from "@opentui/core"
+import type { ComponentProps, MutableRefObject } from "react"
+import { DETAIL_BODY_SCROLL_LIMIT } from "../ui/DetailsPane.js"
+import { SplitPane } from "../ui/paneLayout.js"
+import { Divider } from "../ui/primitives.js"
+import { RepoDetailPane, RepoList, type RepositoryListItem } from "../ui/RepoList.js"
+
+export interface RepoWorkspaceProps {
+	readonly isWideLayout: boolean
+	readonly wideBodyHeight: number
+	readonly contentWidth: number
+	readonly leftPaneWidth: number
+	readonly rightPaneWidth: number
+	readonly leftContentWidth: number
+	readonly fullscreenContentWidth: number
+	readonly sectionPadding: number
+	readonly narrowRepoListHeight: number
+	readonly narrowRepoDetailHeight: number
+	readonly repoListNeedsScroll: boolean
+	readonly narrowRepoListNeedsScroll: boolean
+	readonly repoListProps: Omit<ComponentProps<typeof RepoList>, "contentWidth">
+	readonly selectedRepositoryItem: RepositoryListItem | null
+	readonly detailPreviewScrollRef: MutableRefObject<ScrollBoxRenderable | null>
+}
+
+export const RepoWorkspace = ({
+	isWideLayout,
+	wideBodyHeight,
+	contentWidth,
+	leftPaneWidth,
+	rightPaneWidth,
+	leftContentWidth,
+	fullscreenContentWidth,
+	sectionPadding,
+	narrowRepoListHeight,
+	narrowRepoDetailHeight,
+	repoListNeedsScroll,
+	narrowRepoListNeedsScroll,
+	repoListProps,
+	selectedRepositoryItem,
+	detailPreviewScrollRef,
+}: RepoWorkspaceProps) => {
+	if (isWideLayout) {
+		return (
+			<SplitPane
+				key="wide-repos"
+				height={wideBodyHeight}
+				leftWidth={leftPaneWidth}
+				rightWidth={rightPaneWidth}
+				left={
+					repoListNeedsScroll ? (
+						<scrollbox focusable={false} height={wideBodyHeight} flexGrow={0}>
+							<box flexDirection="column" paddingLeft={sectionPadding}>
+								<RepoList {...repoListProps} contentWidth={leftContentWidth} />
+							</box>
+						</scrollbox>
+					) : (
+						<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
+							<RepoList {...repoListProps} contentWidth={leftContentWidth} />
+						</box>
+					)
+				}
+				right={<RepoDetailPane repository={selectedRepositoryItem} width={rightPaneWidth} height={wideBodyHeight} />}
+			/>
+		)
+	}
+
+	return (
+		<box key="narrow-repos" height={wideBodyHeight} flexDirection="column">
+			{narrowRepoListNeedsScroll ? (
+				<scrollbox focusable={false} height={narrowRepoListHeight} flexGrow={0}>
+					<box flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+						<RepoList {...repoListProps} contentWidth={fullscreenContentWidth} />
+					</box>
+				</scrollbox>
+			) : (
+				<box height={narrowRepoListHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+					<RepoList {...repoListProps} contentWidth={fullscreenContentWidth} />
+				</box>
+			)}
+			<Divider width={contentWidth} />
+			<RepoDetailPane
+				repository={selectedRepositoryItem}
+				width={contentWidth}
+				height={narrowRepoDetailHeight}
+				descriptionLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+				descriptionScrollRef={detailPreviewScrollRef}
+			/>
+		</box>
+	)
+}

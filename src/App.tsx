@@ -182,9 +182,11 @@ import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
-import { RepoDetailPane, RepoList, type RepositoryListItem } from "./ui/RepoList.js"
+import { type RepositoryListItem } from "./ui/RepoList.js"
+import { IssuesWorkspace } from "./surfaces/IssuesWorkspace.js"
+import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
-import { getIssueDetailJunctionRows, IssueDetailPane, IssueList } from "./ui/IssueList.js"
+import { getIssueDetailJunctionRows, IssueDetailPane } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
@@ -3807,92 +3809,43 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				</>
 			) : null}
 			{activeWorkspaceSurface === "repos" && !commentsViewActive && !diffFullView && !detailFullView ? (
-				isWideLayout ? (
-					<SplitPane
-						key="wide-repos"
-						height={wideBodyHeight}
-						leftWidth={leftPaneWidth}
-						rightWidth={rightPaneWidth}
-						left={
-							repoListNeedsScroll ? (
-								<scrollbox focusable={false} height={wideBodyHeight} flexGrow={0}>
-									<box flexDirection="column" paddingLeft={sectionPadding}>
-										<RepoList {...repoListProps} contentWidth={leftContentWidth} />
-									</box>
-								</scrollbox>
-							) : (
-								<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
-									<RepoList {...repoListProps} contentWidth={leftContentWidth} />
-								</box>
-							)
-						}
-						right={<RepoDetailPane repository={selectedRepositoryItem} width={rightPaneWidth} height={wideBodyHeight} />}
-					/>
-				) : (
-					<box key="narrow-repos" height={wideBodyHeight} flexDirection="column">
-						{narrowRepoListNeedsScroll ? (
-							<scrollbox focusable={false} height={narrowRepoListHeight} flexGrow={0}>
-								<box flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-									<RepoList {...repoListProps} contentWidth={fullscreenContentWidth} />
-								</box>
-							</scrollbox>
-						) : (
-							<box height={narrowRepoListHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-								<RepoList {...repoListProps} contentWidth={fullscreenContentWidth} />
-							</box>
-						)}
-						<Divider width={contentWidth} />
-						<RepoDetailPane
-							repository={selectedRepositoryItem}
-							width={contentWidth}
-							height={narrowRepoDetailHeight}
-							descriptionLineLimit={DETAIL_BODY_SCROLL_LIMIT}
-							descriptionScrollRef={detailPreviewScrollRef}
-						/>
-					</box>
-				)
+				<RepoWorkspace
+					isWideLayout={isWideLayout}
+					wideBodyHeight={wideBodyHeight}
+					contentWidth={contentWidth}
+					leftPaneWidth={leftPaneWidth}
+					rightPaneWidth={rightPaneWidth}
+					leftContentWidth={leftContentWidth}
+					fullscreenContentWidth={fullscreenContentWidth}
+					sectionPadding={sectionPadding}
+					narrowRepoListHeight={narrowRepoListHeight}
+					narrowRepoDetailHeight={narrowRepoDetailHeight}
+					repoListNeedsScroll={repoListNeedsScroll}
+					narrowRepoListNeedsScroll={narrowRepoListNeedsScroll}
+					repoListProps={repoListProps}
+					selectedRepositoryItem={selectedRepositoryItem}
+					detailPreviewScrollRef={detailPreviewScrollRef}
+				/>
 			) : activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
-				isWideLayout ? (
-					<SplitPane
-						key="wide-issues"
-						height={wideBodyHeight}
-						leftWidth={leftPaneWidth}
-						rightWidth={rightPaneWidth}
-						junctionRows={issueJunctions}
-						left={
-							issueListNeedsScroll ? (
-								<scrollbox ref={issueListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
-									<box flexDirection="column" paddingLeft={sectionPadding}>
-										<IssueList {...issueListProps} contentWidth={leftContentWidth} />
-									</box>
-								</scrollbox>
-							) : (
-								<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
-									<IssueList {...issueListProps} contentWidth={leftContentWidth} />
-								</box>
-							)
-						}
-						right={<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} />}
-					/>
-				) : (
-					<box key="narrow-issues" height={wideBodyHeight} flexDirection="column">
-						{narrowIssueListNeedsScroll ? (
-							<scrollbox ref={issueListScrollRef} focusable={false} height={narrowIssueListHeight} flexGrow={0}>
-								<box flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-									<IssueList {...issueListProps} contentWidth={fullscreenContentWidth} />
-								</box>
-							</scrollbox>
-						) : (
-							<box height={narrowIssueListHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-								<IssueList {...issueListProps} contentWidth={fullscreenContentWidth} />
-							</box>
-						)}
-						<Divider width={contentWidth} />
-						<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowIssueDetailHeight} flexGrow={0}>
-							<IssueDetailPane issue={selectedIssue} width={contentWidth} height={narrowIssueDetailHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
-						</scrollbox>
-					</box>
-				)
+				<IssuesWorkspace
+					isWideLayout={isWideLayout}
+					wideBodyHeight={wideBodyHeight}
+					contentWidth={contentWidth}
+					leftPaneWidth={leftPaneWidth}
+					rightPaneWidth={rightPaneWidth}
+					leftContentWidth={leftContentWidth}
+					fullscreenContentWidth={fullscreenContentWidth}
+					sectionPadding={sectionPadding}
+					narrowIssueListHeight={narrowIssueListHeight}
+					narrowIssueDetailHeight={narrowIssueDetailHeight}
+					issueListNeedsScroll={issueListNeedsScroll}
+					narrowIssueListNeedsScroll={narrowIssueListNeedsScroll}
+					issueJunctions={issueJunctions}
+					issueListProps={issueListProps}
+					selectedIssue={selectedIssue}
+					issueListScrollRef={issueListScrollRef}
+					detailPreviewScrollRef={detailPreviewScrollRef}
+				/>
 			) : commentsViewActive && selectedCommentSubject ? (
 				<CommentsPane
 					item={selectedCommentSubject}
