@@ -118,6 +118,7 @@ import {
 	selectedDiffStateAtom,
 } from "./ui/diff/atoms.js"
 import { useDiffLineColors } from "./ui/diff/useDiffLineColors.js"
+import { useDiffLocationPreservation } from "./ui/diff/useDiffLocationPreservation.js"
 import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
 import { themeIdAtom } from "./ui/theme/atoms.js"
 import { useThemeModal } from "./ui/theme/useThemeModal.js"
@@ -132,7 +133,6 @@ import {
 	diffCommentSideLabel,
 	getStackedDiffCommentAnchors,
 	minimizeWhitespaceDiffFiles,
-	nearestDiffAnchorForLocation,
 	PullRequestDiffState,
 	pullRequestDiffKey,
 	safeDiffFileIndex,
@@ -222,11 +222,6 @@ interface DetailPlaceholderInput {
 	readonly filterText: string
 }
 
-interface PendingDiffLocationRestore {
-	readonly anchor: StackedDiffCommentAnchor
-	readonly screenOffset: number
-}
-
 interface DiffCommentRangeSelection {
 	readonly start: StackedDiffCommentAnchor
 	readonly end: StackedDiffCommentAnchor
@@ -245,8 +240,6 @@ const FOCUS_RETURN_REFRESH_MIN_MS = 60_000
 const FOCUSED_IDLE_REFRESH_MS = 5 * 60_000
 const AUTO_REFRESH_JITTER_MS = 10_000
 const DIFF_STICKY_HEADER_LINES = 2
-const DIFF_LAYOUT_RETRY_MS = 16
-const DIFF_SCROLL_RESTORE_ATTEMPTS = 6
 const LOAD_MORE_SELECTION_THRESHOLD = 8
 const LOAD_MORE_SCROLL_THRESHOLD = 3
 const DETAIL_PREFETCH_BEHIND = 1
@@ -542,8 +535,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const prListScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const issueListScrollRef = useRef<ScrollBoxRenderable | null>(null)
-	const diffLocationRestoreTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const pendingDiffLocationRestoreRef = useRef<PendingDiffLocationRestore | null>(null)
 	const suppressNextDiffCommentScrollRef = useRef(false)
 	const headerFooterWidth = Math.max(24, contentWidth - 2)
 
@@ -561,9 +552,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			detailHydrationRef.current.clear()
 			if (detailPrefetchTimeoutRef.current !== null) {
 				clearTimeout(detailPrefetchTimeoutRef.current)
-			}
-			if (diffLocationRestoreTimeoutRef.current !== null) {
-				clearTimeout(diffLocationRestoreTimeoutRef.current)
 			}
 		},
 		[],
@@ -1164,46 +1152,18 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setDiffFileIndex((current) => (current === selectedDiffCommentAnchor.fileIndex ? current : selectedDiffCommentAnchor.fileIndex))
 	}, [diffFullView, selectedDiffCommentAnchor?.fileIndex])
 
-	useEffect(() => {
-		const pending = pendingDiffLocationRestoreRef.current
-		if (!pending || !diffFullView || diffCommentAnchors.length === 0) return
-		pendingDiffLocationRestoreRef.current = null
-		const nextAnchor = nearestDiffAnchorForLocation(diffCommentAnchors, pending.anchor)
-		if (!nextAnchor) return
-		if (diffLocationRestoreTimeoutRef.current !== null) clearTimeout(diffLocationRestoreTimeoutRef.current)
-		suppressNextDiffCommentScrollRef.current = true
-		setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
-		setDiffFileIndex(nextAnchor.fileIndex)
-
-		let attempts = 0
-		const restoreScroll = () => {
-			attempts++
-			const scroll = diffScrollRef.current
-			if (scroll) {
-				const viewportHeight = Math.max(1, scroll.viewport.height)
-				const maxScrollTop = Math.max(0, scroll.scrollHeight - viewportHeight)
-				const targetTop = Math.max(0, nextAnchor.renderLine - pending.screenOffset)
-				const nextTop = Math.min(maxScrollTop, targetTop)
-				suppressNextDiffCommentScrollRef.current = true
-				if (Math.floor(scroll.scrollTop) !== nextTop) {
-					scroll.scrollTo({ x: 0, y: nextTop })
-					syncDiffScrollState()
-				}
-				if (maxScrollTop >= targetTop && Math.floor(scroll.scrollTop) === targetTop) {
-					suppressNextDiffCommentScrollRef.current = false
-					diffLocationRestoreTimeoutRef.current = null
-					return
-				}
-			}
-			if (attempts < DIFF_SCROLL_RESTORE_ATTEMPTS) {
-				diffLocationRestoreTimeoutRef.current = globalThis.setTimeout(restoreScroll, DIFF_LAYOUT_RETRY_MS)
-			} else {
-				suppressNextDiffCommentScrollRef.current = false
-				diffLocationRestoreTimeoutRef.current = null
-			}
-		}
-		diffLocationRestoreTimeoutRef.current = globalThis.setTimeout(restoreScroll, DIFF_LAYOUT_RETRY_MS)
-	}, [diffFullView, diffWhitespaceMode, diffCommentAnchors])
+	const { preserveCurrentDiffLocation } = useDiffLocationPreservation({
+		diffFullView,
+		selectedDiffCommentAnchor,
+		diffCommentAnchors,
+		diffWhitespaceMode,
+		diffScrollRef,
+		wideBodyHeight,
+		suppressNextDiffCommentScrollRef,
+		setDiffCommentAnchorIndex,
+		setDiffFileIndex,
+		syncDiffScrollState: () => syncDiffScrollState(),
+	})
 
 	const { setDiffRenderableRef, resetDiffLineColors } = useDiffLineColors({
 		diffLineColorContextKey,
@@ -2186,18 +2146,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const { openThemeModal, closeThemeModal, moveThemeSelection, updateThemeQuery, toggleThemeTone, toggleThemeMode, editThemeQuery } = themeModalActions
-
-	const preserveCurrentDiffLocation = () => {
-		if (diffFullView && selectedDiffCommentAnchor) {
-			const scroll = diffScrollRef.current
-			const maxScreenOffset = Math.max(DIFF_STICKY_HEADER_LINES, (scroll?.viewport.height ?? wideBodyHeight) - 2)
-			const rawScreenOffset = scroll ? selectedDiffCommentAnchor.renderLine - Math.floor(scroll.scrollTop) : DIFF_STICKY_HEADER_LINES
-			pendingDiffLocationRestoreRef.current = {
-				anchor: selectedDiffCommentAnchor,
-				screenOffset: Math.max(DIFF_STICKY_HEADER_LINES, Math.min(maxScreenOffset, rawScreenOffset)),
-			}
-		}
-	}
 
 	const toggleDiffRenderView = () => {
 		preserveCurrentDiffLocation()
