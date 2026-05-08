@@ -185,6 +185,7 @@ import { getIssueDetailJunctionRows, IssueDetailPane, IssueList } from "./ui/Iss
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
+import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
@@ -1602,23 +1603,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		return () => globalThis.clearInterval(interval)
 	}, [visiblePullRequests.length, filterMode, filterQuery, detailFullView, diffFullView, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
 
-	useEffect(() => {
-		const scroll = prListScrollRef.current
-		if (!scroll || selectedPullRequestRowIndex === null) return
-		const viewportHeight = scroll.viewport.height
-		if (viewportHeight <= 0) return
-		const nextTop = scrollTopForVisibleLine(scroll.scrollTop, viewportHeight, selectedPullRequestRowIndex, 2)
-		if (nextTop !== scroll.scrollTop) scroll.scrollTo({ x: 0, y: nextTop })
-	}, [selectedPullRequestRowIndex])
-
-	useEffect(() => {
-		const scroll = issueListScrollRef.current
-		if (!scroll || issues.length === 0) return
-		const viewportHeight = scroll.viewport.height
-		if (viewportHeight <= 0) return
-		const nextTop = scrollTopForVisibleLine(scroll.scrollTop, viewportHeight, selectedIssueIndex, 2)
-		if (nextTop !== scroll.scrollTop) scroll.scrollTo({ x: 0, y: nextTop })
-	}, [selectedIssueIndex, issues.length])
+	useScrollFollowSelected(prListScrollRef, selectedPullRequestRowIndex)
+	useScrollFollowSelected(issueListScrollRef, issues.length === 0 ? null : selectedIssueIndex)
 
 	useEffect(() => {
 		setDiffFileIndex(0)
