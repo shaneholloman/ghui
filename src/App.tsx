@@ -63,7 +63,16 @@ import { commentsViewActiveAtom, commentsViewSelectionAtom, pullRequestCommentsA
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
 import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
+import { activeModalAtom } from "./ui/modals/atoms.js"
 import { noticeAtom } from "./ui/notice/atoms.js"
+import {
+	issueOverridesAtom,
+	labelCacheAtom,
+	lastUsedMergeMethodAtom,
+	pullRequestOverridesAtom,
+	recentlyCompletedPullRequestsAtom,
+	repoMergeMethodsCacheAtom,
+} from "./ui/pullRequests/atoms.js"
 import {
 	diffCommentAnchorIndexAtom,
 	diffCommentRangeStartIndexAtom,
@@ -399,13 +408,6 @@ const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
-const activeModalAtom = Atom.make<Modal>(initialModal)
-const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}).pipe(Atom.keepAlive)
-const repoMergeMethodsCacheAtom = Atom.make<Record<string, RepositoryMergeMethods>>({}).pipe(Atom.keepAlive)
-const lastUsedMergeMethodAtom = Atom.make<Record<string, PullRequestMergeMethod>>({}).pipe(Atom.keepAlive)
-const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
-const issueOverridesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
-const recentlyCompletedPullRequestsAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
 const usernameAtom = githubRuntime.atom(GitHubService.use((github) => github.getAuthenticatedUser())).pipe(Atom.keepAlive)
 
 const pullRequestLoadAtom = Atom.make((get) => {
@@ -1047,20 +1049,24 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const isInitialLoading = !startupLoadComplete && pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const issueOverrides = useAtomValue(issueOverridesAtom)
+	const visibleFilterText = filterMode ? filterDraft : filterQuery
 	const rawIssues = selectedRepository === null && mockPrCount !== null ? mockUserIssues : AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
-	const issues = rawIssues.map((issue) => issueOverrides[issue.url] ?? issue)
+	const allIssues = rawIssues.map((issue) => issueOverrides[issue.url] ?? issue)
+	const issues = useMemo(
+		() => (activeWorkspaceSurface === "issues" ? filterByScore(allIssues, visibleFilterText, issueFilterScore, (issue) => issue.updatedAt.getTime()) : allIssues),
+		[activeWorkspaceSurface, allIssues, visibleFilterText],
+	)
 	const issuesStatus: LoadStatus = selectedRepository === null ? "ready" : issuesResult.waiting ? "loading" : AsyncResult.isFailure(issuesResult) ? "error" : "ready"
 	const issuesError = AsyncResult.isFailure(issuesResult) ? errorMessage(Cause.squash(issuesResult.cause)) : null
 	const selectedIssue = issues[Math.max(0, Math.min(selectedIssueIndex, issues.length - 1))] ?? null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 
-	const visibleFilterText = filterMode ? filterDraft : filterQuery
 	const visibleGroups = useAtomValue(visibleGroupsAtom)
 	const visiblePullRequests = useAtomValue(visiblePullRequestsAtom)
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
 	const workspaceTabSurfaces: readonly WorkspaceSurface[] = selectedRepository ? repositoryWorkspaceSurfaces : userWorkspaceSurfaces
-	const repositoryItems = useMemo((): readonly RepositoryListItem[] => {
+	const allRepositoryItems = useMemo((): readonly RepositoryListItem[] => {
 		const byRepository = new Map<string, RepositoryListItem>()
 		const catalog = new Map(mockRepositoryCatalog.map((item) => [item.repository, item]))
 		const ensure = (repository: string): RepositoryListItem => {
@@ -1095,7 +1101,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		for (const pullRequest of pullRequests) {
 			touch(pullRequest.repository, pullRequest.createdAt, pullRequest.title, { pullRequestCount: 1, issueCount: 0 })
 		}
-		for (const issue of issues) {
+		for (const issue of allIssues) {
 			touch(issue.repository, issue.updatedAt, issue.title, { pullRequestCount: 0, issueCount: 1 })
 		}
 		return [...byRepository.values()].sort((left, right) => {
@@ -1105,7 +1111,14 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			const rightTime = right.lastActivityAt?.getTime() ?? 0
 			return rightTime - leftTime || left.repository.localeCompare(right.repository)
 		})
-	}, [favoriteRepositories, recentRepositories, pullRequests, issues])
+	}, [favoriteRepositories, recentRepositories, pullRequests, allIssues])
+	const repositoryItems = useMemo(
+		() =>
+			activeWorkspaceSurface === "repos"
+				? filterByScore(allRepositoryItems, visibleFilterText, repositoryFilterScore, (repository) => repository.lastActivityAt?.getTime() ?? 0)
+				: allRepositoryItems,
+		[activeWorkspaceSurface, allRepositoryItems, visibleFilterText],
+	)
 	const selectedRepositoryItem = repositoryItems[Math.max(0, Math.min(selectedRepositoryIndex, repositoryItems.length - 1))] ?? null
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
@@ -3609,7 +3622,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		listNav: {
 			halfPage,
 			visibleCount: activeWorkspaceSurface === "repos" ? repositoryItems.length : activeWorkspaceSurface === "pullRequests" ? visiblePullRequests.length : issues.length,
-			hasFilter: activeWorkspaceSurface === "pullRequests" && filterQuery.length > 0,
+			hasFilter: filterQuery.length > 0,
 			activeSurface: activeWorkspaceSurface,
 			surfaces: workspaceTabSurfaces,
 			canGoUpWorkspace: selectedRepository !== null,
@@ -3802,11 +3815,17 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		status: issuesStatus,
 		error: issuesError,
 		repository: selectedRepository,
+		filterText: visibleFilterText,
+		showFilterBar: activeWorkspaceSurface === "issues" && (filterMode || filterQuery.length > 0),
+		isFilterEditing: filterMode,
 		onSelectIssue: setSelectedIssueIndex,
 	} as const
 	const repoListProps = {
 		repositories: repositoryItems,
 		selectedIndex: selectedRepositoryIndex,
+		filterText: visibleFilterText,
+		showFilterBar: activeWorkspaceSurface === "repos" && (filterMode || filterQuery.length > 0),
+		isFilterEditing: filterMode,
 		onSelectRepository: setSelectedRepositoryIndex,
 	} as const
 	const widePullRequestList = (
