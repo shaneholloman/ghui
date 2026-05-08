@@ -186,6 +186,7 @@ import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLine
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
+import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { readWorkspacePreferencesFile, writeWorkspacePreferencesFile } from "./workspacePreferenceFile.js"
 import { makeWorkspacePreferences, repositoryId, viewerId, type ViewerId, type WorkspacePreferences } from "./workspacePreferences.js"
@@ -895,7 +896,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [workspacePreferencesLoadedViewer, setWorkspacePreferencesLoadedViewer] = useState<string | null>(null)
-	const [terminalFocused, setTerminalFocused] = useState(true)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
 	const usernameResult = useAtomValue(usernameAtom)
@@ -950,8 +950,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const refreshGenerationRef = useRef(0)
 	const didMountQueueModeRef = useRef(false)
 	const lastPullRequestRefreshAtRef = useRef(0)
-	const terminalFocusedRef = useRef(true)
-	const terminalWasBlurredRef = useRef(false)
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
 	const refreshPullRequestsRef = useRef<(message?: string, options?: { readonly resetTransientState?: boolean }) => void>(() => {})
 	const maybeRefreshPullRequestsRef = useRef<(minimumAgeMs: number) => void>(() => {})
@@ -1524,27 +1522,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		void pruneCache().catch(() => {})
 	}, [pruneCache])
 
-	useEffect(() => {
-		const handleFocus = () => {
-			terminalFocusedRef.current = true
-			setTerminalFocused(true)
-			if (terminalWasBlurredRef.current) {
-				maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
-			}
-		}
-		const handleBlur = () => {
-			terminalWasBlurredRef.current = true
-			terminalFocusedRef.current = false
-			setTerminalFocused(false)
-		}
-
-		renderer.on("focus", handleFocus)
-		renderer.on("blur", handleBlur)
-		return () => {
-			renderer.off("focus", handleFocus)
-			renderer.off("blur", handleBlur)
-		}
-	}, [renderer])
+	const { terminalFocused, terminalFocusedRef } = useTerminalFocus({
+		renderer,
+		onFocusReturn: () => maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS),
+	})
 
 	useEffect(() => {
 		if (!terminalFocused) return
