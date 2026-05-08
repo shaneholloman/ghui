@@ -56,8 +56,9 @@ import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { detectSystemAppearance } from "./systemAppearance.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
-import { loadStoredDiffWhitespaceMode, loadStoredThemeConfig, saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
+import { loadStoredDiffWhitespaceMode, saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
 import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
 import {
 	buildStackedDiffFiles,
@@ -219,13 +220,7 @@ const githubRuntime = Atom.runtime(
 		Layer.provideMerge(Observability.layer),
 	),
 )
-const [initialThemeConfig, initialDiffWhitespaceMode, initialSystemAppearance] = await Promise.all([
-	Effect.runPromise(loadStoredThemeConfig),
-	Effect.runPromise(loadStoredDiffWhitespaceMode),
-	detectSystemAppearance(),
-])
-const initialThemeId = resolveThemeId(initialThemeConfig, initialSystemAppearance)
-setActiveTheme(initialThemeId)
+const initialDiffWhitespaceMode = await Effect.runPromise(loadStoredDiffWhitespaceMode)
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
@@ -415,9 +410,6 @@ const pullRequestCommentsLoadedAtom = Atom.make<Record<string, "loading" | "read
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
 const activeModalAtom = Atom.make<Modal>(initialModal)
-const themeConfigAtom = Atom.make<ThemeConfig>(initialThemeConfig).pipe(Atom.keepAlive)
-const systemAppearanceAtom = Atom.make<ThemeTone>(initialSystemAppearance).pipe(Atom.keepAlive)
-const themeIdAtom = Atom.make<ThemeId>(initialThemeId).pipe(Atom.keepAlive)
 const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}).pipe(Atom.keepAlive)
 const repoMergeMethodsCacheAtom = Atom.make<Record<string, RepositoryMergeMethods>>({}).pipe(Atom.keepAlive)
 const lastUsedMergeMethodAtom = Atom.make<Record<string, PullRequestMergeMethod>>({}).pipe(Atom.keepAlive)
