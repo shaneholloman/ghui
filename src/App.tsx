@@ -1,4 +1,4 @@
-import type { DiffRenderable, PasteEvent, ScrollBoxRenderable } from "@opentui/core"
+import type { DiffRenderable, ScrollBoxRenderable } from "@opentui/core"
 import { RegistryContext, useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
 import { useKeymap } from "@ghui/keymap/react"
 import { appKeymap, type AppCtx } from "./keymap/all.js"
@@ -185,6 +185,7 @@ import { getIssueDetailJunctionRows, IssueDetailPane, IssueList } from "./ui/Iss
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
+import { usePasteHandler } from "./ui/usePasteHandler.js"
 import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
@@ -587,8 +588,6 @@ const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferre
 }
 
 const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inner) / 2)
-
-const pasteText = (event: PasteEvent) => new TextDecoder().decode(event.bytes)
 
 const pullRequestFilterScore = (pullRequest: PullRequestItem, query: string) => {
 	const normalized = query.trim().toLowerCase()
@@ -3159,30 +3158,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		return false
 	}
 
-	useEffect(() => {
-		const handlePaste = (event: PasteEvent) => {
-			if (insertPastedText(pasteText(event))) event.preventDefault()
-		}
-		const keyInput = renderer.keyInput as unknown as {
-			on: (event: "paste", handler: (event: PasteEvent) => void) => void
-			off: (event: "paste", handler: (event: PasteEvent) => void) => void
-		}
-		keyInput.on("paste", handlePaste)
-		return () => {
-			keyInput.off("paste", handlePaste)
-		}
-	}, [
-		renderer,
-		commandPaletteActive,
-		openRepositoryModalActive,
-		themeModalActive,
-		themeModal.filterMode,
-		commentModalActive,
-		submitReviewModalActive,
-		labelModalActive,
-		changedFilesModalActive,
-		filterMode,
-	])
+	usePasteHandler({ renderer, onPaste: insertPastedText })
 
 	const appCommands: readonly AppCommand[] = buildAppCommands({
 		pullRequestStatus,
