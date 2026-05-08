@@ -5,7 +5,7 @@ import { appKeymap, type AppCtx } from "./keymap/all.js"
 import { buildAppCtx } from "./keymap/contexts/appCtx.js"
 import { useOpenTuiSubscribe } from "./keyboard/opentuiAdapter.js"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { Cause, Effect, Schedule } from "effect"
+import { Cause, Effect } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
@@ -18,7 +18,6 @@ import {
 	type CreatePullRequestCommentInput,
 	type DiffCommentSide,
 	type IssueItem,
-	type ListPullRequestPageInput,
 	type LoadStatus,
 	type PullRequestComment,
 	type PullRequestItem,
@@ -33,22 +32,10 @@ import { allowedMergeMethodList, pullRequestMergeMethods } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import { getMergeKindDefinition, mergeInfoFromPullRequest, requiresMarkReady, visibleMergeKinds } from "./mergeActions.js"
-import { mergeCachedDetails } from "./pullRequestCache.js"
 import type { PullRequestLoad } from "./pullRequestLoad.js"
-import {
-	activePullRequestViews,
-	initialPullRequestView,
-	nextView,
-	parseRepositoryInput,
-	type PullRequestView,
-	viewCacheKey,
-	viewEquals,
-	viewLabel,
-	viewMode,
-	viewRepository,
-} from "./pullRequestViews.js"
+import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewLabel, viewMode, viewRepository } from "./pullRequestViews.js"
 import { BrowserOpener } from "./services/BrowserOpener.js"
-import { CacheService, type PullRequestCacheKey } from "./services/CacheService.js"
+import { CacheService } from "./services/CacheService.js"
 import { Clipboard } from "./services/Clipboard.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
@@ -64,13 +51,42 @@ import { activeModalAtom } from "./ui/modals/atoms.js"
 import { noticeAtom } from "./ui/notice/atoms.js"
 import { useFlashNotice } from "./ui/notice/useFlashNotice.js"
 import {
+	activeViewAtom,
+	addPullRequestLabelAtom,
+	appendPullRequestPage,
+	cacheViewerFor,
+	closePullRequestAtom,
+	getPullRequestMergeInfoAtom,
+	getRepositoryMergeMethodsAtom,
 	issueOverridesAtom,
 	labelCacheAtom,
 	lastUsedMergeMethodAtom,
+	listOpenPullRequestPageAtom,
+	listRepoLabelsAtom,
+	mergePullRequestAtom,
+	pruneCacheAtom,
+	parsePullRequestRevisionAtomKey,
+	pullRequestDetailKey,
+	pullRequestDetailsAtom,
 	pullRequestOverridesAtom,
+	pullRequestRevisionAtomKey,
+	pullRequestsAtom,
+	queueLoadCacheAtom,
+	queueSelectionAtom,
+	readCachedPullRequestAtom,
 	recentlyCompletedPullRequestsAtom,
+	removePullRequestLabelAtom,
 	repoMergeMethodsCacheAtom,
+	retryProgressAtom,
+	toggleDraftAtom,
+	usernameAtom,
+	writeCachedPullRequestAtom,
+	writeQueueCacheAtom,
 } from "./ui/pullRequests/atoms.js"
+
+const pullRequestDetailAtomKey = pullRequestRevisionAtomKey
+const pullRequestDiffAtomKey = pullRequestRevisionAtomKey
+const parsePullRequestDiffAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "diff")
 import { useIdleRefresh } from "./ui/pullRequests/useIdleRefresh.js"
 import {
 	diffCommentAnchorIndexAtom,
@@ -125,7 +141,7 @@ import {
 	type DetailCommentsStatus,
 	type DetailPlaceholderContent,
 } from "./ui/DetailsPane.js"
-import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
+import { FooterHints, RetryProgress } from "./ui/FooterHints.js"
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
 import { SplitPane } from "./ui/paneLayout.js"
 import { Divider, Filler, fitCell, PlainLine } from "./ui/primitives.js"
@@ -245,7 +261,6 @@ interface AppProps {
 	readonly systemThemeGeneration?: number
 }
 
-const PR_FETCH_RETRIES = 6
 const FOCUS_RETURN_REFRESH_MIN_MS = 60_000
 const FOCUSED_IDLE_REFRESH_MS = 5 * 60_000
 const AUTO_REFRESH_JITTER_MS = 10_000
@@ -253,91 +268,12 @@ const DIFF_STICKY_HEADER_LINES = 2
 const DIFF_LAYOUT_RETRY_MS = 16
 const DIFF_SCROLL_RESTORE_ATTEMPTS = 6
 const DIFF_LINE_COLOR_REAPPLY_ATTEMPTS = 8
-const MAX_REPOSITORY_CACHE_ENTRIES = 8
 const LOAD_MORE_SELECTION_THRESHOLD = 8
 const LOAD_MORE_SCROLL_THRESHOLD = 3
 const DETAIL_PREFETCH_BEHIND = 1
 const DETAIL_PREFETCH_AHEAD = 3
 const DETAIL_PREFETCH_CONCURRENCY = 3
 const DETAIL_PREFETCH_DELAY_MS = 120
-const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: readonly PullRequestItem[]) => {
-	const seen = new Set(existing.map((pullRequest) => pullRequest.url))
-	const mergedIncoming = mergeCachedDetails(incoming, existing)
-	return [...existing, ...mergedIncoming.filter((pullRequest) => !seen.has(pullRequest.url))]
-}
-
-const cacheViewerFor = (view: PullRequestView, username: string | null) => (view._tag === "Repository" ? "anonymous" : username)
-
-const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
-const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(detectedRepository)).pipe(Atom.keepAlive)
-const queueLoadCacheAtom = Atom.make<Partial<Record<string, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
-const queueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
-const trimQueueLoadCache = (cache: Partial<Record<string, PullRequestLoad>>) => {
-	const repositoryKeys = Object.keys(cache).filter((key) => key.startsWith("repository:"))
-	if (repositoryKeys.length <= MAX_REPOSITORY_CACHE_ENTRIES) return cache
-	const remove = new Set(repositoryKeys.slice(0, repositoryKeys.length - MAX_REPOSITORY_CACHE_ENTRIES))
-	return Object.fromEntries(Object.entries(cache).filter(([key]) => !remove.has(key))) as Partial<Record<string, PullRequestLoad>>
-}
-const pullRequestsAtom = githubRuntime
-	.atom(
-		GitHubService.use((github) =>
-			Effect.gen(function* () {
-				const cacheService = yield* CacheService
-				const view = yield* Atom.get(activeViewAtom)
-				const queueMode = viewMode(view)
-				const repository = viewRepository(view)
-				const cacheKey = viewCacheKey(view)
-				const cacheUsername = view._tag === "Repository" ? null : yield* github.getAuthenticatedUser().pipe(Effect.catch(() => Effect.succeed(null)))
-				const cacheViewer = cacheViewerFor(view, cacheUsername)
-				if (cacheViewer) {
-					const cachedLoad = yield* cacheService.readQueue(cacheViewer, view).pipe(Effect.catch(() => Effect.succeed(null)))
-					if (cachedLoad) {
-						const cache = yield* Atom.get(queueLoadCacheAtom)
-						yield* Atom.set(queueLoadCacheAtom, trimQueueLoadCache({ ...cache, [cacheKey]: cachedLoad }))
-					}
-				}
-				yield* Atom.set(retryProgressAtom, initialRetryProgress)
-				const page = yield* github
-					.listOpenPullRequestPage({
-						mode: queueMode,
-						repository,
-						cursor: null,
-						pageSize: Math.min(pullRequestPageSize, config.prFetchLimit),
-					})
-					.pipe(
-						Effect.tapError(() =>
-							Atom.update(retryProgressAtom, (current) =>
-								RetryProgress.Retrying({
-									attempt: Math.min(RetryProgress.$match(current, { Idle: () => 0, Retrying: ({ attempt }) => attempt }) + 1, PR_FETCH_RETRIES),
-									max: PR_FETCH_RETRIES,
-								}),
-							),
-						),
-						Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2) }),
-						Effect.tapError(() => Atom.set(retryProgressAtom, initialRetryProgress)),
-					)
-
-				yield* Atom.set(retryProgressAtom, initialRetryProgress)
-				const cache = yield* Atom.get(queueLoadCacheAtom)
-				const existingLoad = cache[cacheKey]
-				const data = mergeCachedDetails(page.items, existingLoad?.data)
-				const load = {
-					view,
-					data,
-					fetchedAt: new Date(),
-					endCursor: page.endCursor,
-					hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
-				} satisfies PullRequestLoad
-				const nextCache = { ...cache }
-				delete nextCache[cacheKey]
-				nextCache[cacheKey] = load
-				yield* Atom.set(queueLoadCacheAtom, trimQueueLoadCache(nextCache))
-				if (cacheViewer) yield* cacheService.writeQueue(cacheViewer, load)
-				return load
-			}),
-		),
-	)
-	.pipe(Atom.keepAlive)
 const issuesAtom = githubRuntime
 	.atom(
 		GitHubService.use((github) =>
@@ -352,8 +288,6 @@ const issuesAtom = githubRuntime
 	.pipe(Atom.keepAlive)
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
-
-const usernameAtom = githubRuntime.atom(GitHubService.use((github) => github.getAuthenticatedUser())).pipe(Atom.keepAlive)
 
 const pullRequestLoadAtom = Atom.make((get) => {
 	const view = get(activeViewAtom)
@@ -444,34 +378,13 @@ const selectedDiffStateAtom = Atom.make((get) => {
 	return get(pullRequestDiffCacheAtom)[key]
 })
 
-const listRepoLabelsAtom = githubRuntime.fn<string>()((repository) => GitHubService.use((github) => github.listRepoLabels(repository)))
-const listOpenPullRequestPageAtom = githubRuntime.fn<ListPullRequestPageInput>()((input) => GitHubService.use((github) => github.listOpenPullRequestPage(input)))
-const pullRequestDetailsAtom = Atom.family((key: string) => {
-	const { repository, number } = parsePullRequestDetailAtomKey(key)
-	return githubRuntime.atom(GitHubService.use((github) => github.getPullRequestDetails(repository, number)))
-})
-const readCachedPullRequestAtom = githubRuntime.fn<PullRequestCacheKey>()((key) => CacheService.use((cache) => cache.readPullRequest(key)))
-const writeCachedPullRequestAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => CacheService.use((cache) => cache.upsertPullRequest(pullRequest)))
-const writeQueueCacheAtom = githubRuntime.fn<{ readonly viewer: string; readonly load: PullRequestLoad }>()(({ viewer, load }) =>
-	CacheService.use((cache) => cache.writeQueue(viewer, load)),
-)
 const readWorkspacePreferencesAtom = githubRuntime.fn<ViewerId>()((viewer) => CacheService.use((cache) => cache.readWorkspacePreferences(viewer)))
 const writeWorkspacePreferencesAtom = githubRuntime.fn<WorkspacePreferences>()((preferences) => CacheService.use((cache) => cache.writeWorkspacePreferences(preferences)))
-const pruneCacheAtom = githubRuntime.fn<void>()(() => CacheService.use((cache) => cache.prune()))
-const addPullRequestLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
-	GitHubService.use((github) => github.addPullRequestLabel(input.repository, input.number, input.label)),
-)
-const removePullRequestLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
-	GitHubService.use((github) => github.removePullRequestLabel(input.repository, input.number, input.label)),
-)
 const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.addIssueLabel(input.repository, input.number, input.label)),
 )
 const removeIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.removeIssueLabel(input.repository, input.number, input.label)),
-)
-const toggleDraftAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly isDraft: boolean }>()((input) =>
-	GitHubService.use((github) => github.toggleDraftStatus(input.repository, input.number, input.isDraft)),
 )
 const pullRequestDiffAtom = Atom.family((key: string) => {
 	const { repository, number } = parsePullRequestDiffAtomKey(key)
@@ -485,16 +398,6 @@ const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: stri
 )
 const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listIssueComments(input.repository, input.number)),
-)
-const getPullRequestMergeInfoAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
-	GitHubService.use((github) => github.getPullRequestMergeInfo(input.repository, input.number)),
-)
-const getRepositoryMergeMethodsAtom = githubRuntime.fn<string>()((repository) => GitHubService.use((github) => github.getRepositoryMergeMethods(repository)))
-const mergePullRequestAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly action: PullRequestMergeAction }>()((input) =>
-	GitHubService.use((github) => github.mergePullRequest(input.repository, input.number, input.action)),
-)
-const closePullRequestAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
-	GitHubService.use((github) => github.closePullRequest(input.repository, input.number)),
 )
 const createPullRequestCommentAtom = githubRuntime.fn<CreatePullRequestCommentInput>()((input) => GitHubService.use((github) => github.createPullRequestComment(input)))
 const createPullRequestIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly body: string }>()((input) =>
@@ -582,18 +485,6 @@ const filterByScore = <Item,>(items: readonly Item[], query: string, scoreItem: 
 		.sort((left, right) => left.score - right.score || getTime(right.item) - getTime(left.item))
 		.map(({ item }) => item)
 }
-
-const pullRequestDetailKey = (pullRequest: PullRequestItem) => `${pullRequest.url}:${pullRequest.headRefOid}`
-const pullRequestRevisionAtomKey = (pullRequest: PullRequestItem) => `${pullRequest.repository}\u0000${pullRequest.number}\u0000${pullRequest.headRefOid}`
-const parsePullRequestRevisionAtomKey = (key: string, label: string) => {
-	const [repository, number] = key.split("\u0000")
-	if (!repository || !number) throw new Error(`Invalid pull request ${label} key: ${key}`)
-	return { repository, number: Number.parseInt(number, 10) }
-}
-const pullRequestDetailAtomKey = pullRequestRevisionAtomKey
-const pullRequestDiffAtomKey = pullRequestRevisionAtomKey
-const parsePullRequestDetailAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "detail")
-const parsePullRequestDiffAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "diff")
 
 const diffCommentThreadMapKey = (diffKey: string, location: Pick<PullRequestReviewComment, "path" | "side" | "line">) => `${diffKey}:${diffCommentLocationKey(location)}`
 
@@ -1024,10 +915,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	}, [favoriteRepositories, recentRepositories, pullRequests, allIssues])
 	const repositoryItems = useMemo(
-		() =>
-			activeWorkspaceSurface === "repos"
-				? filterByScore(allRepositoryItems, visibleFilterText, repositoryFilterScore, (repository) => repository.lastActivityAt?.getTime() ?? 0)
-				: allRepositoryItems,
+		() => (activeWorkspaceSurface === "repos" ? allRepositoryItems.filter((repository) => repositoryFilterScore(repository, visibleFilterText) !== null) : allRepositoryItems),
 		[activeWorkspaceSurface, allRepositoryItems, visibleFilterText],
 	)
 	const selectedRepositoryItem = repositoryItems[Math.max(0, Math.min(selectedRepositoryIndex, repositoryItems.length - 1))] ?? null
