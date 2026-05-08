@@ -34,9 +34,8 @@ import { getMergeKindDefinition, mergeInfoFromPullRequest, requiresMarkReady, vi
 import type { PullRequestLoad } from "./pullRequestLoad.js"
 import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewLabel, viewMode, viewRepository } from "./pullRequestViews.js"
 
-import { fixedThemeConfig, resolveThemeId, systemThemeConfigForTheme, themeConfigWithSelection, type ThemeConfig, type ThemeMode } from "./themeConfig.js"
-import { saveStoredDiffWhitespaceMode, saveStoredThemeConfig } from "./themeStore.js"
-import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
+import { colors, mixHex } from "./ui/colors.js"
 import {
 	favoriteRepositoriesAtom,
 	readWorkspacePreferencesAtom,
@@ -129,8 +128,8 @@ import {
 	selectedDiffStateAtom,
 } from "./ui/diff/atoms.js"
 import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
-import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
-import { useSystemAppearancePolling } from "./ui/theme/useSystemAppearancePolling.js"
+import { themeIdAtom } from "./ui/theme/atoms.js"
+import { useThemeModal } from "./ui/theme/useThemeModal.js"
 import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
 import {
 	buildStackedDiffFiles,
@@ -514,9 +513,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setPullRequestCommentsLoaded = useAtomSet(pullRequestCommentsLoadedAtom)
 	const setPullRequestDiffCache = useAtomSet(pullRequestDiffCacheAtom)
 	const [activeModal, setActiveModal] = useAtom(activeModalAtom)
-	const [themeConfig, setThemeConfig] = useAtom(themeConfigAtom)
-	const [systemAppearance, setSystemAppearance] = useAtom(systemAppearanceAtom)
-	const [themeId, setThemeId] = useAtom(themeIdAtom)
+	const themeId = useAtomValue(themeIdAtom)
 	const closeActiveModal = () => setActiveModal(initialModal)
 	const labelModalActive = Modal.$is("Label")(activeModal)
 	const closeModalActive = Modal.$is("Close")(activeModal)
@@ -566,14 +563,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setThemeModal = makeModalSetter("Theme")
 	const setCommandPalette = makeModalSetter("CommandPalette")
 	const setOpenRepositoryModal = makeModalSetter("OpenRepository")
-	const themeIdRef = useRef(themeId)
-	const themeConfigRef = useRef(themeConfig)
-	const systemAppearanceRef = useRef(systemAppearance)
-	const themeModalRef = useRef(themeModal)
-	themeIdRef.current = themeId
-	themeConfigRef.current = themeConfig
-	systemAppearanceRef.current = systemAppearance
-	themeModalRef.current = themeModal
 	const setLabelCache = useAtomSet(labelCacheAtom)
 	const setRepoMergeMethodsCache = useAtomSet(repoMergeMethodsCacheAtom)
 	const setLastUsedMergeMethod = useAtomSet(lastUsedMergeMethodAtom)
@@ -655,29 +644,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const flashNotice = useFlashNotice()
 
-	const previewActiveTheme = (id: ThemeId) => {
-		setActiveTheme(id)
-		themeIdRef.current = id
-		setThemeId(id)
-	}
-
-	const applyThemeConfig = (config: ThemeConfig, appearance: ThemeTone = systemAppearanceRef.current) => {
-		themeConfigRef.current = config
-		setThemeConfig(config)
-		previewActiveTheme(resolveThemeId(config, appearance))
-	}
-
 	useEffect(() => {
 		renderer.setBackgroundColor(colors.background)
 	}, [renderer, themeId, systemThemeGeneration])
 
-	useSystemAppearancePolling({
-		enabled: themeConfig.mode === "system",
-		systemAppearanceRef,
-		themeConfigRef,
-		setSystemAppearance,
-		previewActiveTheme,
-	})
+	const themeModalActions = useThemeModal({ themeModal, setThemeModal, closeActiveModal, flashNotice })
 
 	useEffect(
 		() => () => {
@@ -2394,49 +2365,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 	}
 
-	const openThemeModal = () => {
-		const systemConfig = themeConfig.mode === "system" ? themeConfig : systemThemeConfigForTheme(themeConfig.theme)
-		setThemeModal({
-			query: "",
-			filterMode: false,
-			mode: themeConfig.mode,
-			tone: themeConfig.mode === "system" ? systemAppearance : themeToneForThemeId(themeId),
-			fixedTheme: themeConfig.mode === "fixed" ? themeConfig.theme : themeId,
-			darkTheme: systemConfig.darkTheme,
-			lightTheme: systemConfig.lightTheme,
-			initialThemeConfig: themeConfig,
-		})
-	}
-
-	const themeConfigFromModal = (state: ThemeModalState): ThemeConfig =>
-		state.mode === "fixed" ? fixedThemeConfig(state.fixedTheme) : { mode: "system", darkTheme: state.darkTheme, lightTheme: state.lightTheme }
-
-	const closeThemeModal = (confirm: boolean) => {
-		if (!confirm) {
-			applyThemeConfig(themeModal.initialThemeConfig)
-		} else {
-			const nextConfig = themeConfigFromModal(themeModal)
-			applyThemeConfig(nextConfig)
-			void Effect.runPromise(saveStoredThemeConfig(nextConfig)).catch((error) => flashNotice(errorMessage(error)))
-			const selectedTheme = themeDefinitions.find((theme) => theme.id === resolveThemeId(nextConfig, systemAppearanceRef.current))
-			flashNotice(nextConfig.mode === "system" ? "Theme: Follow System" : `Theme: ${selectedTheme?.name ?? themeIdRef.current}`)
-		}
-		closeActiveModal()
-	}
-
-	const previewTheme = (id: ThemeId) => {
-		const current = themeModalRef.current
-		const nextConfig = themeConfigWithSelection(themeConfigFromModal(current), id, current.tone)
-		const next = {
-			...current,
-			fixedTheme: nextConfig.mode === "fixed" ? nextConfig.theme : current.fixedTheme,
-			darkTheme: nextConfig.mode === "system" ? nextConfig.darkTheme : current.darkTheme,
-			lightTheme: nextConfig.mode === "system" ? nextConfig.lightTheme : current.lightTheme,
-		}
-		themeModalRef.current = next
-		setThemeModal(next)
-		previewActiveTheme(id)
-	}
+	const { openThemeModal, closeThemeModal, moveThemeSelection, updateThemeQuery, toggleThemeTone, toggleThemeMode, editThemeQuery } = themeModalActions
 
 	const preserveCurrentDiffLocation = () => {
 		if (diffFullView && selectedDiffCommentAnchor) {
@@ -2465,65 +2394,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		preserveCurrentDiffLocation()
 		setDiffWhitespaceMode(next)
 		void Effect.runPromise(saveStoredDiffWhitespaceMode(next)).catch((error) => flashNotice(errorMessage(error)))
-	}
-
-	const moveThemeSelection = (delta: number) => {
-		const current = themeModalRef.current
-		const filteredThemes = filterThemeDefinitions(current.query, current.tone)
-		if (filteredThemes.length === 0) return
-		const selectedThemeId = current.mode === "fixed" ? current.fixedTheme : current.tone === "dark" ? current.darkTheme : current.lightTheme
-		const currentIndex = Math.max(
-			0,
-			filteredThemes.findIndex((theme) => theme.id === selectedThemeId),
-		)
-		const selectedIndex = wrapIndex(currentIndex + delta, filteredThemes.length)
-		if (selectedIndex === currentIndex) return
-		const theme = filteredThemes[selectedIndex]
-		if (theme) previewTheme(theme.id)
-	}
-
-	const updateThemeQuery = (query: string, options: { readonly previewFirst?: boolean; readonly filterMode?: boolean } = {}) => {
-		const current = themeModalRef.current
-		const next = {
-			...current,
-			query,
-			filterMode: options.filterMode ?? current.filterMode,
-		}
-		if (next.query === current.query && next.filterMode === current.filterMode) return
-
-		themeModalRef.current = next
-		setThemeModal(next)
-
-		if (options.previewFirst && query.trim().length > 0) {
-			const firstTheme = filterThemeDefinitions(query, next.tone)[0]
-			if (firstTheme) previewTheme(firstTheme.id)
-		}
-	}
-
-	const toggleThemeTone = () => {
-		const current = themeModalRef.current
-		const tone: ThemeTone = current.tone === "dark" ? "light" : "dark"
-		const next = { ...current, query: "", filterMode: false, tone }
-		themeModalRef.current = next
-		setThemeModal(next)
-
-		const selectedThemeId =
-			current.mode === "system" ? (tone === "dark" ? current.darkTheme : current.lightTheme) : (pairedThemeId(current.fixedTheme, tone) ?? filterThemeDefinitions("", tone)[0]?.id)
-		const nextThemeId = selectedThemeId ?? filterThemeDefinitions("", tone)[0]?.id
-		if (nextThemeId) previewTheme(nextThemeId)
-	}
-
-	const toggleThemeMode = () => {
-		const current = themeModalRef.current
-		const mode: ThemeMode = current.mode === "fixed" ? "system" : "fixed"
-		const next = { ...current, query: "", filterMode: false, mode }
-		themeModalRef.current = next
-		setThemeModal(next)
-		previewActiveTheme(resolveThemeId(themeConfigFromModal(next), systemAppearanceRef.current))
-	}
-
-	const editThemeQuery = (transform: (query: string) => string) => {
-		updateThemeQuery(transform(themeModalRef.current.query), { previewFirst: true })
 	}
 
 	const openLabelModal = () => {
