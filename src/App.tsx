@@ -1634,17 +1634,14 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const submitDiffComment = () => {
 		if (!selectedPullRequest || !selectedDiffCommentAnchor) return
-		const body = commentModal.body.trim()
-		if (body.length === 0) {
-			setCommentModal((current) => ({ ...current, error: "Write a comment before saving." }))
-			return
-		}
+		const body = requireCommentBody()
+		if (body === null) return
 
 		const targetRange = selectedDiffCommentRange
 		const target = targetRange?.end ?? selectedDiffCommentAnchor
 		const key = pullRequestDiffKey(selectedPullRequest)
 		const threadKey = selectedDiffKey ? diffCommentThreadMapKey(selectedDiffKey, target) : null
-		const optimisticComment = {
+		const optimisticReview = {
 			id: `local:${Date.now()}`,
 			path: target.path,
 			line: target.line,
@@ -1667,49 +1664,39 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			...rangeInput,
 		} satisfies CreatePullRequestCommentInput
 
-		if (threadKey) {
-			setDiffCommentThreads((current) => ({
-				...current,
-				[threadKey]: [...(current[threadKey] ?? []), optimisticComment],
-			}))
-		}
-		setPullRequestComments((current) => ({
-			...current,
-			[key]: [...(current[key] ?? []), reviewCommentAsPullRequestComment(optimisticComment)],
-		}))
-		closeActiveModal()
-		setDiffCommentRangeStartIndex(null)
-		flashNotice(`Commenting on ${target.path}:${target.line}`)
-		void createPullRequestComment(input)
-			.then((comment) => {
+		submitOptimisticComment({
+			key,
+			optimistic: reviewCommentAsPullRequestComment(optimisticReview),
+			postingMessage: `Commenting on ${target.path}:${target.line}`,
+			successMessage: `Commented on ${target.path}:${target.line}`,
+			request: () => createPullRequestComment(input).then(reviewCommentAsPullRequestComment),
+			onOptimistic: () => {
 				if (threadKey) {
 					setDiffCommentThreads((current) => ({
 						...current,
-						[threadKey]: (current[threadKey] ?? []).map((existing) => (existing.id === optimisticComment.id ? comment : existing)),
+						[threadKey]: [...(current[threadKey] ?? []), optimisticReview],
 					}))
 				}
-				setPullRequestComments((current) => ({
+				setDiffCommentRangeStartIndex(null)
+			},
+			onCreated: (_optimistic, created) => {
+				if (!threadKey || created._tag !== "review-comment") return
+				setDiffCommentThreads((current) => ({
 					...current,
-					[key]: (current[key] ?? []).map((existing) => (existing.id === optimisticComment.id ? reviewCommentAsPullRequestComment(comment) : existing)),
+					[threadKey]: (current[threadKey] ?? []).map((existing) => (existing.id === optimisticReview.id ? created : existing)),
 				}))
-				flashNotice(`Commented on ${target.path}:${target.line}`)
-			})
-			.catch((error) => {
-				if (threadKey) {
-					setDiffCommentThreads((current) => {
-						const next = { ...current }
-						const comments = (next[threadKey] ?? []).filter((comment) => comment.id !== optimisticComment.id)
-						if (comments.length > 0) next[threadKey] = comments
-						else delete next[threadKey]
-						return next
-					})
-				}
-				setPullRequestComments((current) => ({
-					...current,
-					[key]: (current[key] ?? []).filter((comment) => comment.id !== optimisticComment.id),
-				}))
-				flashNotice(errorMessage(error))
-			})
+			},
+			onRevert: () => {
+				if (!threadKey) return
+				setDiffCommentThreads((current) => {
+					const next = { ...current }
+					const comments = (next[threadKey] ?? []).filter((comment) => comment.id !== optimisticReview.id)
+					if (comments.length > 0) next[threadKey] = comments
+					else delete next[threadKey]
+					return next
+				})
+			},
+		})
 	}
 
 	const openNewIssueCommentModal = () => {
