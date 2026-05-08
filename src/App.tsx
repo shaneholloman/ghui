@@ -162,8 +162,10 @@ import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
+import { IssuesPlaceholder, WorkspaceTabs } from "./ui/WorkspaceTabs.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
+import { nextWorkspaceSurface, workspaceSurfaceLabels, type WorkspaceSurface } from "./workspaceSurfaces.js"
 
 const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
 	if (value === undefined) return fallback
@@ -347,6 +349,7 @@ const noticeAtom = Atom.make<string | null>(null)
 const filterQueryAtom = Atom.make("")
 const filterDraftAtom = Atom.make("")
 const filterModeAtom = Atom.make(false)
+const workspaceSurfaceAtom = Atom.make<WorkspaceSurface>("pullRequests")
 const detailFullViewAtom = Atom.make(false)
 const detailScrollOffsetAtom = Atom.make(0)
 const diffFullViewAtom = Atom.make(false)
@@ -844,8 +847,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const dividerJunctionAt = Math.max(1, leftPaneWidth)
 	const leftContentWidth = isWideLayout ? Math.max(24, leftPaneWidth - 2) : Math.max(24, contentWidth - sectionPadding * 2)
 	const rightContentWidth = isWideLayout ? Math.max(24, rightPaneWidth - sectionPadding * 2) : Math.max(24, contentWidth - sectionPadding * 2)
-	const wideDetailLines = Math.max(8, terminalHeight - 8)
-	const wideBodyHeight = Math.max(8, terminalHeight - 4)
+	const wideDetailLines = Math.max(8, terminalHeight - 9)
+	const wideBodyHeight = Math.max(8, terminalHeight - 5)
 	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -940,6 +943,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	)
 
 	const pullRequestLoad = useAtomValue(pullRequestLoadAtom)
+	const [activeWorkspaceSurface, setActiveWorkspaceSurface] = useAtom(workspaceSurfaceAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
 	const isInitialLoading = !startupLoadComplete && pullRequestStatus === "loading" && pullRequests.length === 0
@@ -1046,12 +1050,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 		return low
 	}
-	const summaryRight = pullRequestLoad?.fetchedAt
-		? `updated ${formatShortDate(pullRequestLoad.fetchedAt)} ${formatTimestamp(pullRequestLoad.fetchedAt)}`
-		: pullRequestStatus === "loading"
-			? "loading pull requests..."
-			: ""
-	const headerLeft = username ? `GHUI  ${username}  ${viewLabel(activeView)}` : `GHUI  ${viewLabel(activeView)}`
+	const summaryRight =
+		activeWorkspaceSurface === "pullRequests" && pullRequestLoad?.fetchedAt
+			? `updated ${formatShortDate(pullRequestLoad.fetchedAt)} ${formatTimestamp(pullRequestLoad.fetchedAt)}`
+			: activeWorkspaceSurface === "pullRequests" && pullRequestStatus === "loading"
+				? "loading pull requests..."
+				: ""
+	const headerLeft = username
+		? `GHUI  ${username}  ${viewLabel(activeView)}  ·  ${workspaceSurfaceLabels[activeWorkspaceSurface]}`
+		: `GHUI  ${viewLabel(activeView)}  ·  ${workspaceSurfaceLabels[activeWorkspaceSurface]}`
 	const headerLine = `${fitCell(headerLeft, Math.max(0, headerFooterWidth - summaryRight.length))}${summaryRight}`
 	const footerNotice = notice ? fitCell(notice, headerFooterWidth) : null
 	const selectPullRequestByUrl = (url: string) => {
@@ -1124,6 +1131,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 	const switchQueueMode = (delta: 1 | -1) => {
 		switchViewTo(nextView(activeView, activeViews, delta))
+	}
+	const switchWorkspaceSurface = (surface: WorkspaceSurface) => {
+		if (surface === activeWorkspaceSurface) return
+		setActiveWorkspaceSurface(surface)
+		setDetailFullView(false)
+		setDiffFullView(false)
+		setCommentsViewActive(false)
+		setDiffCommentRangeStartIndex(null)
+		setFilterMode(false)
+		setFilterDraft(filterQuery)
+		setNotice(null)
+	}
+	const cycleWorkspaceSurface = (delta: 1 | -1) => {
+		switchWorkspaceSurface(nextWorkspaceSurface(activeWorkspaceSurface, delta))
 	}
 	const loadMorePullRequests = () => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
@@ -2924,6 +2945,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		filterQuery,
 		filterMode,
 		selectedRepository,
+		activeWorkspaceSurface,
 		activeViews,
 		activeView,
 		loadedPullRequestCount,
@@ -2959,6 +2981,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			},
 			openThemeModal,
 			openRepositoryPicker,
+			switchWorkspaceSurface,
 			loadMorePullRequests,
 			switchViewTo,
 			openDetails: () => {
@@ -3352,13 +3375,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		},
 		listNav: {
 			halfPage,
-			visibleCount: visiblePullRequests.length,
-			hasFilter: filterQuery.length > 0,
-			canScrollDetailPreview: isWideLayout && selectedPullRequest !== null,
+			visibleCount: activeWorkspaceSurface === "pullRequests" ? visiblePullRequests.length : 0,
+			hasFilter: activeWorkspaceSurface === "pullRequests" && filterQuery.length > 0,
+			activeSurface: activeWorkspaceSurface,
+			canScrollDetailPreview: activeWorkspaceSurface === "pullRequests" && isWideLayout && selectedPullRequest !== null,
 			runCommandById: (id) => {
 				runCommandById(id)
 			},
 			switchQueueMode,
+			switchWorkspaceSurface,
+			cycleWorkspaceSurface,
 			scrollDetailPreviewBy,
 			scrollDetailPreviewTo,
 			clearFilter: () => {
@@ -3401,6 +3427,18 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				}))
 			}
 			return
+		}
+
+		if (!filterMode && !detailFullView && !diffFullView && !commentsViewActive) {
+			const text = printableKeyText(key)
+			if (text === "1") {
+				switchWorkspaceSurface("pullRequests")
+				return
+			}
+			if (text === "2") {
+				switchWorkspaceSurface("issues")
+				return
+			}
 		}
 
 		// q / ctrl+c quit/close-modal logic now lives in the keymap layer
@@ -3516,6 +3554,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
 		</box>
 	)
+	const showWideSplit = activeWorkspaceSurface === "pullRequests" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
 	const labelModalWidth = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
@@ -3596,12 +3635,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			<box paddingLeft={1} paddingRight={1} flexDirection="column" backgroundColor={colors.background}>
 				<PlainLine text={headerLine} fg={colors.muted} bold />
 			</box>
-			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive ? (
-				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" />
-			) : (
-				<Divider width={contentWidth} />
-			)}
-			{commentsViewActive && selectedPullRequest ? (
+			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
+				<WorkspaceTabs activeSurface={activeWorkspaceSurface} width={headerFooterWidth} />
+			</box>
+			{showWideSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" /> : <Divider width={contentWidth} />}
+			{activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
+				<IssuesPlaceholder width={contentWidth} height={wideBodyHeight} repository={selectedRepository} />
+			) : commentsViewActive && selectedPullRequest ? (
 				<CommentsPane
 					pullRequest={selectedPullRequest}
 					comments={selectedComments}
@@ -3814,16 +3854,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				</box>
 			)}
 
-			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive ? (
-				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" />
-			) : (
-				<Divider width={contentWidth} />
-			)}
+			{showWideSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" /> : <Divider width={contentWidth} />}
 			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
 				{footerNotice ? (
 					<PlainLine text={footerNotice} fg={colors.count} />
 				) : (
 					<FooterHints
+						activeSurface={activeWorkspaceSurface}
 						filterEditing={filterMode}
 						showFilterClear={filterMode || filterQuery.length > 0}
 						detailFullView={detailFullView}

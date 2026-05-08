@@ -1,6 +1,7 @@
 import { Data } from "effect"
 import { colors } from "./colors.js"
 import { HintRow, type HintItem } from "./primitives.js"
+import type { WorkspaceSurface } from "../workspaceSurfaces.js"
 
 export type RetryProgress = Data.TaggedEnum<{
 	Idle: {}
@@ -11,6 +12,7 @@ export const RetryProgress = Data.taggedEnum<RetryProgress>()
 export const initialRetryProgress: RetryProgress = RetryProgress.Idle()
 
 interface HintsContext {
+	readonly activeSurface: WorkspaceSurface
 	readonly filterEditing: boolean
 	readonly showFilterClear: boolean
 	readonly detailFullView: boolean
@@ -66,7 +68,16 @@ const commentsViewHints = (ctx: HintsContext): readonly HintItem[] => [
 
 const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 	const retrying = ctx.retryProgress._tag === "Retrying"
+	if (ctx.activeSurface === "issues") {
+		return [
+			{ key: "1", label: "pull requests" },
+			{ key: "2", label: "issues" },
+			{ key: "tab", label: "surface" },
+			{ key: "ctrl-p", label: "commands" },
+		]
+	}
 	return [
+		{ key: "1/2", label: "surface" },
 		{ key: "/", label: "filter" },
 		{ key: "esc", label: "clear", when: ctx.showFilterClear },
 		{

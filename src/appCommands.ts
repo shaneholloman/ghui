@@ -3,6 +3,7 @@ import { defineCommand } from "./commands.js"
 import type { LoadStatus, PullRequestItem, PullRequestReviewEvent } from "./domain.js"
 import type { DiffView, DiffWhitespaceMode, DiffWrapMode } from "./ui/diff.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
+import { workspaceSurfaceLabels, workspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 
 interface AppCommandActions {
 	readonly openCommandPalette: () => void
@@ -11,6 +12,7 @@ interface AppCommandActions {
 	readonly clearFilter: () => void
 	readonly openThemeModal: () => void
 	readonly openRepositoryPicker: () => void
+	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
 	readonly loadMorePullRequests: () => void
 	readonly switchViewTo: (view: PullRequestView) => void
 	readonly openDetails: () => void
@@ -48,6 +50,7 @@ interface BuildAppCommandsInput {
 	readonly filterQuery: string
 	readonly filterMode: boolean
 	readonly selectedRepository: string | null
+	readonly activeWorkspaceSurface: WorkspaceSurface
 	readonly activeViews: readonly PullRequestView[]
 	readonly activeView: PullRequestView
 	readonly loadedPullRequestCount: number
@@ -77,6 +80,7 @@ export const buildAppCommands = ({
 	filterQuery,
 	filterMode,
 	selectedRepository,
+	activeWorkspaceSurface,
 	activeViews,
 	activeView,
 	loadedPullRequestCount,
@@ -101,7 +105,8 @@ export const buildAppCommands = ({
 	actions,
 }: BuildAppCommandsInput): readonly AppCommand[] => {
 	const selectedPullRequestLabel = selectedPullRequest ? `#${selectedPullRequest.number} ${selectedPullRequest.repository}` : "No pull request selected"
-	const noPullRequestReason = selectedPullRequest ? null : "Select a pull request first."
+	const pullRequestSurfaceReason = activeWorkspaceSurface === "pullRequests" ? null : "Pull request surface is not active."
+	const noPullRequestReason = pullRequestSurfaceReason ?? (selectedPullRequest ? null : "Select a pull request first.")
 	const noOpenPullRequestReason = selectedPullRequest?.state === "open" ? null : selectedPullRequest ? "Pull request is not open." : noPullRequestReason
 	const diffReadyReason = selectedPullRequest ? (diffReady ? null : "Load the diff before running this command.") : noPullRequestReason
 	const diffOpenReadyReason = diffFullView ? diffReadyReason : "Open a diff first."
@@ -137,6 +142,7 @@ export const buildAppCommands = ({
 			scope: "Global",
 			subtitle: "Fetch the latest queue from GitHub",
 			shortcut: "r",
+			disabledReason: pullRequestSurfaceReason,
 			keywords: ["reload", "sync"],
 			run: () => actions.refreshPullRequests("Refreshed", { resetTransientState: true }),
 		}),
@@ -146,6 +152,7 @@ export const buildAppCommands = ({
 			scope: "Global",
 			subtitle: "Search the visible queue",
 			shortcut: "/",
+			disabledReason: pullRequestSurfaceReason,
 			keywords: ["search"],
 			run: actions.openFilter,
 		}),
@@ -155,7 +162,7 @@ export const buildAppCommands = ({
 			scope: "Global",
 			subtitle: "Show every pull request in the current queue",
 			shortcut: "esc",
-			disabledReason: filterQuery.length > 0 || filterMode ? null : "No filter is active.",
+			disabledReason: pullRequestSurfaceReason ?? (filterQuery.length > 0 || filterMode ? null : "No filter is active."),
 			run: actions.clearFilter,
 		}),
 		defineCommand({
@@ -175,6 +182,18 @@ export const buildAppCommands = ({
 			keywords: ["repo", "repository", "owner", "github"],
 			run: actions.openRepositoryPicker,
 		}),
+		...workspaceSurfaces.map((surface, index) =>
+			defineCommand({
+				id: `workspace.${surface}`,
+				title: `Show ${workspaceSurfaceLabels[surface]}`,
+				scope: "View" as const,
+				subtitle: activeWorkspaceSurface === surface ? "Already showing this surface" : "Switch project surface",
+				shortcut: `${index + 1}`,
+				keywords: [workspaceSurfaceLabels[surface], "workspace", "surface", "tab"],
+				disabledReason: activeWorkspaceSurface === surface ? "Already showing this surface." : null,
+				run: () => actions.switchWorkspaceSurface(surface),
+			}),
+		),
 		...activeViews.map((view) =>
 			defineCommand({
 				id: view._tag === "Repository" ? "view.repository" : `view.${view.mode}`,
@@ -191,7 +210,7 @@ export const buildAppCommands = ({
 			title: "Load more pull requests",
 			scope: "Navigation",
 			subtitle: `${loadedPullRequestCount} loaded`,
-			disabledReason: loadMoreDisabledReason,
+			disabledReason: pullRequestSurfaceReason ?? loadMoreDisabledReason,
 			keywords: ["next page", "pagination", "more"],
 			run: actions.loadMorePullRequests,
 		}),
