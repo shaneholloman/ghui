@@ -165,7 +165,7 @@ import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./u
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
 import { WorkspaceTabs } from "./ui/WorkspaceTabs.js"
-import { IssueDetailPane, IssueList } from "./ui/IssueList.js"
+import { ISSUE_DETAIL_DIVIDER_ROW, IssueDetailPane, IssueList } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
 import { nextWorkspaceSurface, type WorkspaceSurface } from "./workspaceSurfaces.js"
@@ -3605,6 +3605,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	)
 	const showWideSplit = activeWorkspaceSurface === "pullRequests" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 	const showIssueSplit = activeWorkspaceSurface === "issues" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
+	const issueJunctions = showIssueSplit ? [ISSUE_DETAIL_DIVIDER_ROW] : []
 	const showPaneSplit = showWideSplit || showIssueSplit
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
@@ -3705,7 +3706,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 								onSelectIssue={setSelectedIssueIndex}
 							/>
 						</box>
-						<SeparatorColumn height={wideBodyHeight} />
+						<SeparatorColumn height={wideBodyHeight} junctionRows={issueJunctions} />
 						<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} />
 					</box>
 				) : (

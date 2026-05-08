@@ -92,6 +92,8 @@ export const IssueList = ({
 	)
 }
 
+export const ISSUE_DETAIL_DIVIDER_ROW = 3
+
 export const IssueDetailPane = ({ issue, width, height }: { issue: IssueItem | null; width: number; height: number }) => {
 	const contentWidth = Math.max(1, width - 2)
 	if (!issue) {
