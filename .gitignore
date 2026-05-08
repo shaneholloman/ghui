@@ -19,3 +19,6 @@ coverage/
 .claude/
 .idea/
 .vscode/
+
+# local mock snapshots
+.ghui/

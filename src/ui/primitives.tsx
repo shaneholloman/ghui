@@ -139,12 +139,28 @@ export const PaddedRow = ({ children, backgroundColor }: { children: React.React
 	</box>
 )
 
-export const Divider = ({ width, junctionAt, junctionChar }: { width: number; junctionAt?: number; junctionChar?: string }) => {
-	if (junctionAt === undefined || junctionChar === undefined || junctionAt < 0 || junctionAt >= width) {
+export const Divider = ({
+	width,
+	junctionAt,
+	junctionChar,
+	junctions = [],
+}: {
+	width: number
+	junctionAt?: number
+	junctionChar?: string
+	junctions?: readonly { readonly at: number; readonly char: string }[]
+}) => {
+	if (junctions.length === 0 && (junctionAt === undefined || junctionChar === undefined)) {
 		return <PlainLine text={"─".repeat(Math.max(1, width))} fg={colors.separator} />
 	}
 
-	return <PlainLine text={`${"─".repeat(junctionAt)}${junctionChar}${"─".repeat(Math.max(0, width - junctionAt - 1))}`} fg={colors.separator} />
+	const allJunctions = [...junctions, ...(junctionAt === undefined || junctionChar === undefined ? [] : [{ at: junctionAt, char: junctionChar }])]
+	const visibleJunctions = new Map(allJunctions.filter((junction) => junction.at >= 0 && junction.at < width).map((junction) => [junction.at, junction.char]))
+	if (visibleJunctions.size === 0) {
+		return <PlainLine text={"─".repeat(Math.max(1, width))} fg={colors.separator} />
+	}
+
+	return <PlainLine text={Array.from({ length: Math.max(1, width) }, (_, index) => visibleJunctions.get(index) ?? "─").join("")} fg={colors.separator} />
 }
 
 export const SeparatorColumn = ({ height, junctionRows }: { height: number; junctionRows?: readonly number[] }) => {

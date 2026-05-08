@@ -23,3 +23,5 @@ When a plan ships, leave the file in place and update the **Status** line so we 
 - [`cache-v2.md`](./cache-v2.md) — audit-driven follow-up: diff cache, per-repo metadata persistence, `--cache-info` / `--cache-clear`.
 - [`comments-pane-redesign.md`](./comments-pane-redesign.md) — living design doc exploring how the Comments pane should render. Multiple styles, fully specced, iterate freely.
 - [`repo-workspace-home.md`](./repo-workspace-home.md) — repository-oriented shell with Pull Requests and Issues as first project surfaces.
+- [`workspace-hub-and-filters.md`](./workspace-hub-and-filters.md) — escape hatch from repo scope, global/repo filters, and hub navigation mockups.
+- [`diff-rendering-performance.md`](./diff-rendering-performance.md) — semantic diff rows, viewport-windowed rendering, and syntax-plus-word-diff highlighting.

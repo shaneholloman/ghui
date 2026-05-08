@@ -9,6 +9,7 @@ import { checkConclusions, checkRollupStatuses, checkRunStatuses, pullRequestQue
 import { mergeCachedDetails } from "../pullRequestCache.js"
 import type { PullRequestLoad } from "../pullRequestLoad.js"
 import { type PullRequestView, viewCacheKey } from "../pullRequestViews.js"
+import { makeWorkspacePreferences, WorkspacePreferences, type ViewerId, type WorkspacePreferencesInput } from "../workspacePreferences.js"
 
 export interface PullRequestCacheKey {
 	readonly repository: string
@@ -42,6 +43,8 @@ const CachedPullRequestItemSchema = Schema.Struct({
 	author: Schema.String,
 	headRefOid: Schema.String,
 	headRefName: Schema.optionalKey(Schema.String),
+	baseRefName: Schema.optionalKey(Schema.String),
+	defaultBranchName: Schema.optionalKey(Schema.String),
 	number: Schema.Number,
 	title: Schema.String,
 	body: Schema.String,
@@ -81,6 +84,10 @@ interface QueueSnapshotRow {
 	readonly has_next_page: number
 }
 
+interface WorkspacePreferencesRow {
+	readonly preferences_json: string
+}
+
 export const pullRequestCacheKey = ({ repository, number }: PullRequestCacheKey) => `${repository}#${number}`
 
 const parseDate = (value: string) => {
@@ -109,6 +116,8 @@ const cachedPullRequestToDomain = (cached: CachedPullRequestItem): PullRequestIt
 		author: cached.author,
 		headRefOid: cached.headRefOid,
 		headRefName: cached.headRefName ?? "",
+		baseRefName: cached.baseRefName ?? "main",
+		defaultBranchName: cached.defaultBranchName ?? cached.baseRefName ?? "main",
 		number: cached.number,
 		title: cached.title,
 		body: cached.body,
@@ -134,6 +143,8 @@ const encodePullRequest = (pullRequest: PullRequestItem): CachedPullRequestItem 
 	author: pullRequest.author,
 	headRefOid: pullRequest.headRefOid,
 	headRefName: pullRequest.headRefName,
+	baseRefName: pullRequest.baseRefName,
+	defaultBranchName: pullRequest.defaultBranchName,
 	number: pullRequest.number,
 	title: pullRequest.title,
 	body: pullRequest.body,
@@ -175,6 +186,12 @@ const decodeStringArrayJson = (json: string): Effect.Effect<readonly string[], C
 		return yield* decodeCached("decodeQueueKeys", Schema.Array(Schema.String), value)
 	})
 
+const decodeWorkspacePreferencesJson = (json: string): Effect.Effect<WorkspacePreferences, CacheError> =>
+	Effect.gen(function* () {
+		const value = yield* parseJson("decodeWorkspacePreferences", json)
+		return yield* decodeCached("decodeWorkspacePreferences", WorkspacePreferences, value)
+	})
+
 const dateFromCache = (operation: string, value: string) => {
 	const date = parseDate(value)
 	return date ? Effect.succeed(date) : Effect.fail(new CacheError({ operation, cause: `Invalid cached date: ${value}` }))
@@ -213,6 +230,14 @@ const cacheMigrations = {
 			end_cursor TEXT,
 			has_next_page INTEGER NOT NULL,
 			PRIMARY KEY (viewer, view_key)
+		)`
+	}),
+	"002_workspace_preferences": Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient
+		yield* sql`CREATE TABLE IF NOT EXISTS workspace_preferences (
+			viewer TEXT PRIMARY KEY,
+			preferences_json TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		)`
 	}),
 } satisfies Record<string, Effect.Effect<void, unknown, SqlClient.SqlClient>>
@@ -268,6 +293,27 @@ const pruneSql = (sql: SqlClient.SqlClient) => {
 }
 
 const liveCacheService = (sql: SqlClient.SqlClient) => {
+	const readWorkspacePreferences = (viewer: ViewerId): Effect.Effect<WorkspacePreferences | null, CacheError> =>
+		Effect.gen(function* () {
+			const rows = yield* sql<WorkspacePreferencesRow>`SELECT preferences_json FROM workspace_preferences WHERE viewer = ${viewer} LIMIT 1`
+			const row = rows[0]
+			if (!row) return null
+			return yield* decodeWorkspacePreferencesJson(row.preferences_json)
+		}).pipe(Effect.mapError((cause) => toCacheError("readWorkspacePreferences", cause)))
+
+	const writeWorkspacePreferences = Effect.fn("CacheService.writeWorkspacePreferences")(function* (input: WorkspacePreferencesInput | WorkspacePreferences) {
+		const preferences = input instanceof WorkspacePreferences ? input : makeWorkspacePreferences(input)
+		const row = {
+			viewer: preferences.viewer,
+			preferences_json: JSON.stringify(preferences),
+			updated_at: new Date().toISOString(),
+		}
+		yield* sql`INSERT INTO workspace_preferences ${sql.insert(row)}
+			ON CONFLICT(viewer) DO UPDATE SET
+				preferences_json = excluded.preferences_json,
+				updated_at = excluded.updated_at`.pipe(Effect.catch(() => Effect.void))
+	})
+
 	const readQueue = (viewer: string, view: PullRequestView): Effect.Effect<PullRequestLoad | null, CacheError> =>
 		Effect.gen(function* () {
 			const rows =
@@ -359,7 +405,7 @@ const liveCacheService = (sql: SqlClient.SqlClient) => {
 		yield* pruneSql(sql)
 	})
 
-	return { readQueue, writeQueue, readPullRequest, upsertPullRequest, prune }
+	return { readQueue, writeQueue, readPullRequest, upsertPullRequest, readWorkspacePreferences, writeWorkspacePreferences, prune }
 }
 
 export class CacheService extends Context.Service<
@@ -369,6 +415,8 @@ export class CacheService extends Context.Service<
 		readonly writeQueue: (viewer: string, load: PullRequestLoad) => Effect.Effect<void>
 		readonly readPullRequest: (key: PullRequestCacheKey) => Effect.Effect<PullRequestItem | null, CacheError>
 		readonly upsertPullRequest: (pullRequest: PullRequestItem) => Effect.Effect<void>
+		readonly readWorkspacePreferences: (viewer: ViewerId) => Effect.Effect<WorkspacePreferences | null, CacheError>
+		readonly writeWorkspacePreferences: (preferences: WorkspacePreferencesInput | WorkspacePreferences) => Effect.Effect<void>
 		readonly prune: () => Effect.Effect<void>
 	}
 >()("ghui/CacheService") {
@@ -379,6 +427,8 @@ export class CacheService extends Context.Service<
 			writeQueue: () => Effect.void,
 			readPullRequest: () => Effect.succeed(null),
 			upsertPullRequest: () => Effect.void,
+			readWorkspacePreferences: () => Effect.succeed(null),
+			writeWorkspacePreferences: () => Effect.void,
 			prune: () => Effect.void,
 		}),
 	)

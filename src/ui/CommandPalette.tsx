@@ -12,6 +12,7 @@ const scopeLabels = {
 	"Pull request": "Pull Request",
 	Diff: "Diff",
 	Comments: "Comments",
+	Labels: "Labels",
 	Navigation: "Navigation",
 	System: "System",
 } as const satisfies Record<AppCommand["scope"], string>
@@ -130,10 +131,13 @@ export const CommandPalette = ({
 
 					const { command, commandIndex } = row
 					const isSelected = commandIndex === clampedIndex
-					const shortcut = command.shortcut ? trimCell(command.shortcut, 14) : ""
 					const SELECTOR_WIDTH = 2
 					const SHORTCUT_WIDTH = 16
-					const titleWidth = Math.max(8, rowWidth - SELECTOR_WIDTH - SHORTCUT_WIDTH)
+					const SHORTCUT_RIGHT_PADDING = 2
+					const shortcut = command.shortcut ? trimCell(command.shortcut, SHORTCUT_WIDTH) : ""
+					const shortcutColumn = shortcut.length > 0 ? SHORTCUT_WIDTH : 0
+					const shortcutPadding = shortcut.length > 0 ? SHORTCUT_RIGHT_PADDING : 0
+					const titleWidth = Math.max(8, rowWidth - SELECTOR_WIDTH - shortcutColumn - shortcutPadding)
 					const titleText = fitCell(command.title, titleWidth)
 
 					return (
@@ -147,8 +151,9 @@ export const CommandPalette = ({
 							<TextLine width={rowWidth} bg={isSelected ? colors.selectedBg : undefined} fg={isSelected ? colors.selectedText : colors.text}>
 								<span fg={isSelected ? colors.accent : colors.muted}>{isSelected ? "▸" : " "}</span>
 								<span> </span>
-								<span fg={isSelected ? colors.count : colors.muted}>{fitCell(shortcut, SHORTCUT_WIDTH)}</span>
 								{isSelected ? <span attributes={TextAttributes.BOLD}>{titleText}</span> : <span>{titleText}</span>}
+								{shortcutColumn > 0 ? <span fg={isSelected ? colors.count : colors.muted}>{fitCell(shortcut, SHORTCUT_WIDTH, "right")}</span> : null}
+								{shortcutPadding > 0 ? <span>{" ".repeat(shortcutPadding)}</span> : null}
 							</TextLine>
 						</box>
 					)

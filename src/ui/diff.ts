@@ -367,7 +367,7 @@ export const diffStatText = (pullRequest: PullRequestItem) => {
 	if (!pullRequest.detailLoaded) return "loading details"
 	const files = pullRequest.changedFiles === 1 ? "1 file" : `${pullRequest.changedFiles} files`
 	const stats = diffFileStatsText(pullRequest)
-	return stats ? `${stats} ${files}` : files
+	return stats ? `${files} ${stats}` : files
 }
 
 export const diffCommentLocationKey = (location: Pick<PullRequestReviewComment, "path" | "side" | "line">) => `${location.path}:${location.side}:${location.line}`

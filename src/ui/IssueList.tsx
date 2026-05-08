@@ -1,39 +1,21 @@
 import { TextAttributes } from "@opentui/core"
-import { useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { daysOpen, formatRelativeDate } from "../date.js"
 import type { IssueItem, LoadStatus } from "../domain.js"
 import { colors, rowHoverBackground } from "./colors.js"
-import { Divider, Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
-
-const labelText = (issue: IssueItem) => issue.labels.map((label) => label.name).join(", ")
-
-const wrapText = (text: string, width: number): readonly string[] => {
-	if (width <= 0) return [""]
-	return text.split("\n").flatMap((paragraph) => {
-		const words = paragraph.trim().split(/\s+/).filter(Boolean)
-		if (words.length === 0) return [""]
-		const lines: string[] = []
-		let current = ""
-		for (const word of words) {
-			const next = current ? `${current} ${word}` : word
-			if (next.length > width && current) {
-				lines.push(current)
-				current = word
-			} else {
-				current = next
-			}
-		}
-		if (current) lines.push(current)
-		return lines
-	})
-}
+import { CommentSegments } from "./comments.js"
+import { bodyPreview, wrapText } from "./DetailsPane.js"
+import { LabelChips, labelChipRows } from "./LabelChips.js"
+import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
+import { Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
 
 const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: number) => {
 	const fixedWidth = numberWidth + 1 + ageWidth
-	const labelWidth = Math.min(18, Math.max(0, Math.floor(contentWidth * 0.22)))
-	const titleWidth = Math.max(8, contentWidth - fixedWidth - labelWidth)
-	return { numberWidth, titleWidth, labelWidth, ageWidth }
+	const titleWidth = Math.max(8, contentWidth - fixedWidth)
+	return { numberWidth, titleWidth, ageWidth }
 }
+
+const IssueDetailLine = ({ children, width }: { children: ReactNode; width: number }) => <PaneInsetLine width={width}>{children}</PaneInsetLine>
 
 export const IssueList = ({
 	issues,
@@ -55,7 +37,7 @@ export const IssueList = ({
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 	const numberWidth = Math.max(4, ...issues.map((issue) => `#${issue.number}`.length))
 	const ageWidth = Math.max(4, ...issues.map((issue) => `${daysOpen(issue.createdAt)}d`.length + 1))
-	const { titleWidth, labelWidth } = getRowLayout(contentWidth, numberWidth, ageWidth)
+	const { titleWidth } = getRowLayout(contentWidth, numberWidth, ageWidth)
 
 	return (
 		<box width={contentWidth} flexDirection="column">
@@ -83,7 +65,6 @@ export const IssueList = ({
 						</span>
 						<span> </span>
 						<MatchedCell text={issue.title} width={titleWidth} query="" />
-						{labelWidth > 0 ? <span fg={colors.muted}>{fitCell(labelText(issue), labelWidth)}</span> : null}
 						<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
 					</TextLine>
 				)
@@ -92,45 +73,69 @@ export const IssueList = ({
 	)
 }
 
-export const ISSUE_DETAIL_DIVIDER_ROW = 3
+export const getIssueDetailJunctionRows = (issue: IssueItem | null, paneWidth: number): readonly number[] => {
+	if (!issue) return []
+	const contentWidth = paneContentWidth(paneWidth)
+	const titleLines = wrapText(issue.title, Math.max(1, contentWidth)).length
+	const labelRows = labelChipRows(issue.labels, contentWidth).length
+	return [titleLines + 1 + labelRows]
+}
 
-export const IssueDetailPane = ({ issue, width, height }: { issue: IssueItem | null; width: number; height: number }) => {
-	const contentWidth = Math.max(1, width - 2)
+export const IssueDetailPane = ({ issue, width, height, bodyLineLimit }: { issue: IssueItem | null; width: number; height: number; bodyLineLimit?: number }) => {
+	const contentWidth = paneContentWidth(width)
+	const titleLines = issue ? wrapText(issue.title, Math.max(1, contentWidth)) : []
+	const labelRows = issue ? labelChipRows(issue.labels, contentWidth) : []
+	const resolvedBodyLineLimit = bodyLineLimit ?? Math.max(1, height - titleLines.length - labelRows.length - 2)
+	const visibleBodyLines = useMemo(
+		() => bodyPreview(issue?.body ?? "", contentWidth, resolvedBodyLineLimit, { tableMode: "truncate" }),
+		[issue?.body, contentWidth, resolvedBodyLineLimit],
+	)
 	if (!issue) {
 		return (
-			<box width={width} height={height} flexDirection="column" paddingLeft={1} paddingRight={1}>
-				<PlainLine text="No issue selected" fg={colors.muted} />
+			<box width={width} height={height} flexDirection="column">
+				<IssueDetailLine width={width}>
+					<span fg={colors.muted}>No issue selected</span>
+				</IssueDetailLine>
 				<Filler rows={Math.max(0, height - 1)} prefix="issue-empty" />
 			</box>
 		)
 	}
 
-	const labelSummary = labelText(issue) || "no labels"
-	const bodyLines = wrapText(issue.body || "No description provided.", contentWidth)
-	const visibleBodyLines = bodyLines.slice(0, Math.max(1, height - 8))
-	const usedRows = 5 + visibleBodyLines.length
+	const commentsText = issue.commentCount > 0 ? `${issue.commentCount} ${issue.commentCount === 1 ? "comment" : "comments"}` : null
+	const metaLeft = `#${issue.number} by ${issue.author} · ${formatRelativeDate(issue.createdAt)}`
+	const commentsGap = commentsText ? Math.max(2, contentWidth - metaLeft.length - commentsText.length) : 0
+	const usedRows = titleLines.length + 1 + labelRows.length + 1 + visibleBodyLines.length
+	const contentHeight = Math.max(height, usedRows)
 
 	return (
-		<box width={width} height={height} flexDirection="column" paddingLeft={1} paddingRight={1}>
-			<TextLine width={contentWidth}>
-				<span fg={colors.count}>#{issue.number}</span>
-				<span> </span>
-				<span fg={colors.text} attributes={TextAttributes.BOLD}>
-					{fitCell(issue.title, Math.max(1, contentWidth - String(issue.number).length - 2))}
-				</span>
-			</TextLine>
-			<TextLine width={contentWidth}>
-				<span fg={colors.muted}>opened {formatRelativeDate(issue.createdAt)} by </span>
-				<span fg={colors.count}>{issue.author}</span>
-			</TextLine>
-			<TextLine width={contentWidth}>
-				<span fg={colors.muted}>{fitCell(`${labelSummary} · ${issue.commentCount} comments`, contentWidth)}</span>
-			</TextLine>
-			<Divider width={contentWidth} />
-			{visibleBodyLines.map((line, index) => (
-				<PlainLine key={index} text={fitCell(line, contentWidth)} fg={line.length === 0 ? colors.muted : colors.text} />
+		<box width={width} height={contentHeight} flexDirection="column">
+			{titleLines.map((line, index) => (
+				<IssueDetailLine key={`title-${index}`} width={width}>
+					<span fg={colors.text} attributes={TextAttributes.BOLD}>
+						{fitCell(line, contentWidth)}
+					</span>
+				</IssueDetailLine>
 			))}
-			<Filler rows={Math.max(0, height - usedRows)} prefix="issue-detail" />
+			<IssueDetailLine width={width}>
+				<span fg={colors.count}>#{issue.number}</span>
+				<span fg={colors.muted}> by </span>
+				<span fg={colors.count}>{issue.author}</span>
+				<span fg={colors.muted}> · {formatRelativeDate(issue.createdAt)}</span>
+				{commentsText ? <span fg={colors.muted}>{" ".repeat(commentsGap)}</span> : null}
+				{commentsText ? <span fg={colors.muted}>{commentsText}</span> : null}
+			</IssueDetailLine>
+			{labelRows.map((row, index) => (
+				<IssueDetailLine key={`labels-${index}`} width={width}>
+					<LabelChips labels={row} />
+				</IssueDetailLine>
+			))}
+			<PaneDivider width={width} />
+			{visibleBodyLines.map((line, index) => (
+				<IssueDetailLine key={index} width={width}>
+					<CommentSegments segments={line.segments} />
+				</IssueDetailLine>
+			))}
+			<Filler rows={Math.max(0, contentHeight - usedRows)} prefix="issue-detail" />
 		</box>
 	)
 }

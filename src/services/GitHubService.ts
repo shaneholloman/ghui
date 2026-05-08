@@ -41,7 +41,10 @@ const RawCheckContextSchema = Schema.Union([
 ]).pipe(Schema.toTaggedUnion("__typename"))
 
 const RawAuthorSchema = Schema.Struct({ login: Schema.String })
-const RawRepositorySchema = Schema.Struct({ nameWithOwner: Schema.String })
+const RawRepositorySchema = Schema.Struct({
+	nameWithOwner: Schema.String,
+	defaultBranchRef: Schema.optionalKey(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+})
 const RawLabelSchema = Schema.Struct({
 	name: Schema.String,
 	color: OptionalNullableString,
@@ -77,6 +80,7 @@ const RawPullRequestSummaryFields = {
 	author: RawAuthorSchema,
 	headRefOid: Schema.String,
 	headRefName: Schema.String,
+	baseRefName: Schema.String,
 	repository: RawRepositorySchema,
 } as const
 
@@ -252,7 +256,8 @@ const SUMMARY_FIELDS_FRAGMENT = `
         author { login }
         headRefOid
         headRefName
-        repository { nameWithOwner }${STATUS_CHECK_FRAGMENT}`
+        baseRefName
+        repository { nameWithOwner defaultBranchRef { name } }${STATUS_CHECK_FRAGMENT}`
 
 const DETAIL_FIELDS_FRAGMENT = `
         number
@@ -427,6 +432,8 @@ const parsePullRequestSummary = (item: RawPullRequestSummaryNode): PullRequestIt
 		author: item.author.login,
 		headRefOid: item.headRefOid,
 		headRefName: item.headRefName,
+		baseRefName: item.baseRefName,
+		defaultBranchName: item.repository.defaultBranchRef?.name ?? item.baseRefName,
 		number: item.number,
 		title: item.title,
 		body: "",
@@ -617,6 +624,7 @@ export class GitHubService extends Context.Service<
 		readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
 		readonly listPullRequestReviewComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
 		readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestComment[], GitHubError>
+		readonly listIssueComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestComment[], GitHubError>
 		readonly listOpenIssues: (repository: string) => Effect.Effect<readonly IssueItem[], GitHubError>
 		readonly getPullRequestMergeInfo: (repository: string, number: number) => Effect.Effect<PullRequestMergeInfo, GitHubError>
 		readonly getRepositoryMergeMethods: (repository: string) => Effect.Effect<RepositoryMergeMethods, GitHubError>
@@ -634,6 +642,8 @@ export class GitHubService extends Context.Service<
 		readonly listRepoLabels: (repository: string) => Effect.Effect<readonly { readonly name: string; readonly color: string | null }[], GitHubError>
 		readonly addPullRequestLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
 		readonly removePullRequestLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
+		readonly addIssueLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
+		readonly removeIssueLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
 	}
 >()("ghui/GitHubService") {
 	static readonly layerNoDeps = Layer.effect(
@@ -789,6 +799,9 @@ export class GitHubService extends Context.Service<
 
 				return sortComments([...issueComments, ...reviewComments])
 			})
+
+			const listIssueComments = (repository: string, number: number) =>
+				ghJson("listIssueComments", CommentsResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/issues/${number}/comments`]).pipe(Effect.map(parseIssueComments))
 
 			const getPullRequestMergeInfo = Effect.fn("GitHubService.getPullRequestMergeInfo")(function* (repository: string, number: number) {
 				const info = yield* ghJson("getPullRequestMergeInfo", MergeInfoResponseSchema, [
@@ -977,6 +990,12 @@ export class GitHubService extends Context.Service<
 			const removePullRequestLabel = (repository: string, number: number, label: string) =>
 				ghVoid("removePullRequestLabel", ["pr", "edit", String(number), "--repo", repository, "--remove-label", label])
 
+			const addIssueLabel = (repository: string, number: number, label: string) =>
+				ghVoid("addIssueLabel", ["issue", "edit", String(number), "--repo", repository, "--add-label", label])
+
+			const removeIssueLabel = (repository: string, number: number, label: string) =>
+				ghVoid("removeIssueLabel", ["issue", "edit", String(number), "--repo", repository, "--remove-label", label])
+
 			return GitHubService.of({
 				listOpenPullRequests,
 				listOpenPullRequestPage,
@@ -986,6 +1005,7 @@ export class GitHubService extends Context.Service<
 				getPullRequestDiff,
 				listPullRequestReviewComments,
 				listPullRequestComments,
+				listIssueComments,
 				listOpenIssues,
 				getPullRequestMergeInfo,
 				getRepositoryMergeMethods,
@@ -1003,6 +1023,8 @@ export class GitHubService extends Context.Service<
 				listRepoLabels,
 				addPullRequestLabel,
 				removePullRequestLabel,
+				addIssueLabel,
+				removeIssueLabel,
 			})
 		}),
 	)

@@ -136,6 +136,8 @@ export interface PullRequestItem {
 	readonly author: string
 	readonly headRefOid: string
 	readonly headRefName: string
+	readonly baseRefName: string
+	readonly defaultBranchName: string
 	readonly number: number
 	readonly title: string
 	readonly body: string

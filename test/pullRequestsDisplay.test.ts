@@ -8,6 +8,8 @@ const open: PullRequestItem = {
 	author: "kit",
 	headRefOid: "deadbeef",
 	headRefName: "feature/thing",
+	baseRefName: "main",
+	defaultBranchName: "main",
 	number: 42,
 	title: "feat: thing",
 	body: "",

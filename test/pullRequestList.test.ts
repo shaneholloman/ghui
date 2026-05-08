@@ -7,6 +7,8 @@ const pullRequest = (overrides: Partial<PullRequestItem> = {}): PullRequestItem 
 	author: "author",
 	headRefOid: "abc123",
 	headRefName: "feature/pagination",
+	baseRefName: "main",
+	defaultBranchName: "main",
 	number: 1,
 	title: "Update pagination",
 	body: "",

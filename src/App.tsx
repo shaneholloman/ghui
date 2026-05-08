@@ -113,7 +113,8 @@ import {
 } from "./ui/DetailsPane.js"
 import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
-import { Divider, Filler, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
+import { SplitPane } from "./ui/paneLayout.js"
+import { Divider, Filler, fitCell, PlainLine } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
 import {
 	ChangedFilesModal,
@@ -164,11 +165,14 @@ import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
-import { WorkspaceTabs } from "./ui/WorkspaceTabs.js"
-import { ISSUE_DETAIL_DIVIDER_ROW, IssueDetailPane, IssueList } from "./ui/IssueList.js"
+import { RepoDetailPane, RepoList, type RepositoryListItem } from "./ui/RepoList.js"
+import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
+import { getIssueDetailJunctionRows, IssueDetailPane, IssueList } from "./ui/IssueList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
-import { nextWorkspaceSurface, type WorkspaceSurface } from "./workspaceSurfaces.js"
+import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
+import { readWorkspacePreferencesFile, writeWorkspacePreferencesFile } from "./workspacePreferenceFile.js"
+import { makeWorkspacePreferences, repositoryId, viewerId, type ViewerId, type WorkspacePreferences } from "./workspacePreferences.js"
 
 const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
 	if (value === undefined) return fallback
@@ -179,12 +183,47 @@ const parseOptionalPositiveInt = (value: string | undefined, fallback: number | 
 const mockPrCount = parseOptionalPositiveInt(process.env.GHUI_MOCK_PR_COUNT, null)
 const mockRepository = process.env.GHUI_MOCK_REPOSITORY?.trim() || null
 const detectedRepository = mockPrCount === null ? detectCurrentGitHubRepository() : mockRepository
+const mockUsername = process.env.GHUI_MOCK_USERNAME?.trim() || (mockPrCount !== null ? "kitlangton" : undefined)
+const mockWorkspacePreferencesPath = (() => {
+	if (mockPrCount === null) return null
+	const value = process.env.GHUI_MOCK_WORKSPACE_PREFERENCES_PATH?.trim()
+	if (value === "off" || value === "0" || value === "false") return null
+	return value && value.length > 0 ? value : ".ghui/mock-workspace-preferences.json"
+})()
+const mockRepositoryCatalog =
+	mockPrCount === null || !mockRepository
+		? []
+		: [
+				{ repository: mockRepository ?? "anomalyco/opencode", pullRequestCount: 0, issueCount: 0, description: "OpenCode project workspace" },
+				{ repository: "kitlangton/ghui", pullRequestCount: 7, issueCount: 4, description: "Terminal UI for GitHub pull requests" },
+				{ repository: "kitlangton/homebrew-tap", pullRequestCount: 0, issueCount: 0, description: "Homebrew formula automation" },
+				{ repository: "Effect-TS/effect", pullRequestCount: 31, issueCount: 9, description: "Effect TypeScript runtime and libraries" },
+			]
+const initialRecentRepositories = mockRepositoryCatalog.length > 0 ? mockRepositoryCatalog.map((repo) => repo.repository) : detectedRepository ? [detectedRepository] : []
+const mockUserIssues = mockRepositoryCatalog.flatMap(
+	(repo, index) =>
+		Array.from({ length: Math.min(3, Math.max(0, repo.issueCount)) }, (_, issueIndex) => ({
+			repository: repo.repository,
+			number: 42 + index * 10 + issueIndex,
+			title: ["Workspace hub filters", "Release automation follow-up", "Improve issue detail rendering"][(index + issueIndex) % 3]!,
+			body: `Mock user issue for ${repo.repository}.`,
+			author: mockUsername ?? "kitlangton",
+			labels: issueIndex % 2 === 0 ? [{ name: "enhancement", color: "a2eeef" }] : [{ name: "bug", color: "d73a4a" }],
+			commentCount: issueIndex,
+			createdAt: new Date(Date.now() - (index * 3 + issueIndex) * 86_400_000),
+			updatedAt: new Date(Date.now() - (index + issueIndex) * 3_600_000),
+			url: `https://github.com/${repo.repository}/issues/${42 + index * 10 + issueIndex}`,
+		})) satisfies readonly IssueItem[],
+)
 const pullRequestPageSize = Math.min(100, parseOptionalPositiveInt(process.env.GHUI_PR_PAGE_SIZE, config.prPageSize) ?? config.prPageSize)
 const githubServiceLayer =
 	mockPrCount !== null
 		? (await import("./services/MockGitHubService.js")).MockGitHubService.layer({
 				prCount: mockPrCount,
 				repoCount: parseOptionalPositiveInt(process.env.GHUI_MOCK_REPO_COUNT, 4) ?? 4,
+				repository: mockRepository,
+				repositories: mockRepositoryCatalog.map((repo) => repo.repository),
+				...(mockUsername ? { username: mockUsername } : {}),
 			})
 		: GitHubService.layerNoDeps
 const cacheServiceLayer = mockPrCount !== null ? CacheService.disabledLayer : CacheService.layerFromPath(config.cachePath)
@@ -368,6 +407,9 @@ const filterQueryAtom = Atom.make("")
 const filterDraftAtom = Atom.make("")
 const filterModeAtom = Atom.make(false)
 const workspaceSurfaceAtom = Atom.make<WorkspaceSurface>("pullRequests")
+const selectedRepositoryIndexAtom = Atom.make(0)
+const favoriteRepositoriesAtom = Atom.make<Record<string, true>>({}).pipe(Atom.keepAlive)
+const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
 const detailFullViewAtom = Atom.make(false)
 const detailScrollOffsetAtom = Atom.make(0)
 const diffFullViewAtom = Atom.make(false)
@@ -395,6 +437,7 @@ const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}
 const repoMergeMethodsCacheAtom = Atom.make<Record<string, RepositoryMergeMethods>>({}).pipe(Atom.keepAlive)
 const lastUsedMergeMethodAtom = Atom.make<Record<string, PullRequestMergeMethod>>({}).pipe(Atom.keepAlive)
 const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
+const issueOverridesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
 const recentlyCompletedPullRequestsAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
 const usernameAtom = githubRuntime.atom(GitHubService.use((github) => github.getAuthenticatedUser())).pipe(Atom.keepAlive)
 
@@ -498,12 +541,20 @@ const writeCachedPullRequestAtom = githubRuntime.fn<PullRequestItem>()((pullRequ
 const writeQueueCacheAtom = githubRuntime.fn<{ readonly viewer: string; readonly load: PullRequestLoad }>()(({ viewer, load }) =>
 	CacheService.use((cache) => cache.writeQueue(viewer, load)),
 )
+const readWorkspacePreferencesAtom = githubRuntime.fn<ViewerId>()((viewer) => CacheService.use((cache) => cache.readWorkspacePreferences(viewer)))
+const writeWorkspacePreferencesAtom = githubRuntime.fn<WorkspacePreferences>()((preferences) => CacheService.use((cache) => cache.writeWorkspacePreferences(preferences)))
 const pruneCacheAtom = githubRuntime.fn<void>()(() => CacheService.use((cache) => cache.prune()))
 const addPullRequestLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.addPullRequestLabel(input.repository, input.number, input.label)),
 )
 const removePullRequestLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.removePullRequestLabel(input.repository, input.number, input.label)),
+)
+const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
+	GitHubService.use((github) => github.addIssueLabel(input.repository, input.number, input.label)),
+)
+const removeIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
+	GitHubService.use((github) => github.removeIssueLabel(input.repository, input.number, input.label)),
 )
 const toggleDraftAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly isDraft: boolean }>()((input) =>
 	GitHubService.use((github) => github.toggleDraftStatus(input.repository, input.number, input.isDraft)),
@@ -517,6 +568,9 @@ const listPullRequestReviewCommentsAtom = githubRuntime.fn<{ readonly repository
 )
 const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestComments(input.repository, input.number)),
+)
+const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listIssueComments(input.repository, input.number)),
 )
 const getPullRequestMergeInfoAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.getPullRequestMergeInfo(input.repository, input.number)),
@@ -819,11 +873,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setRepoMergeMethodsCache = useAtomSet(repoMergeMethodsCacheAtom)
 	const setLastUsedMergeMethod = useAtomSet(lastUsedMergeMethodAtom)
 	const setPullRequestOverrides = useAtomSet(pullRequestOverridesAtom)
+	const setIssueOverrides = useAtomSet(issueOverridesAtom)
 	const setRecentlyCompletedPullRequests = useAtomSet(recentlyCompletedPullRequestsAtom)
 	const retryProgress = useAtomValue(retryProgressAtom)
 	const [loadingFrame, setLoadingFrame] = useState(0)
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
+	const [workspacePreferencesLoadedViewer, setWorkspacePreferencesLoadedViewer] = useState<string | null>(null)
 	const [terminalFocused, setTerminalFocused] = useState(true)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
@@ -832,12 +888,17 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
 	const addPullRequestLabel = useAtomSet(addPullRequestLabelAtom, { mode: "promise" })
 	const removePullRequestLabel = useAtomSet(removePullRequestLabelAtom, { mode: "promise" })
+	const addIssueLabel = useAtomSet(addIssueLabelAtom, { mode: "promise" })
+	const removeIssueLabel = useAtomSet(removeIssueLabelAtom, { mode: "promise" })
 	const toggleDraftStatus = useAtomSet(toggleDraftAtom, { mode: "promise" })
 	const listPullRequestReviewComments = useAtomSet(listPullRequestReviewCommentsAtom, { mode: "promise" })
 	const listPullRequestComments = useAtomSet(listPullRequestCommentsAtom, { mode: "promise" })
+	const listIssueComments = useAtomSet(listIssueCommentsAtom, { mode: "promise" })
 	const readCachedPullRequest = useAtomSet(readCachedPullRequestAtom, { mode: "promise" })
 	const writeCachedPullRequest = useAtomSet(writeCachedPullRequestAtom, { mode: "promise" })
 	const writeQueueCache = useAtomSet(writeQueueCacheAtom, { mode: "promise" })
+	const readWorkspacePreferences = useAtomSet(readWorkspacePreferencesAtom, { mode: "promise" })
+	const writeWorkspacePreferences = useAtomSet(writeWorkspacePreferencesAtom, { mode: "promise" })
 	const pruneCache = useAtomSet(pruneCacheAtom, { mode: "promise" })
 	const getPullRequestMergeInfo = useAtomSet(getPullRequestMergeInfoAtom, { mode: "promise" })
 	const getRepositoryMergeMethods = useAtomSet(getRepositoryMergeMethodsAtom, { mode: "promise" })
@@ -866,7 +927,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const leftContentWidth = isWideLayout ? Math.max(24, leftPaneWidth - 2) : Math.max(24, contentWidth - sectionPadding * 2)
 	const rightContentWidth = isWideLayout ? Math.max(24, rightPaneWidth - sectionPadding * 2) : Math.max(24, contentWidth - sectionPadding * 2)
 	const wideDetailLines = Math.max(8, terminalHeight - 10)
-	const wideBodyHeight = Math.max(8, terminalHeight - 6)
+	const showWorkspaceTabs = !detailFullView && !diffFullView && !commentsViewActive
+	const wideBodyHeight = Math.max(8, terminalHeight - (showWorkspaceTabs ? 6 : 4))
 	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -884,6 +946,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const cachedDetailKeysRef = useRef(new Set<string>())
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const prListScrollRef = useRef<ScrollBoxRenderable | null>(null)
+	const issueListScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const diffRenderableRefs = useRef(new Map<number, DiffRenderable>())
 	const diffCommentLineColorsRef = useRef<AppliedDiffLineColorState>({ contextKey: null, entries: [] })
 	const diffLineColorRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -962,6 +1025,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const pullRequestLoad = useAtomValue(pullRequestLoadAtom)
 	const [activeWorkspaceSurface, setActiveWorkspaceSurface] = useAtom(workspaceSurfaceAtom)
+	const [selectedRepositoryIndex, setSelectedRepositoryIndex] = useAtom(selectedRepositoryIndexAtom)
+	const [favoriteRepositories, setFavoriteRepositories] = useAtom(favoriteRepositoriesAtom)
+	const [recentRepositories, setRecentRepositories] = useAtom(recentRepositoriesAtom)
 	const issuesResult = useAtomValue(issuesAtom)
 	const [selectedIssueIndex, setSelectedIssueIndex] = useAtom(selectedIssueIndexAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
@@ -969,7 +1035,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const selectedRepository = viewRepository(activeView)
 	const isInitialLoading = !startupLoadComplete && pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
-	const issues = AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
+	const issueOverrides = useAtomValue(issueOverridesAtom)
+	const rawIssues = selectedRepository === null && mockPrCount !== null ? mockUserIssues : AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
+	const issues = rawIssues.map((issue) => issueOverrides[issue.url] ?? issue)
 	const issuesStatus: LoadStatus = selectedRepository === null ? "ready" : issuesResult.waiting ? "loading" : AsyncResult.isFailure(issuesResult) ? "error" : "ready"
 	const issuesError = AsyncResult.isFailure(issuesResult) ? errorMessage(Cause.squash(issuesResult.cause)) : null
 	const selectedIssue = issues[Math.max(0, Math.min(selectedIssueIndex, issues.length - 1))] ?? null
@@ -980,6 +1048,54 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const visibleGroups = useAtomValue(visibleGroupsAtom)
 	const visiblePullRequests = useAtomValue(visiblePullRequestsAtom)
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
+	const workspaceTabSurfaces: readonly WorkspaceSurface[] = selectedRepository ? repositoryWorkspaceSurfaces : userWorkspaceSurfaces
+	const repositoryItems = useMemo((): readonly RepositoryListItem[] => {
+		const byRepository = new Map<string, RepositoryListItem>()
+		const catalog = new Map(mockRepositoryCatalog.map((item) => [item.repository, item]))
+		const ensure = (repository: string): RepositoryListItem => {
+			const existing = byRepository.get(repository)
+			if (existing) return existing
+			const catalogItem = catalog.get(repository)
+			const item: RepositoryListItem = {
+				repository,
+				pullRequestCount: catalogItem?.pullRequestCount ?? 0,
+				issueCount: catalogItem?.issueCount ?? 0,
+				favorite: favoriteRepositories[repository] === true,
+				recent: recentRepositories.includes(repository),
+				lastActivityAt: null,
+				description: catalogItem?.description ?? null,
+			}
+			byRepository.set(repository, item)
+			return item
+		}
+		for (const repository of [...recentRepositories, ...Object.keys(favoriteRepositories), ...(detectedRepository ? [detectedRepository] : [])]) {
+			ensure(repository)
+		}
+		const touch = (repository: string, at: Date, description: string | null, counts: Pick<RepositoryListItem, "pullRequestCount" | "issueCount">) => {
+			const current = ensure(repository)
+			byRepository.set(repository, {
+				...current,
+				pullRequestCount: current.pullRequestCount + counts.pullRequestCount,
+				issueCount: current.issueCount + counts.issueCount,
+				lastActivityAt: current.lastActivityAt && current.lastActivityAt > at ? current.lastActivityAt : at,
+				description: current.description ?? description,
+			})
+		}
+		for (const pullRequest of pullRequests) {
+			touch(pullRequest.repository, pullRequest.createdAt, pullRequest.title, { pullRequestCount: 1, issueCount: 0 })
+		}
+		for (const issue of issues) {
+			touch(issue.repository, issue.updatedAt, issue.title, { pullRequestCount: 0, issueCount: 1 })
+		}
+		return [...byRepository.values()].sort((left, right) => {
+			if (left.favorite !== right.favorite) return left.favorite ? -1 : 1
+			if (left.recent !== right.recent) return left.recent ? -1 : 1
+			const leftTime = left.lastActivityAt?.getTime() ?? 0
+			const rightTime = right.lastActivityAt?.getTime() ?? 0
+			return rightTime - leftTime || left.repository.localeCompare(right.repository)
+		})
+	}, [favoriteRepositories, recentRepositories, pullRequests, issues])
+	const selectedRepositoryItem = repositoryItems[Math.max(0, Math.min(selectedRepositoryIndex, repositoryItems.length - 1))] ?? null
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
 	const activeViews = activePullRequestViews(activeView)
@@ -1003,10 +1119,21 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	)
 	const selectedPullRequestRowIndex = pullRequestListRowIndex(pullRequestListRows, selectedPullRequest?.url ?? null)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
+	const selectedCommentSubject = activeWorkspaceSurface === "issues" ? selectedIssue : activeWorkspaceSurface === "pullRequests" ? selectedPullRequest : null
+	const selectedCommentKey =
+		activeWorkspaceSurface === "issues"
+			? selectedIssue
+				? `issue:${selectedIssue.repository}#${selectedIssue.number}`
+				: null
+			: activeWorkspaceSurface === "pullRequests" && selectedPullRequest
+				? pullRequestDiffKey(selectedPullRequest)
+				: null
+	const selectedItemLabels = selectedCommentSubject?.labels ?? []
 	// Stabilize the reference so the orderedComments memo only refires when the
 	// underlying comment array actually changes (not every App re-render).
-	const selectedComments = useMemo(() => (selectedDiffKey ? (pullRequestComments[selectedDiffKey] ?? []) : []), [selectedDiffKey, pullRequestComments])
-	const selectedCommentsStatus: DetailCommentsStatus = selectedDiffKey ? (pullRequestCommentsLoaded[selectedDiffKey] ?? "idle") : "idle"
+	const selectedComments = useMemo(() => (selectedCommentKey ? (pullRequestComments[selectedCommentKey] ?? []) : []), [selectedCommentKey, pullRequestComments])
+	const selectedCommentsStatus: DetailCommentsStatus = selectedCommentKey ? (pullRequestCommentsLoaded[selectedCommentKey] ?? "idle") : "idle"
+	const selectedCommentCount = activeWorkspaceSurface === "issues" ? Math.max(selectedIssue?.commentCount ?? 0, selectedComments.length) : selectedComments.length
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
 	const readyDiffFiles = useMemo(
@@ -1080,7 +1207,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			: activeWorkspaceSurface === "pullRequests" && pullRequestStatus === "loading"
 				? "loading pull requests..."
 				: ""
-	const headerLeft = selectedRepository ?? (username ? `${username}  ·  ${viewLabel(activeView)}` : viewLabel(activeView))
+	const headerLeft = selectedRepository ?? username ?? viewLabel(activeView)
 	const headerLine = `${fitCell(headerLeft, Math.max(0, headerFooterWidth - summaryRight.length))}${summaryRight}`
 	const footerNotice = notice ? fitCell(notice, headerFooterWidth) : null
 	const selectPullRequestByUrl = (url: string) => {
@@ -1094,6 +1221,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		const pullRequest = pullRequests.find((item) => item.url === url)
 		if (!pullRequest) return
 		setPullRequestOverrides((current) => ({ ...current, [url]: transform(pullRequest) }))
+	}
+	const updateIssue = (url: string, transform: (issue: IssueItem) => IssueItem) => {
+		const issue = issues.find((item) => item.url === url)
+		if (!issue) return
+		setIssueOverrides((current) => ({ ...current, [url]: transform(issue) }))
 	}
 	const markPullRequestCompleted = (pullRequest: PullRequestItem, state: "closed" | "merged") => {
 		setRecentlyCompletedPullRequests((current) => ({
@@ -1138,6 +1270,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		refreshGenerationRef.current += 1
 		setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
 		setActiveView(view)
+		refreshPullRequestsAtom()
 		setSelectedIndex(registry.get(queueSelectionAtom)[viewCacheKey(view)] ?? 0)
 		setSelectedIssueIndex(0)
 		setRecentlyCompletedPullRequests({})
@@ -1151,11 +1284,18 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setNotice(null)
 		setRefreshCompletionMessage(null)
 		setRefreshStartedAt(null)
+		if (view._tag === "Repository") {
+			setRecentRepositories((current) => [view.repository, ...current.filter((repository) => repository !== view.repository)].slice(0, 12))
+			if (activeWorkspaceSurface === "repos") setActiveWorkspaceSurface("pullRequests")
+		} else if (view.repository === null && selectedRepository !== null) {
+			setActiveWorkspaceSurface("repos")
+		}
 	}
 	const switchQueueMode = (delta: 1 | -1) => {
 		switchViewTo(nextView(activeView, activeViews, delta))
 	}
 	const switchWorkspaceSurface = (surface: WorkspaceSurface) => {
+		if (!workspaceTabSurfaces.includes(surface)) return
 		if (surface === activeWorkspaceSurface) return
 		setActiveWorkspaceSurface(surface)
 		setSelectedIssueIndex(0)
@@ -1168,7 +1308,28 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setNotice(null)
 	}
 	const cycleWorkspaceSurface = (delta: 1 | -1) => {
-		switchWorkspaceSurface(nextWorkspaceSurface(activeWorkspaceSurface, delta))
+		switchWorkspaceSurface(nextWorkspaceSurface(activeWorkspaceSurface, delta, workspaceTabSurfaces))
+	}
+	const goUpWorkspaceScope = () => {
+		if (!selectedRepository) return false
+		switchViewTo({ _tag: "Queue", mode: "authored", repository: null })
+		return true
+	}
+	const openSelectedRepository = () => {
+		if (!selectedRepositoryItem) return
+		switchViewTo({ _tag: "Repository", repository: selectedRepositoryItem.repository })
+	}
+	const toggleFavoriteRepository = () => {
+		if (!selectedRepositoryItem) return
+		const repository = selectedRepositoryItem.repository
+		setFavoriteRepositories((current) => {
+			if (current[repository]) {
+				const next = { ...current }
+				delete next[repository]
+				return next
+			}
+			return { ...current, [repository]: true }
+		})
 	}
 	const loadMorePullRequests = () => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
@@ -1293,6 +1454,29 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				flashNotice(errorMessage(error))
 			})
 	}
+	const loadIssueComments = (issue: IssueItem, force = false) => {
+		const key = `issue:${issue.repository}#${issue.number}`
+		const previousLoadState = registry.get(pullRequestCommentsLoadedAtom)[key]
+		if (!force && previousLoadState) return
+		const generation = refreshGenerationRef.current
+		setPullRequestCommentsLoaded((current) => ({ ...current, [key]: "loading" }))
+		void listIssueComments({ repository: issue.repository, number: issue.number })
+			.then((items) => {
+				if (generation !== refreshGenerationRef.current) return
+				setPullRequestComments((current) => ({ ...current, [key]: items }))
+				setPullRequestCommentsLoaded((current) => ({ ...current, [key]: "ready" }))
+			})
+			.catch((error) => {
+				if (generation !== refreshGenerationRef.current) return
+				setPullRequestCommentsLoaded((current) => {
+					if (previousLoadState === "ready") return { ...current, [key]: previousLoadState }
+					const next = { ...current }
+					delete next[key]
+					return next
+				})
+				flashNotice(errorMessage(error))
+			})
+	}
 	maybeRefreshPullRequestsRef.current = (minimumAgeMs) => {
 		if (!terminalFocusedRef.current || pullRequestStatusRef.current === "loading") return
 		const lastRefreshAt = lastPullRequestRefreshAtRef.current
@@ -1379,6 +1563,56 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}, [visiblePullRequests.length])
 
 	useEffect(() => {
+		setSelectedIssueIndex((current) => {
+			if (issues.length === 0) return 0
+			return Math.max(0, Math.min(current, issues.length - 1))
+		})
+	}, [issues.length])
+
+	useEffect(() => {
+		setSelectedRepositoryIndex((current) => {
+			if (repositoryItems.length === 0) return 0
+			return Math.max(0, Math.min(current, repositoryItems.length - 1))
+		})
+	}, [repositoryItems.length])
+
+	useEffect(() => {
+		if (!username) return
+		let cancelled = false
+		const viewer = viewerId(username)
+		setWorkspacePreferencesLoadedViewer(null)
+		const loadPreferences = mockWorkspacePreferencesPath ? Effect.runPromise(readWorkspacePreferencesFile(mockWorkspacePreferencesPath, viewer)) : readWorkspacePreferences(viewer)
+		void loadPreferences
+			.then((preferences) => {
+				if (cancelled) return
+				if (preferences) {
+					setFavoriteRepositories(Object.fromEntries(preferences.favoriteRepositories.map((repository) => [repository, true])))
+					setRecentRepositories(preferences.recentRepositories)
+				}
+				setWorkspacePreferencesLoadedViewer(username)
+			})
+			.catch(() => {
+				if (!cancelled) setWorkspacePreferencesLoadedViewer(username)
+			})
+		return () => {
+			cancelled = true
+		}
+	}, [username, readWorkspacePreferences])
+
+	useEffect(() => {
+		if (!username || workspacePreferencesLoadedViewer !== username) return
+		const preferences = makeWorkspacePreferences({
+			viewer: viewerId(username),
+			favoriteRepositories: Object.keys(favoriteRepositories).map(repositoryId),
+			recentRepositories: recentRepositories.map(repositoryId).slice(0, 20),
+		})
+		const savePreferences = mockWorkspacePreferencesPath
+			? Effect.runPromise(writeWorkspacePreferencesFile(mockWorkspacePreferencesPath, preferences))
+			: writeWorkspacePreferences(preferences)
+		void savePreferences.catch(() => undefined)
+	}, [favoriteRepositories, recentRepositories, username, workspacePreferencesLoadedViewer, writeWorkspacePreferences])
+
+	useEffect(() => {
 		setQueueSelection((current) => (current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex }))
 	}, [currentQueueCacheKey, selectedIndex])
 
@@ -1412,6 +1646,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}, [selectedPullRequestRowIndex])
 
 	useEffect(() => {
+		const scroll = issueListScrollRef.current
+		if (!scroll || issues.length === 0) return
+		const viewportHeight = scroll.viewport.height
+		if (viewportHeight <= 0) return
+		const nextTop = scrollTopForVisibleLine(scroll.scrollTop, viewportHeight, selectedIssueIndex, 2)
+		if (nextTop !== scroll.scrollTop) scroll.scrollTo({ x: 0, y: nextTop })
+	}, [selectedIssueIndex, issues.length])
+
+	useEffect(() => {
 		setDiffFileIndex(0)
 		setDiffScrollTop(0)
 		setDiffCommentAnchorIndex(0)
@@ -1419,6 +1662,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setDiffCommentRangeStartIndex(null)
 		detailPreviewScrollRef.current?.scrollTo({ x: 0, y: 0 })
 	}, [selectedIndex])
+
+	useEffect(() => {
+		detailPreviewScrollRef.current?.scrollTo({ x: 0, y: 0 })
+	}, [selectedIssueIndex, selectedRepositoryIndex, activeWorkspaceSurface])
 
 	useEffect(() => {
 		setDiffFileIndex((current) => safeDiffFileIndex(readyDiffFiles, current))
@@ -1572,6 +1819,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}, [diffFullView])
 	const isHydratingPullRequestDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
+	const isActiveSurfaceLoading =
+		(activeWorkspaceSurface === "pullRequests" && (pullRequestStatus === "loading" || isRefreshingPullRequests || isHydratingPullRequestDetails || isLoadingMorePullRequests)) ||
+		(activeWorkspaceSurface === "issues" && issuesStatus === "loading")
 	const hasActiveLoadingIndicator =
 		pullRequestResult.waiting ||
 		isHydratingPullRequestDetails ||
@@ -1752,8 +2002,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const openCommentsView = () => {
-		if (!selectedPullRequest) return
-		loadPullRequestComments(selectedPullRequest, true)
+		if (activeWorkspaceSurface === "issues") {
+			if (!selectedIssue) return
+			loadIssueComments(selectedIssue, true)
+		} else {
+			if (!selectedPullRequest) return
+			loadPullRequestComments(selectedPullRequest, true)
+		}
 		setCommentsViewActive(true)
 		setDetailFullView(false)
 		setDiffFullView(false)
@@ -1799,8 +2054,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const refreshSelectedComments = () => {
-		if (!selectedPullRequest) return
-		loadPullRequestComments(selectedPullRequest, true)
+		if (activeWorkspaceSurface === "issues") {
+			if (selectedIssue) loadIssueComments(selectedIssue, true)
+		} else if (selectedPullRequest) {
+			loadPullRequestComments(selectedPullRequest, true)
+		}
 	}
 
 	const setDiffRenderableRef = (index: number, diff: DiffRenderable | null) => {
@@ -2120,12 +2378,12 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const openNewIssueCommentModal = () => {
-		if (!selectedPullRequest) return
+		if (!selectedCommentSubject) return
 		setCommentModal({ ...initialCommentModalState, target: { kind: "issue" } })
 	}
 
 	const openReplyToSelectedComment = () => {
-		if (!selectedPullRequest) return
+		if (!selectedCommentSubject) return
 		const comment = selectedOrderedComment
 		if (!comment) {
 			flashNotice("No comment selected")
@@ -2184,16 +2442,23 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const submitIssueComment = () => {
-		if (!selectedPullRequest) return
+		if (!selectedCommentSubject || !selectedCommentKey) return
 		const body = requireCommentBody()
 		if (body === null) return
-		const { repository, number } = selectedPullRequest
+		const { repository, number } = selectedCommentSubject
+		const selectedIssueUrl = activeWorkspaceSurface === "issues" ? selectedIssue?.url : null
 		submitOptimisticComment({
-			key: pullRequestDiffKey(selectedPullRequest),
+			key: selectedCommentKey,
 			optimistic: { _tag: "comment", id: `local:issue:${Date.now()}`, author: username ?? "you", body, createdAt: new Date(), url: null },
 			postingMessage: `Posting comment on #${number}`,
 			successMessage: `Commented on #${number}`,
 			request: () => createPullRequestIssueComment({ repository, number, body }),
+			onOptimistic: () => {
+				if (selectedIssueUrl) updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: issue.commentCount + 1 }))
+			},
+			onRevert: () => {
+				if (selectedIssueUrl) updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: Math.max(0, issue.commentCount - 1) }))
+			},
 		})
 	}
 
@@ -2254,13 +2519,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		comment !== null && username !== null && comment.author === username && !comment.id.startsWith("local:")
 
 	const openEditSelectedComment = () => {
-		if (!selectedPullRequest) return
+		if (!selectedCommentSubject) return
 		const comment = selectedOrderedComment
 		if (!canEditComment(comment)) {
 			flashNotice(comment ? "Can't edit this comment" : "No comment selected")
 			return
 		}
-		const anchorLabel = comment._tag === "review-comment" ? `Editing ${comment.path}:${comment.line}` : `Editing comment on #${selectedPullRequest.number}`
+		const anchorLabel = comment._tag === "review-comment" ? `Editing ${comment.path}:${comment.line}` : `Editing comment on #${selectedCommentSubject.number}`
 		setCommentModal({
 			body: comment.body,
 			cursor: comment.body.length,
@@ -2270,17 +2535,17 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const submitEditComment = () => {
-		if (!selectedPullRequest || commentModal.target.kind !== "edit") return
+		if (!selectedCommentSubject || !selectedCommentKey || commentModal.target.kind !== "edit") return
 		const body = requireCommentBody()
 		if (body === null) return
 		const target = commentModal.target
-		const key = pullRequestDiffKey(selectedPullRequest)
+		const key = selectedCommentKey
 		const previous = (pullRequestComments[key] ?? []).find((entry) => entry.id === target.commentId)
 		if (!previous) {
 			setCommentModal((current) => ({ ...current, error: "Comment not found in cache." }))
 			return
 		}
-		const repository = selectedPullRequest.repository
+		const repository = selectedCommentSubject.repository
 
 		// Optimistically swap the body in both caches; restore the previous on failure.
 		const previousReview = previous._tag === "review-comment" ? previous : null
@@ -2343,7 +2608,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const openDeleteSelectedComment = () => {
-		if (!selectedPullRequest) return
+		if (!selectedCommentSubject) return
 		const comment = selectedOrderedComment
 		if (!canEditComment(comment)) {
 			flashNotice(comment ? "Can't delete this comment" : "No comment selected")
@@ -2362,9 +2627,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const confirmDeleteComment = () => {
-		if (!selectedPullRequest || deleteCommentModal.running) return
+		if (!selectedCommentSubject || !selectedCommentKey || deleteCommentModal.running) return
 		const target = { commentId: deleteCommentModal.commentId, commentTag: deleteCommentModal.commentTag }
-		const key = pullRequestDiffKey(selectedPullRequest)
+		const key = selectedCommentKey
 		const list = pullRequestComments[key] ?? []
 		const previousIndex = list.findIndex((entry) => entry.id === target.commentId)
 		const previous = previousIndex >= 0 ? list[previousIndex] : undefined
@@ -2376,7 +2641,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		const threadKey = previousReview ? diffCommentThreadMapKey(key, previousReview) : null
 		const previousThread = threadKey ? (diffCommentThreads[threadKey] ?? []) : []
 		const previousThreadIndex = previousReview ? previousThread.findIndex((entry) => entry.id === previous.id) : -1
-		const repository = selectedPullRequest.repository
+		const repository = selectedCommentSubject.repository
+		const selectedIssueUrl = activeWorkspaceSurface === "issues" ? selectedIssue?.url : null
 
 		setPullRequestComments((current) => ({
 			...current,
@@ -2399,6 +2665,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				? () => deletePullRequestIssueComment({ repository, commentId: target.commentId })
 				: () => deleteReviewComment({ repository, commentId: target.commentId })
 
+		if (selectedIssueUrl && target.commentTag === "comment") updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: Math.max(0, issue.commentCount - 1) }))
+
 		void request()
 			.then(() => flashNotice("Comment deleted"))
 			.catch((error) => {
@@ -2420,6 +2688,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						return { ...current, [threadKey]: restored }
 					})
 				}
+				if (selectedIssueUrl && target.commentTag === "comment") updateIssue(selectedIssueUrl, (issue) => ({ ...issue, commentCount: issue.commentCount + 1 }))
 				flashNotice(errorMessage(error))
 			})
 	}
@@ -2675,8 +2944,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const openLabelModal = () => {
-		if (!selectedPullRequest) return
-		const repository = selectedPullRequest.repository
+		if (!selectedCommentSubject) return
+		const repository = selectedCommentSubject.repository
 		const cachedLabels = registry.get(labelCacheAtom)[repository]
 		if (cachedLabels) {
 			setLabelModal({
@@ -2850,34 +3119,44 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const toggleLabelAtIndex = () => {
-		if (!selectedPullRequest) return
+		if (!selectedCommentSubject) return
 		const filtered = filterLabels(labelModal.availableLabels, labelModal.query)
 		const label = filtered[labelModal.selectedIndex]
 		if (!label) return
 
-		const isActive = selectedPullRequest.labels.some((l) => l.name.toLowerCase() === label.name.toLowerCase())
-		const previousPullRequest = selectedPullRequest
+		const isIssue = activeWorkspaceSurface === "issues"
+		const isActive = selectedItemLabels.some((l) => l.name.toLowerCase() === label.name.toLowerCase())
+		const previousPullRequest = isIssue ? null : selectedPullRequest
+		const previousIssue = isIssue ? selectedIssue : null
+		const updateSelectedLabels = (labels: readonly PullRequestLabel[]) => {
+			if (isIssue && selectedIssue) {
+				updateIssue(selectedIssue.url, (issue) => ({ ...issue, labels }))
+			} else if (selectedPullRequest) {
+				updatePullRequest(selectedPullRequest.url, (pr) => ({ ...pr, labels }))
+			}
+		}
+		const restorePreviousLabels = () => {
+			if (previousIssue) updateIssue(previousIssue.url, () => previousIssue)
+			if (previousPullRequest) updatePullRequest(previousPullRequest.url, () => previousPullRequest)
+		}
+		const { repository, number } = selectedCommentSubject
 
 		if (isActive) {
-			updatePullRequest(selectedPullRequest.url, (pr) => ({
-				...pr,
-				labels: pr.labels.filter((l) => l.name.toLowerCase() !== label.name.toLowerCase()),
-			}))
-			void removePullRequestLabel({ repository: selectedPullRequest.repository, number: selectedPullRequest.number, label: label.name })
-				.then(() => flashNotice(`Removed ${label.name} from #${selectedPullRequest.number}`))
+			updateSelectedLabels(selectedItemLabels.filter((l) => l.name.toLowerCase() !== label.name.toLowerCase()))
+			const removeLabel = isIssue ? removeIssueLabel : removePullRequestLabel
+			void removeLabel({ repository, number, label: label.name })
+				.then(() => flashNotice(`Removed ${label.name} from #${number}`))
 				.catch((error) => {
-					updatePullRequest(selectedPullRequest.url, () => previousPullRequest)
+					restorePreviousLabels()
 					flashNotice(errorMessage(error))
 				})
 		} else {
-			updatePullRequest(selectedPullRequest.url, (pr) => ({
-				...pr,
-				labels: [...pr.labels, { name: label.name, color: label.color }],
-			}))
-			void addPullRequestLabel({ repository: selectedPullRequest.repository, number: selectedPullRequest.number, label: label.name })
-				.then(() => flashNotice(`Added ${label.name} to #${selectedPullRequest.number}`))
+			updateSelectedLabels([...selectedItemLabels, { name: label.name, color: label.color }])
+			const addLabel = isIssue ? addIssueLabel : addPullRequestLabel
+			void addLabel({ repository, number, label: label.name })
+				.then(() => flashNotice(`Added ${label.name} to #${number}`))
 				.catch((error) => {
-					updatePullRequest(selectedPullRequest.url, () => previousPullRequest)
+					restorePreviousLabels()
 					flashNotice(errorMessage(error))
 				})
 		}
@@ -2976,6 +3255,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		hasMorePullRequests,
 		isLoadingMorePullRequests,
 		selectedPullRequest,
+		selectedIssue,
 		detailFullView,
 		diffFullView,
 		commentsViewActive,
@@ -3090,7 +3370,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				commandPalette.query,
 			)
 		: []
-	const activePaletteScope: CommandScope | null = commentsViewActive ? "Comments" : diffFullView ? "Diff" : detailFullView ? "Pull request" : null
+	const activePaletteScope: CommandScope | null = commentsViewActive ? "Comments" : diffFullView ? "Diff" : detailFullView ? "View" : null
 	const commandPaletteCommands = commandPaletteActive
 		? [...dynamicPaletteCommands, ...(commandPalette.query.trim().length > 0 ? staticPaletteCommands : sortCommandsByActiveScope(staticPaletteCommands, activePaletteScope))]
 		: []
@@ -3164,17 +3444,22 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			return groupStarts[currentGroup + 1]!
 		})
 	const stepSelected = (delta: number) =>
-		activeWorkspaceSurface === "issues"
-			? setSelectedIssueIndex((current) => {
-					if (issues.length === 0) return 0
-					return Math.max(0, Math.min(issues.length - 1, current + delta))
+		activeWorkspaceSurface === "repos"
+			? setSelectedRepositoryIndex((current) => {
+					if (repositoryItems.length === 0) return 0
+					return Math.max(0, Math.min(repositoryItems.length - 1, current + delta))
 				})
-			: setSelectedIndex((current) => {
-					if (visiblePullRequests.length === 0) return 0
-					return Math.max(0, Math.min(visiblePullRequests.length - 1, current + delta))
-				})
+			: activeWorkspaceSurface === "issues"
+				? setSelectedIssueIndex((current) => {
+						if (issues.length === 0) return 0
+						return Math.max(0, Math.min(issues.length - 1, current + delta))
+					})
+				: setSelectedIndex((current) => {
+						if (visiblePullRequests.length === 0) return 0
+						return Math.max(0, Math.min(visiblePullRequests.length - 1, current + delta))
+					})
 	const stepSelectedDown = (count = 1) => {
-		if (activeWorkspaceSurface === "issues") {
+		if (activeWorkspaceSurface === "repos" || activeWorkspaceSurface === "issues") {
 			stepSelected(count)
 			return
 		}
@@ -3186,6 +3471,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 	const stepSelectedUp = (count = 1) => stepSelected(-count)
 	const stepSelectedDownWithLoadMore = () => {
+		if (activeWorkspaceSurface === "repos") {
+			setSelectedRepositoryIndex((current) => {
+				if (repositoryItems.length === 0) return 0
+				return current >= repositoryItems.length - 1 ? 0 : current + 1
+			})
+			return
+		}
 		if (activeWorkspaceSurface === "issues") {
 			setSelectedIssueIndex((current) => {
 				if (issues.length === 0) return 0
@@ -3203,15 +3495,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	}
 	const stepSelectedUpWrap = () =>
-		activeWorkspaceSurface === "issues"
-			? setSelectedIssueIndex((current) => {
-					if (issues.length === 0) return 0
-					return current <= 0 ? issues.length - 1 : current - 1
+		activeWorkspaceSurface === "repos"
+			? setSelectedRepositoryIndex((current) => {
+					if (repositoryItems.length === 0) return 0
+					return current <= 0 ? repositoryItems.length - 1 : current - 1
 				})
-			: setSelectedIndex((current) => {
-					if (visiblePullRequests.length === 0) return 0
-					return current <= 0 ? visiblePullRequests.length - 1 : current - 1
-				})
+			: activeWorkspaceSurface === "issues"
+				? setSelectedIssueIndex((current) => {
+						if (issues.length === 0) return 0
+						return current <= 0 ? issues.length - 1 : current - 1
+					})
+				: setSelectedIndex((current) => {
+						if (visiblePullRequests.length === 0) return 0
+						return current <= 0 ? visiblePullRequests.length - 1 : current - 1
+					})
 	const handleQuitOrClose = () => {
 		if (themeModalActive) {
 			closeThemeModal(false)
@@ -3422,12 +3719,25 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		},
 		listNav: {
 			halfPage,
-			visibleCount: activeWorkspaceSurface === "pullRequests" ? visiblePullRequests.length : issues.length,
+			visibleCount: activeWorkspaceSurface === "repos" ? repositoryItems.length : activeWorkspaceSurface === "pullRequests" ? visiblePullRequests.length : issues.length,
 			hasFilter: activeWorkspaceSurface === "pullRequests" && filterQuery.length > 0,
 			activeSurface: activeWorkspaceSurface,
-			canScrollDetailPreview: activeWorkspaceSurface === "pullRequests" && isWideLayout && selectedPullRequest !== null,
+			surfaces: workspaceTabSurfaces,
+			canGoUpWorkspace: selectedRepository !== null,
+			canScrollDetailPreview:
+				(activeWorkspaceSurface === "pullRequests" && selectedPullRequest !== null) ||
+				(activeWorkspaceSurface === "issues" && !isWideLayout && selectedIssue !== null) ||
+				(activeWorkspaceSurface === "repos" && !isWideLayout && selectedRepositoryItem !== null),
 			runCommandById: (id) => {
 				runCommandById(id)
+			},
+			openSelection: () => {
+				if (activeWorkspaceSurface === "repos") openSelectedRepository()
+				else runCommandById("detail.open")
+			},
+			toggleFavoriteRepository,
+			goUpWorkspace: () => {
+				goUpWorkspaceScope()
 			},
 			switchQueueMode,
 			switchWorkspaceSurface,
@@ -3444,7 +3754,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			stepSelectedDownWithLoadMore,
 			moveSelectedToPreviousGroup,
 			moveSelectedToNextGroup,
-			setSelected: (index) => (activeWorkspaceSurface === "issues" ? setSelectedIssueIndex(index) : setSelectedIndex(index)),
+			setSelected: (index) =>
+				activeWorkspaceSurface === "repos" ? setSelectedRepositoryIndex(index) : activeWorkspaceSurface === "issues" ? setSelectedIssueIndex(index) : setSelectedIndex(index),
 		},
 		openCommandPalette: () => {
 			runCommandById("command.open")
@@ -3479,11 +3790,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		if (!filterMode && !detailFullView && !diffFullView && !commentsViewActive) {
 			const text = printableKeyText(key)
 			if (text === "1") {
-				switchWorkspaceSurface("pullRequests")
+				switchWorkspaceSurface(workspaceTabSurfaces[0] ?? activeWorkspaceSurface)
 				return
 			}
 			if (text === "2") {
-				switchWorkspaceSurface("issues")
+				switchWorkspaceSurface(workspaceTabSurfaces[1] ?? activeWorkspaceSurface)
+				return
+			}
+			if (text === "3") {
+				switchWorkspaceSurface(workspaceTabSurfaces[2] ?? activeWorkspaceSurface)
 				return
 			}
 		}
@@ -3557,14 +3872,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const wideDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideDetailHeaderHeight)
 	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth)
 	const wideDetailBodyScrollable = wideDetailBodyHeight > wideDetailBodyViewportHeight
-	const narrowDetailsPaneHeight = getDetailsPaneHeight({
+	const narrowPullRequestListHeight = Math.max(1, Math.ceil((wideBodyHeight - 1) / 2))
+	const narrowDetailsPaneHeight = Math.max(1, wideBodyHeight - narrowPullRequestListHeight - 1)
+	const narrowRepoListHeight = narrowPullRequestListHeight
+	const narrowRepoDetailHeight = narrowDetailsPaneHeight
+	const narrowIssueListHeight = narrowPullRequestListHeight
+	const narrowIssueDetailHeight = narrowDetailsPaneHeight
+	const narrowDetailsContentHeight = getDetailsPaneHeight({
 		pullRequest: selectedPullRequest,
 		contentWidth: fullscreenContentWidth,
 		paneWidth: contentWidth,
 		comments: selectedComments,
 		commentsStatus: selectedCommentsStatus,
 	})
-	const narrowPullRequestListHeight = Math.max(1, wideBodyHeight - narrowDetailsPaneHeight - 1)
+	const narrowDetailsPaneNeedsScroll = narrowDetailsContentHeight > narrowDetailsPaneHeight
 	const widePullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > wideBodyHeight
 	const narrowPullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > narrowPullRequestListHeight
 	const detailJunctions = isSelectedPullRequestDetailLoading
@@ -3593,6 +3914,19 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		showTitle: false,
 		showRepositoryGroups: selectedRepository === null,
 	} as const
+	const issueListProps = {
+		issues,
+		selectedIndex: selectedIssueIndex,
+		status: issuesStatus,
+		error: issuesError,
+		repository: selectedRepository,
+		onSelectIssue: setSelectedIssueIndex,
+	} as const
+	const repoListProps = {
+		repositories: repositoryItems,
+		selectedIndex: selectedRepositoryIndex,
+		onSelectRepository: setSelectedRepositoryIndex,
+	} as const
 	const widePullRequestList = (
 		<box paddingLeft={sectionPadding} paddingRight={0}>
 			<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
@@ -3604,9 +3938,24 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		</box>
 	)
 	const showWideSplit = activeWorkspaceSurface === "pullRequests" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
+	const showRepoSplit = activeWorkspaceSurface === "repos" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 	const showIssueSplit = activeWorkspaceSurface === "issues" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
-	const issueJunctions = showIssueSplit ? [ISSUE_DETAIL_DIVIDER_ROW] : []
-	const showPaneSplit = showWideSplit || showIssueSplit
+	const issueJunctions = showIssueSplit ? getIssueDetailJunctionRows(selectedIssue, rightPaneWidth) : []
+	const showPaneSplit = showWideSplit || showRepoSplit || showIssueSplit
+	const issueListNeedsScroll = issuesStatus === "ready" && issues.length > wideBodyHeight
+	const narrowIssueListNeedsScroll = issuesStatus === "ready" && issues.length > narrowIssueListHeight
+	const repoListNeedsScroll = repositoryItems.length > wideBodyHeight
+	const narrowRepoListNeedsScroll = repositoryItems.length > narrowRepoListHeight
+	const workspaceTabCounts = {
+		repos: repositoryItems.length,
+		pullRequests: hasMorePullRequests ? `${visiblePullRequests.length}+` : visiblePullRequests.length,
+		issues: issues.length,
+	}
+	const workspaceTabJunctions = workspaceTabSeparatorColumns(workspaceTabCounts, workspaceTabSurfaces)
+	const workspaceTopDividerJunctions = showWorkspaceTabs ? workspaceTabJunctions.map((at) => ({ at, char: "┬" })) : []
+	const workspaceBottomDividerJunctions = showWorkspaceTabs
+		? [...workspaceTabJunctions.map((at) => ({ at, char: "┴" })), ...(showPaneSplit ? [{ at: dividerJunctionAt, char: "┬" }] : [])]
+		: []
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
 	const labelModalWidth = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
@@ -3655,7 +4004,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const submitReviewModalTop = submitReviewLayout.top
 	const commentAnchorLabel = ((): string => {
 		if (commentModalActive) {
-			if (commentModal.target.kind === "issue") return selectedPullRequest ? `New comment on #${selectedPullRequest.number}` : "New comment"
+			if (commentModal.target.kind === "issue") return selectedCommentSubject ? `New comment on #${selectedCommentSubject.number}` : "New comment"
 			if (commentModal.target.kind === "reply") return `Reply on ${commentModal.target.anchorLabel}`
 			if (commentModal.target.kind === "edit") return commentModal.target.anchorLabel
 		}
@@ -3687,44 +4036,107 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			<box paddingLeft={1} paddingRight={1} flexDirection="column" backgroundColor={colors.background}>
 				<PlainLine text={headerLine} fg={colors.muted} bold />
 			</box>
-			<Divider width={contentWidth} />
-			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
-				<WorkspaceTabs activeSurface={activeWorkspaceSurface} width={headerFooterWidth} onSelect={switchWorkspaceSurface} />
-			</box>
-			{showPaneSplit ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" /> : <Divider width={contentWidth} />}
-			{activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
-				isWideLayout ? (
-					<box key="wide-issues" flexGrow={1} flexDirection="row">
-						<box width={leftPaneWidth} height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
-							<IssueList
-								issues={issues}
-								selectedIndex={selectedIssueIndex}
-								status={issuesStatus}
-								error={issuesError}
-								repository={selectedRepository}
-								contentWidth={leftContentWidth}
-								onSelectIssue={setSelectedIssueIndex}
-							/>
-						</box>
-						<SeparatorColumn height={wideBodyHeight} junctionRows={issueJunctions} />
-						<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} />
-					</box>
-				) : (
-					<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-						<IssueList
-							issues={issues}
-							selectedIndex={selectedIssueIndex}
-							status={issuesStatus}
-							error={issuesError}
-							repository={selectedRepository}
-							contentWidth={fullscreenContentWidth}
-							onSelectIssue={setSelectedIssueIndex}
+			<Divider width={contentWidth} junctions={workspaceTopDividerJunctions} />
+			{showWorkspaceTabs ? (
+				<>
+					<box paddingRight={1} backgroundColor={colors.background}>
+						<WorkspaceTabs
+							activeSurface={activeWorkspaceSurface}
+							width={Math.max(24, contentWidth - 1)}
+							surfaces={workspaceTabSurfaces}
+							counts={workspaceTabCounts}
+							onSelect={switchWorkspaceSurface}
 						/>
 					</box>
+					<Divider width={contentWidth} junctions={workspaceBottomDividerJunctions} />
+				</>
+			) : null}
+			{activeWorkspaceSurface === "repos" && !commentsViewActive && !diffFullView && !detailFullView ? (
+				isWideLayout ? (
+					<SplitPane
+						key="wide-repos"
+						height={wideBodyHeight}
+						leftWidth={leftPaneWidth}
+						rightWidth={rightPaneWidth}
+						left={
+							repoListNeedsScroll ? (
+								<scrollbox focusable={false} height={wideBodyHeight} flexGrow={0}>
+									<box flexDirection="column" paddingLeft={sectionPadding}>
+										<RepoList {...repoListProps} contentWidth={leftContentWidth} />
+									</box>
+								</scrollbox>
+							) : (
+								<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
+									<RepoList {...repoListProps} contentWidth={leftContentWidth} />
+								</box>
+							)
+						}
+						right={<RepoDetailPane repository={selectedRepositoryItem} width={rightPaneWidth} height={wideBodyHeight} />}
+					/>
+				) : (
+					<box key="narrow-repos" height={wideBodyHeight} flexDirection="column">
+						{narrowRepoListNeedsScroll ? (
+							<scrollbox focusable={false} height={narrowRepoListHeight} flexGrow={0}>
+								<box flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+									<RepoList {...repoListProps} contentWidth={fullscreenContentWidth} />
+								</box>
+							</scrollbox>
+						) : (
+							<box height={narrowRepoListHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+								<RepoList {...repoListProps} contentWidth={fullscreenContentWidth} />
+							</box>
+						)}
+						<Divider width={contentWidth} />
+						<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowRepoDetailHeight} flexGrow={0}>
+							<RepoDetailPane repository={selectedRepositoryItem} width={contentWidth} height={narrowRepoDetailHeight} descriptionLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
+						</scrollbox>
+					</box>
 				)
-			) : commentsViewActive && selectedPullRequest ? (
+			) : activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
+				isWideLayout ? (
+					<SplitPane
+						key="wide-issues"
+						height={wideBodyHeight}
+						leftWidth={leftPaneWidth}
+						rightWidth={rightPaneWidth}
+						junctionRows={issueJunctions}
+						left={
+							issueListNeedsScroll ? (
+								<scrollbox ref={issueListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
+									<box flexDirection="column" paddingLeft={sectionPadding}>
+										<IssueList {...issueListProps} contentWidth={leftContentWidth} />
+									</box>
+								</scrollbox>
+							) : (
+								<box height={wideBodyHeight} flexDirection="column" paddingLeft={sectionPadding}>
+									<IssueList {...issueListProps} contentWidth={leftContentWidth} />
+								</box>
+							)
+						}
+						right={<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} />}
+					/>
+				) : (
+					<box key="narrow-issues" height={wideBodyHeight} flexDirection="column">
+						{narrowIssueListNeedsScroll ? (
+							<scrollbox ref={issueListScrollRef} focusable={false} height={narrowIssueListHeight} flexGrow={0}>
+								<box flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+									<IssueList {...issueListProps} contentWidth={fullscreenContentWidth} />
+								</box>
+							</scrollbox>
+						) : (
+							<box height={narrowIssueListHeight} flexDirection="column" paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+								<IssueList {...issueListProps} contentWidth={fullscreenContentWidth} />
+							</box>
+						)}
+						<Divider width={contentWidth} />
+						<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowIssueDetailHeight} flexGrow={0}>
+							<IssueDetailPane issue={selectedIssue} width={contentWidth} height={narrowIssueDetailHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
+						</scrollbox>
+					</box>
+				)
+			) : commentsViewActive && selectedCommentSubject ? (
 				<CommentsPane
-					pullRequest={selectedPullRequest}
+					item={selectedCommentSubject}
 					comments={selectedComments}
 					orderedComments={orderedComments}
 					status={selectedCommentsStatus}
@@ -3756,11 +4168,12 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					themeId={themeId}
 					themeGeneration={systemThemeGeneration}
 				/>
+			) : detailFullView && activeWorkspaceSurface === "issues" ? (
+				<IssueDetailPane issue={selectedIssue} width={contentWidth} height={wideBodyHeight} />
 			) : detailFullView && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 				<box flexGrow={1} flexDirection="column">
 					<DetailHeader
 						pullRequest={selectedPullRequest}
-						viewerUsername={username}
 						contentWidth={fullscreenContentWidth}
 						paneWidth={contentWidth}
 						showChecks={isWideLayout}
@@ -3775,7 +4188,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						<>
 							<DetailHeader
 								pullRequest={selectedPullRequest}
-								viewerUsername={username}
 								contentWidth={fullscreenContentWidth}
 								paneWidth={contentWidth}
 								showChecks
@@ -3798,7 +4210,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					) : (
 						<DetailsPane
 							pullRequest={null}
-							viewerUsername={username}
 							contentWidth={fullscreenContentWidth}
 							paneWidth={contentWidth}
 							placeholderContent={detailPlaceholderContent}
@@ -3810,9 +4221,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					)}
 				</box>
 			) : isWideLayout ? (
-				<box key="wide-main" flexGrow={1} flexDirection="row">
-					<box width={leftPaneWidth} height={wideBodyHeight} flexDirection="column">
-						{widePullRequestListNeedsScroll ? (
+				<SplitPane
+					height={wideBodyHeight}
+					leftWidth={leftPaneWidth}
+					rightWidth={rightPaneWidth}
+					junctionRows={detailJunctions}
+					left={
+						widePullRequestListNeedsScroll ? (
 							<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
 								{widePullRequestList}
 							</scrollbox>
@@ -3820,15 +4235,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 							<box height={wideBodyHeight} flexDirection="column">
 								{widePullRequestList}
 							</box>
-						)}
-					</box>
-					<SeparatorColumn height={wideBodyHeight} junctionRows={detailJunctions} />
-					<box width={rightPaneWidth} height={wideBodyHeight} flexDirection="column">
-						{isSelectedPullRequestDetailLoading && selectedPullRequest ? (
+						)
+					}
+					right={
+						isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 							<>
 								<DetailHeader
 									pullRequest={selectedPullRequest}
-									viewerUsername={username}
 									contentWidth={rightContentWidth}
 									paneWidth={rightPaneWidth}
 									showChecks
@@ -3841,7 +4254,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 							<>
 								<DetailHeader
 									pullRequest={selectedPullRequest}
-									viewerUsername={username}
 									contentWidth={rightContentWidth}
 									paneWidth={rightPaneWidth}
 									showChecks
@@ -3863,16 +4275,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 							</>
 						) : (
 							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
-						)}
-					</box>
-				</box>
+						)
+					}
+				/>
 			) : detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
 					{selectedPullRequest ? (
 						<>
 							<DetailHeader
 								pullRequest={selectedPullRequest}
-								viewerUsername={username}
 								contentWidth={fullscreenContentWidth}
 								paneWidth={contentWidth}
 								comments={selectedComments}
@@ -3894,7 +4305,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					) : (
 						<DetailsPane
 							pullRequest={null}
-							viewerUsername={username}
 							contentWidth={fullscreenContentWidth}
 							paneWidth={contentWidth}
 							placeholderContent={detailPlaceholderContent}
@@ -3907,31 +4317,36 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				</box>
 			) : (
 				<box key="narrow-main" height={wideBodyHeight} flexDirection="column">
-					<DetailsPane
-						pullRequest={selectedPullRequest}
-						viewerUsername={username}
-						contentWidth={fullscreenContentWidth}
-						paneWidth={contentWidth}
-						comments={selectedComments}
-						commentsStatus={selectedCommentsStatus}
-						placeholderContent={detailPlaceholderContent}
-						loadingIndicator={loadingIndicator}
-						themeId={themeId}
-						themeGeneration={systemThemeGeneration}
-						onLinkOpen={openLinkInBrowser}
-					/>
+					{narrowPullRequestListNeedsScroll ? (
+						<scrollbox ref={prListScrollRef} focusable={false} height={narrowPullRequestListHeight} flexGrow={0}>
+							{narrowPullRequestList}
+						</scrollbox>
+					) : (
+						<box height={narrowPullRequestListHeight} flexDirection="column">
+							{narrowPullRequestList}
+						</box>
+					)}
 					<Divider width={contentWidth} />
-					<box flexGrow={1} flexDirection="column">
-						{narrowPullRequestListNeedsScroll ? (
-							<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
-								{narrowPullRequestList}
-							</scrollbox>
-						) : (
-							<box flexGrow={1} flexDirection="column">
-								{narrowPullRequestList}
-							</box>
-						)}
-					</box>
+					<scrollbox
+						ref={detailPreviewScrollRef}
+						focusable={false}
+						height={narrowDetailsPaneHeight}
+						flexGrow={0}
+						verticalScrollbarOptions={{ visible: narrowDetailsPaneNeedsScroll }}
+					>
+						<DetailsPane
+							pullRequest={selectedPullRequest}
+							contentWidth={fullscreenContentWidth}
+							paneWidth={contentWidth}
+							comments={selectedComments}
+							commentsStatus={selectedCommentsStatus}
+							placeholderContent={detailPlaceholderContent}
+							loadingIndicator={loadingIndicator}
+							themeId={themeId}
+							themeGeneration={systemThemeGeneration}
+							onLinkOpen={openLinkInBrowser}
+						/>
+					</scrollbox>
 				</box>
 			)}
 
@@ -3941,7 +4356,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					<PlainLine text={footerNotice} fg={colors.count} />
 				) : (
 					<FooterHints
-						activeSurface={activeWorkspaceSurface}
 						filterEditing={filterMode}
 						showFilterClear={filterMode || filterQuery.length > 0}
 						detailFullView={detailFullView}
@@ -3951,17 +4365,14 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						commentsViewOnRealComment={commentsViewActive && selectedCommentsStatus === "ready" && selectedOrderedComment !== null}
 						commentsViewCanEditSelected={canEditComment(selectedOrderedComment)}
 						commentsViewCount={selectedComments.length}
-						hasSelection={selectedPullRequest !== null}
+						hasSelection={selectedCommentSubject !== null}
+						canOpenDetails={selectedCommentSubject !== null}
+						canOpenRepository={activeWorkspaceSurface === "repos" && selectedRepositoryItem !== null}
+						canOpenDiff={activeWorkspaceSurface === "pullRequests" && selectedPullRequest !== null}
+						canOpenComments={selectedCommentSubject !== null}
+						hasComments={selectedCommentCount > 0}
 						hasError={pullRequestStatus === "error"}
-						isLoading={
-							pullRequestStatus === "loading" ||
-							isRefreshingPullRequests ||
-							isHydratingPullRequestDetails ||
-							closeModal.running ||
-							pullRequestStateModal.running ||
-							mergeModal.running ||
-							submitReviewModal.running
-						}
+						isLoading={isActiveSurfaceLoading || closeModal.running || pullRequestStateModal.running || mergeModal.running || submitReviewModal.running}
 						loadingIndicator={loadingIndicator}
 						retryProgress={retryProgress}
 					/>
@@ -3970,7 +4381,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			{labelModalActive ? (
 				<LabelModal
 					state={labelModal}
-					currentLabels={selectedPullRequest?.labels ?? []}
+					currentLabels={selectedItemLabels}
 					modalWidth={labelModalWidth}
 					modalHeight={labelModalHeight}
 					offsetLeft={labelModalLeft}

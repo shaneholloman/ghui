@@ -551,7 +551,7 @@ export const LabelModal = ({
 	const selectedIndex = filtered.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, filtered.length - 1))
 	const scrollStart = Math.min(Math.max(0, filtered.length - maxVisible), Math.max(0, selectedIndex - maxVisible + 1))
 	const visibleLabels = filtered.slice(scrollStart, scrollStart + maxVisible)
-	const title = state.repository ? `Labels  ${shortRepoName(state.repository)}` : "Labels"
+	const title = "Labels"
 	const countText = state.loading ? "loading" : `${filtered.length}/${state.availableLabels.length}`
 
 	return (

@@ -170,18 +170,16 @@ export const firstCommentBodyLine = (body: string) => {
 
 // `selected` lifts every segment to bold + accent fg so the row reads as the
 // active focus without painting a background bar.
-export const CommentSegmentsLine = ({
+export const CommentSegments = ({
 	segments,
 	hoveredUrl,
-	bg,
 	selected,
 }: {
 	segments: readonly CommentSegment[]
-	hoveredUrl?: string | null
-	bg?: string
-	selected?: boolean
+	hoveredUrl?: string | null | undefined
+	selected?: boolean | undefined
 }) => (
-	<TextLine bg={bg}>
+	<>
 		{segments.map((segment, index) => {
 			const attributes = (segment.bold || selected ? TextAttributes.BOLD : 0) | (segment.underline ? TextAttributes.UNDERLINE : 0)
 			const isHovered = segment.url !== undefined && segment.url === hoveredUrl
@@ -192,6 +190,22 @@ export const CommentSegmentsLine = ({
 				</span>
 			)
 		})}
+	</>
+)
+
+export const CommentSegmentsLine = ({
+	segments,
+	hoveredUrl,
+	bg,
+	selected,
+}: {
+	segments: readonly CommentSegment[]
+	hoveredUrl?: string | null | undefined
+	bg?: string
+	selected?: boolean | undefined
+}) => (
+	<TextLine bg={bg}>
+		<CommentSegments segments={segments} hoveredUrl={hoveredUrl} selected={selected} />
 	</TextLine>
 )
 

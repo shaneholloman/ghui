@@ -1,7 +1,6 @@
 import { Data } from "effect"
 import { colors } from "./colors.js"
 import { HintRow, type HintItem } from "./primitives.js"
-import type { WorkspaceSurface } from "../workspaceSurfaces.js"
 
 export type RetryProgress = Data.TaggedEnum<{
 	Idle: {}
@@ -12,7 +11,6 @@ export const RetryProgress = Data.taggedEnum<RetryProgress>()
 export const initialRetryProgress: RetryProgress = RetryProgress.Idle()
 
 interface HintsContext {
-	readonly activeSurface: WorkspaceSurface
 	readonly filterEditing: boolean
 	readonly showFilterClear: boolean
 	readonly detailFullView: boolean
@@ -23,6 +21,11 @@ interface HintsContext {
 	readonly commentsViewCanEditSelected: boolean
 	readonly commentsViewCount: number
 	readonly hasSelection: boolean
+	readonly canOpenDetails: boolean
+	readonly canOpenRepository: boolean
+	readonly canOpenDiff: boolean
+	readonly canOpenComments: boolean
+	readonly hasComments: boolean
 	readonly hasError: boolean
 	readonly isLoading: boolean
 	readonly loadingIndicator: string
@@ -52,7 +55,7 @@ const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "esc", label: "back" },
 	{ key: "↑↓", label: "scroll" },
 	{ key: "r", label: ctx.hasError ? "retry" : "refresh" },
-	{ key: "d", label: "diff", when: ctx.hasSelection },
+	{ key: "d", label: "diff", when: ctx.canOpenDiff },
 ]
 
 const commentsViewHints = (ctx: HintsContext): readonly HintItem[] => [
@@ -68,16 +71,7 @@ const commentsViewHints = (ctx: HintsContext): readonly HintItem[] => [
 
 const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 	const retrying = ctx.retryProgress._tag === "Retrying"
-	if (ctx.activeSurface === "issues") {
-		return [
-			{ key: "1", label: "pull requests" },
-			{ key: "2", label: "issues" },
-			{ key: "tab", label: "surface" },
-			{ key: "ctrl-p", label: "commands" },
-		]
-	}
 	return [
-		{ key: "1/2", label: "surface" },
 		{ key: "/", label: "filter" },
 		{ key: "esc", label: "clear", when: ctx.showFilterClear },
 		{
@@ -88,8 +82,10 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		},
 		{ key: ctx.loadingIndicator, label: "loading", when: !retrying && ctx.isLoading, keyFg: colors.status.pending },
 		{ key: "r", label: "retry", when: ctx.hasError },
-		{ key: "enter", label: "details", when: ctx.hasSelection },
-		{ key: "d", label: "diff", when: ctx.hasSelection },
+		{ key: "enter", label: "open repo", when: ctx.canOpenRepository },
+		{ key: "enter", label: "details", when: ctx.canOpenDetails },
+		{ key: "c", label: "comments", when: ctx.canOpenComments && ctx.hasComments },
+		{ key: "d", label: "diff", when: ctx.canOpenDiff },
 		{ key: "ctrl-p", label: "commands" },
 	]
 }

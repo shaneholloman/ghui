@@ -30,6 +30,8 @@ console.error = (...args: unknown[]) => {
 // limited to test-only modules — App is dynamically imported.
 process.env.GHUI_MOCK_PR_COUNT = "80"
 process.env.GHUI_MOCK_REPO_COUNT = "4"
+process.env.GHUI_MOCK_FIXTURE_PATH = "/var/folders/dd/5fz89drs5p9_r0fk7rwqqnbr0000gn/T/opencode/ghui-test-no-fixture.json"
+process.env.GHUI_MOCK_WORKSPACE_PREFERENCES_PATH = "off"
 process.env.GHUI_PR_PAGE_SIZE = "100"
 
 const loadApp = async () => {
@@ -91,7 +93,7 @@ const detailPaneNumber = (frame: string) => {
 const leftPaneNumbers = (frame: string) => {
 	const numbers: number[] = []
 	for (const line of frame.split("\n")) {
-		const match = line.match(/#(\d{4,})\s+/)
+		const match = (line.split("│")[0] ?? line).match(/#(\d{4,})\s+/)
 		if (match) numbers.push(Number.parseInt(match[1]!, 10))
 	}
 	return numbers
@@ -102,19 +104,20 @@ const leftPaneRowOf = (frame: string, prNumber: number) => {
 	const lines = frame.split("\n")
 	const needle = new RegExp(`#${prNumber}\\s+`)
 	for (let i = 0; i < lines.length; i++) {
-		if (needle.test(lines[i]!)) return i
+		if (needle.test(lines[i]!.split("│")[0] ?? lines[i]!)) return i
 	}
 	return null
 }
 
 const press = async (
-	mockInput: { pressArrow: (d: "up" | "down" | "left" | "right") => void; pressKey: (k: string, m?: { shift?: boolean }) => void },
+	mockInput: { pressArrow: (d: "up" | "down" | "left" | "right") => void; pressEscape: () => void; pressKey: (k: string, m?: { shift?: boolean }) => void },
 	renderOnce: () => Promise<void>,
-	key: { kind: "arrow"; dir: "up" | "down" | "left" | "right" } | { kind: "key"; name: string; shift?: boolean },
+	key: { kind: "arrow"; dir: "up" | "down" | "left" | "right" } | { kind: "escape" } | { kind: "key"; name: string; shift?: boolean },
 	settleFrames = 2,
 ) => {
 	await act(async () => {
 		if (key.kind === "arrow") mockInput.pressArrow(key.dir)
+		else if (key.kind === "escape") mockInput.pressEscape()
 		else mockInput.pressKey(key.name, { shift: key.shift })
 	})
 	for (let i = 0; i < settleFrames; i++) await stepFrame(renderOnce)
@@ -140,14 +143,16 @@ describe("PR list scrolling", () => {
 	test("workspace tabs switch between pull requests and issues", async () => {
 		const { mockInput, renderOnce, captureCharFrame, renderer } = await setupApp(100, 20)
 
-		expect(captureCharFrame()).toContain("PULL REQUESTS")
-		await press(mockInput, renderOnce, { kind: "key", name: "2" }, 2)
+		expect(captureCharFrame()).toContain("REPOS 4 │ PULL REQUESTS 80 │ ISSUES 0")
+		expect(captureCharFrame()).not.toContain("PULL REQUESTS    ISSUES")
+		await press(mockInput, renderOnce, { kind: "key", name: "3" }, 2)
 		expect(captureCharFrame()).toContain("ISSUES")
 		expect(captureCharFrame()).toContain("Open a repository to list issues.")
+		expect(captureCharFrame()).not.toContain("1/2 surface")
+		expect(captureCharFrame()).not.toContain("tab surface")
 
-		await press(mockInput, renderOnce, { kind: "key", name: "1" }, 2)
-		expect(captureCharFrame()).toContain("PULL REQUESTS")
-		expect(captureCharFrame()).toContain("PULL REQUESTS")
+		await press(mockInput, renderOnce, { kind: "key", name: "2" }, 2)
+		expect(captureCharFrame()).toContain("REPOS 4 │ PULL REQUESTS 80 │ ISSUES 0")
 		renderer.destroy()
 	})
 
@@ -159,14 +164,12 @@ describe("PR list scrolling", () => {
 
 	test("details show comments summary in header without inlining comment bodies", async () => {
 		const { captureCharFrame, renderOnce, renderer } = await setupApp(120, 24)
-		const loaded = await settle(renderOnce, () => {
-			const frame = captureCharFrame()
-			return frame.includes("review commit-by-commit") && frame.includes("Comments") && frame.includes("press c to view all")
-		})
+		const loaded = await settle(renderOnce, () => captureCharFrame().includes("provider-supported") && captureCharFrame().includes("comments"))
 		expect(loaded).toBe(true)
 		const frame = captureCharFrame()
-		expect(frame.indexOf("Comments")).toBeLessThan(frame.indexOf("review commit-by-commit"))
+		expect(frame.indexOf("comments")).toBeLessThan(frame.indexOf("provider-supported"))
 		expect(frame).not.toContain("Top-level discussion")
+
 		renderer.destroy()
 	})
 
@@ -175,6 +178,9 @@ describe("PR list scrolling", () => {
 		await press(mockInput, renderOnce, { kind: "key", name: "d" }, 4)
 		const loaded = await settle(renderOnce, () => captureCharFrame().includes("src/mockDiff.ts"))
 		expect(loaded).toBe(true)
+		expect(captureCharFrame()).not.toContain("PULL REQUESTS")
+		expect(captureCharFrame()).not.toContain("ISSUES")
+		expect(captureCharFrame()).not.toContain("1/2 surface")
 
 		await press(mockInput, renderOnce, { kind: "arrow", dir: "left" })
 		await press(mockInput, renderOnce, { kind: "arrow", dir: "down" })
@@ -341,7 +347,7 @@ describe("PR list scrolling", () => {
 		const lines = frame.split("\n")
 		if (selectedRow! > 4) {
 			const above = lines[selectedRow! - 1]!
-			expect(above).toMatch(new RegExp(`#${numberFromIndex(25)}\\s+`))
+			expect(above.split("│")[0] ?? above).toMatch(new RegExp(`#${numberFromIndex(25)}\\s+`))
 		}
 		renderer.destroy()
 	})

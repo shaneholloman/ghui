@@ -1,6 +1,6 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
-import type { LoadStatus, PullRequestItem, PullRequestReviewEvent } from "./domain.js"
+import type { IssueItem, LoadStatus, PullRequestItem, PullRequestReviewEvent } from "./domain.js"
 import type { DiffView, DiffWhitespaceMode, DiffWrapMode } from "./ui/diff.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
 import { workspaceSurfaceLabels, workspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
@@ -57,6 +57,7 @@ interface BuildAppCommandsInput {
 	readonly hasMorePullRequests: boolean
 	readonly isLoadingMorePullRequests: boolean
 	readonly selectedPullRequest: PullRequestItem | null
+	readonly selectedIssue: IssueItem | null
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
 	readonly commentsViewActive: boolean
@@ -87,6 +88,7 @@ export const buildAppCommands = ({
 	hasMorePullRequests,
 	isLoadingMorePullRequests,
 	selectedPullRequest,
+	selectedIssue,
 	detailFullView,
 	diffFullView,
 	commentsViewActive,
@@ -105,15 +107,18 @@ export const buildAppCommands = ({
 	actions,
 }: BuildAppCommandsInput): readonly AppCommand[] => {
 	const selectedPullRequestLabel = selectedPullRequest ? `#${selectedPullRequest.number} ${selectedPullRequest.repository}` : "No pull request selected"
+	const selectedIssueLabel = selectedIssue ? `#${selectedIssue.number} ${selectedIssue.repository}` : "No issue selected"
+	const selectedItemLabel = activeWorkspaceSurface === "issues" ? selectedIssueLabel : selectedPullRequestLabel
 	const pullRequestSurfaceReason = activeWorkspaceSurface === "pullRequests" ? null : "Pull request surface is not active."
 	const noPullRequestReason = pullRequestSurfaceReason ?? (selectedPullRequest ? null : "Select a pull request first.")
+	const noSelectedItemReason = activeWorkspaceSurface === "issues" ? (selectedIssue ? null : "Select an issue first.") : noPullRequestReason
 	const noOpenPullRequestReason = selectedPullRequest?.state === "open" ? null : selectedPullRequest ? "Pull request is not open." : noPullRequestReason
 	const diffReadyReason = selectedPullRequest ? (diffReady ? null : "Load the diff before running this command.") : noPullRequestReason
 	const diffOpenReadyReason = diffFullView ? diffReadyReason : "Open a diff first."
 	const selectedDiffLineReason = diffFullView && diffReady ? (selectedDiffCommentAnchorLabel ? null : "No diff line selected.") : diffOpenReadyReason
 	const diffThreadReason = diffFullView && diffReady ? (hasDiffCommentThreads ? null : "No diff comments loaded.") : diffOpenReadyReason
 	const changedFilesReason = diffFullView && diffReady ? (readyDiffFileCount > 0 ? null : "No changed files loaded.") : diffOpenReadyReason
-	const selectedCommentReason = selectedPullRequest ? (commentsViewActive ? (hasSelectedComment ? null : "No comment selected.") : "Open comments first.") : noPullRequestReason
+	const selectedCommentReason = noSelectedItemReason ?? (commentsViewActive ? (hasSelectedComment ? null : "No comment selected.") : "Open comments first.")
 	const ownCommentReason = selectedCommentReason ?? (canEditSelectedComment ? null : "Only your own (synced) comments can be edited or deleted.")
 	const loadMoreDisabledReason = isLoadingMorePullRequests ? "Already loading more pull requests." : hasMorePullRequests ? null : "No more pull requests loaded by this view."
 
@@ -214,11 +219,13 @@ export const buildAppCommands = ({
 			keywords: ["next page", "pagination", "more"],
 			run: actions.loadMorePullRequests,
 		}),
-		forSelected({
+		defineCommand({
 			id: "detail.open",
-			title: "Open pull request details",
-			scope: "Pull request",
+			title: "Open details",
+			scope: "View",
+			subtitle: selectedItemLabel,
 			shortcut: "enter",
+			disabledReason: noSelectedItemReason,
 			run: actions.openDetails,
 		}),
 		defineCommand({
@@ -238,27 +245,31 @@ export const buildAppCommands = ({
 			keywords: ["files", "patch"],
 			run: actions.openDiffView,
 		}),
-		forSelected({
+		defineCommand({
 			id: "comments.open",
 			title: "Open comments",
 			scope: "Comments",
+			subtitle: selectedItemLabel,
 			shortcut: "c",
 			keywords: ["conversation", "discussion", "review"],
+			disabledReason: noSelectedItemReason,
 			run: actions.openCommentsView,
 		}),
-		forSelected({
+		defineCommand({
 			id: "comments.new",
 			title: "New comment",
 			scope: "Comments",
+			subtitle: selectedItemLabel,
 			shortcut: "a",
 			keywords: ["add", "post", "issue comment"],
+			disabledReason: noSelectedItemReason,
 			run: actions.openNewIssueCommentModal,
 		}),
 		defineCommand({
 			id: "comments.reply",
 			title: "Reply to comment",
 			scope: "Comments",
-			subtitle: selectedPullRequestLabel,
+			subtitle: selectedItemLabel,
 			shortcut: "shift-r",
 			disabledReason: selectedCommentReason,
 			keywords: ["respond", "thread"],
@@ -268,7 +279,7 @@ export const buildAppCommands = ({
 			id: "comments.edit",
 			title: "Edit comment",
 			scope: "Comments",
-			subtitle: selectedPullRequestLabel,
+			subtitle: selectedItemLabel,
 			shortcut: "e",
 			disabledReason: ownCommentReason,
 			keywords: ["update", "modify", "rewrite"],
@@ -278,7 +289,7 @@ export const buildAppCommands = ({
 			id: "comments.delete",
 			title: "Delete comment",
 			scope: "Comments",
-			subtitle: selectedPullRequestLabel,
+			subtitle: selectedItemLabel,
 			shortcut: "x",
 			disabledReason: ownCommentReason,
 			keywords: ["remove", "destroy"],
@@ -425,11 +436,13 @@ export const buildAppCommands = ({
 			keywords: ["state", "ready"],
 			run: actions.openPullRequestStateModal,
 		}),
-		forSelected({
+		defineCommand({
 			id: "pull.labels",
 			title: "Manage labels",
-			scope: "Pull request",
+			scope: "Labels",
+			subtitle: selectedItemLabel,
 			shortcut: "l",
+			disabledReason: noSelectedItemReason,
 			run: actions.openLabelModal,
 		}),
 		forSelected({

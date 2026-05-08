@@ -23,7 +23,7 @@ export const failingCheckNames = (pullRequest: PullRequestItem) =>
 
 export const pullRequestMetadataText = (pullRequest: PullRequestItem) => {
 	const lines = [pullRequest.title, `${pullRequest.repository} #${pullRequest.number}`, pullRequest.url]
-	if (pullRequest.headRefName) lines.push(`branch: ${pullRequest.headRefName}`)
+	if (pullRequest.headRefName) lines.push(`branch: ${pullRequest.headRefName}${pullRequest.baseRefName ? ` -> ${pullRequest.baseRefName}` : ""}`)
 	const review = reviewLabel(pullRequest)
 	if (review) lines.push(`review: ${review}`)
 	if (pullRequest.checkSummary) lines.push(pullRequest.checkSummary)
@@ -89,7 +89,12 @@ const fallbackLabelColor = (name: string) => {
 	return `hsl(${hue} 55% 35%)`
 }
 
-export const labelColor = (label: PullRequestLabel) => label.color ?? fallbackLabelColor(label.name)
+export const labelColor = (label: PullRequestLabel) => {
+	const color = label.color?.trim()
+	if (!color) return fallbackLabelColor(label.name)
+	if (/^[0-9a-fA-F]{6}$/.test(color)) return `#${color}`
+	return color
+}
 
 export const labelTextColor = (color: string) => {
 	if (color.startsWith("#") && color.length === 7) {

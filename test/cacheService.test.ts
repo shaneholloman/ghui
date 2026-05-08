@@ -8,6 +8,7 @@ import type { PullRequestItem } from "../src/domain.ts"
 import type { PullRequestLoad } from "../src/pullRequestLoad.ts"
 import type { PullRequestView } from "../src/pullRequestViews.ts"
 import { CacheService, pullRequestCacheKey } from "../src/services/CacheService.ts"
+import { makeWorkspacePreferences, repositoryId, viewerId } from "../src/workspacePreferences.ts"
 
 const tempDirs: string[] = []
 
@@ -27,6 +28,9 @@ const pullRequest = (number: number, overrides: Partial<PullRequestItem> = {}): 
 	repository: "owner/repo",
 	author: "author",
 	headRefOid: `sha-${number}`,
+	headRefName: `feature/${number}`,
+	baseRefName: "main",
+	defaultBranchName: "main",
 	number,
 	title: `PR ${number}`,
 	body: "Body",
@@ -203,6 +207,34 @@ describe("CacheService", () => {
 		)
 
 		expect(cached).toBeNull()
+	})
+
+	test("persists workspace preferences by branded viewer", async () => {
+		const filename = await tempCachePath()
+		const preferences = makeWorkspacePreferences({
+			viewer: viewerId("kitlangton"),
+			favoriteRepositories: [repositoryId("kitlangton/ghui"), repositoryId("anomalyco/opencode")],
+			recentRepositories: [repositoryId("anomalyco/opencode"), repositoryId("Effect-TS/effect")],
+		})
+
+		await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				yield* cache.writeWorkspacePreferences(preferences)
+			}),
+		)
+
+		const cached = await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				return yield* cache.readWorkspacePreferences(viewerId("kitlangton"))
+			}),
+		)
+
+		expect(cached?.favoriteRepositories).toEqual(["kitlangton/ghui", "anomalyco/opencode"])
+		expect(cached?.recentRepositories).toEqual(["anomalyco/opencode", "Effect-TS/effect"])
 	})
 
 	test("layerFromPath falls back to disabled cache when startup fails", async () => {

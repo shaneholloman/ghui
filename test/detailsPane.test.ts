@@ -6,6 +6,9 @@ const pullRequest = (body: string): PullRequestItem => ({
 	repository: "owner/repo",
 	author: "kitlangton",
 	headRefOid: "abc123",
+	headRefName: "feature/title",
+	baseRefName: "main",
+	defaultBranchName: "main",
 	number: 1,
 	title: "Title",
 	body,
@@ -61,6 +64,18 @@ describe("bodyPreview markdown tables", () => {
 		const rows = bodyPreview("A | B\nnot a table", 40, 10)
 		expect(rows.map(lineText)).toEqual(["A | B", "not a table"])
 	})
+
+	test("can truncate table cells instead of wrapping them", () => {
+		const rows = bodyPreview("| MCP Server Type | Instances | Process |\n|---|---|---|\n| zai-mcp-server node.exe (via npx) | 10x | cmd.exe -> node.exe |", 42, 10, {
+			tableMode: "truncate",
+		})
+		const text = rows.map(lineText)
+
+		expect(text.slice(0, 3)).toHaveLength(3)
+		expect(text[0]).toContain("MCP Server …")
+		expect(text[2]).toContain("zai-mcp-ser…")
+		expect(text.join("\n")).not.toContain("node.exe (via npx)\n")
+	})
 })
 
 const comments: readonly PullRequestComment[] = [
@@ -75,12 +90,11 @@ const comments: readonly PullRequestComment[] = [
 ]
 
 describe("detail pane junction rows", () => {
-	test("emits a header-level comments summary divider when comments are ready", () => {
+	test("keeps comments in the metadata row without adding dividers", () => {
 		const pr = pullRequest("Line A\nLine B\nLine C")
 		const headerDividerRow = 3
-		const commentsSummaryDivider = 5
 
-		expect(getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, comments, commentsStatus: "ready" })).toEqual([headerDividerRow, commentsSummaryDivider])
+		expect(getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, comments, commentsStatus: "ready" })).toEqual([headerDividerRow])
 	})
 
 	test("does not reserve comments space while loading or empty", () => {
@@ -93,12 +107,12 @@ describe("detail pane junction rows", () => {
 		expect(getScrollableDetailBodyHeight(pr, 58)).toBe(baseBodyHeight)
 	})
 
-	test("comment summaries add header height without growing body height", () => {
+	test("comment metadata does not grow header or body height", () => {
 		const pr = pullRequest("Line A\nLine B")
 		const baseHeaderHeight = getDetailHeaderHeight(pr, 60, true)
 		const baseBodyHeight = getScrollableDetailBodyHeight(pr, 58)
 
-		expect(getDetailHeaderHeight(pr, 60, true, comments, "ready")).toBe(baseHeaderHeight + 2)
+		expect(getDetailHeaderHeight(pr, 60, true, comments, "ready")).toBe(baseHeaderHeight)
 		expect(getScrollableDetailBodyHeight(pr, 58)).toBe(baseBodyHeight)
 	})
 })

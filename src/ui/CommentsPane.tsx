@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
-import type { PullRequestComment, PullRequestItem } from "../domain.js"
+import type { PullRequestComment } from "../domain.js"
 import { colors } from "./colors.js"
 import {
 	commentBodyRows,
@@ -170,7 +170,7 @@ const withReplyIndent = (segments: readonly CommentSegment[], indent: number): r
 	indent === 0 ? segments : [{ text: " ".repeat(indent * REPLY_INDENT_COLS), fg: colors.muted }, ...segments]
 
 export const CommentsPane = ({
-	pullRequest,
+	item,
 	comments,
 	orderedComments,
 	status,
@@ -181,7 +181,7 @@ export const CommentsPane = ({
 	loadingIndicator,
 	themeGeneration,
 }: {
-	pullRequest: PullRequestItem
+	item: { readonly repository: string; readonly number: number }
 	comments: readonly PullRequestComment[]
 	orderedComments: readonly OrderedComment[]
 	status: "idle" | "loading" | "ready"
@@ -199,9 +199,9 @@ export const CommentsPane = ({
 	const safeIndex = Math.max(0, Math.min(selectedIndex, blocks.length - 1))
 
 	const headerLine = (() => {
-		const repo = shortRepoName(pullRequest.repository)
+		const repo = shortRepoName(item.repository)
 		const count = status === "loading" ? `${loadingIndicator} loading` : commentCountText(comments.length)
-		const left = `Comments #${pullRequest.number}  ${repo}`
+		const left = `Comments #${item.number}  ${repo}`
 		const gap = Math.max(2, contentWidth - left.length - count.length)
 		return { left, gap, count }
 	})()

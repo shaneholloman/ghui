@@ -1,47 +1,99 @@
 import { TextAttributes } from "@opentui/core"
 import { useState } from "react"
-import { colors, rowHoverBackground } from "./colors.js"
+import { colors, mixHex, rowHoverBackground } from "./colors.js"
 import { fitCell, TextLine } from "./primitives.js"
 import { workspaceSurfaceLabels, workspaceSurfaces, type WorkspaceSurface } from "../workspaceSurfaces.js"
 
-export const WorkspaceTabs = ({ activeSurface, width, onSelect }: { activeSurface: WorkspaceSurface; width: number; onSelect: (surface: WorkspaceSurface) => void }) => {
+export type WorkspaceSurfaceCounts = Partial<Record<WorkspaceSurface, number | string>>
+
+const tabText = (surface: WorkspaceSurface, counts: WorkspaceSurfaceCounts) => {
+	const label = workspaceSurfaceLabels[surface]
+	const count = counts[surface]
+	return count === undefined ? ` ${label} ` : ` ${label} ${count} `
+}
+
+export const workspaceTabSeparatorColumns = (counts: WorkspaceSurfaceCounts, surfaces: readonly WorkspaceSurface[] = workspaceSurfaces) => {
+	const columns: number[] = []
+	let column = 0
+	for (const surface of surfaces) {
+		column += tabText(surface, counts).length
+		columns.push(column)
+		column += 1
+	}
+	return columns
+}
+
+export const WorkspaceTabs = ({
+	activeSurface,
+	width,
+	surfaces = workspaceSurfaces,
+	counts = {},
+	onSelect,
+}: {
+	activeSurface: WorkspaceSurface
+	width: number
+	surfaces?: readonly WorkspaceSurface[]
+	counts?: WorkspaceSurfaceCounts
+	onSelect: (surface: WorkspaceSurface) => void
+}) => {
 	const [hoveredSurface, setHoveredSurface] = useState<WorkspaceSurface | null>(null)
-	const rendered = workspaceSurfaces
-		.map((surface) => {
-			const active = surface === activeSurface
-			const label = workspaceSurfaceLabels[surface]
-			return { surface, active, text: ` ${label} ` }
-		})
-		.flatMap((tab, index) => (index === 0 ? [tab] : [{ surface: tab.surface, active: false, text: "  " }, tab]))
-	const textWidth = rendered.reduce((sum, tab) => sum + tab.text.length, 0)
+	const activeCountColor = mixHex(colors.separator, colors.accent, 0.45)
+	const rendered = surfaces.map((surface) => {
+		const active = surface === activeSurface
+		const label = workspaceSurfaceLabels[surface]
+		const count = counts[surface]
+		const text = tabText(surface, counts)
+		return { surface, active, label, count, text }
+	})
+	const textWidth = rendered.reduce((sum, tab) => sum + tab.text.length, 0) + rendered.length
 	const filler = Math.max(0, width - textWidth)
 
 	return (
 		<box width={width} height={1} flexDirection="row">
-			{rendered.map((tab, index) => (
+			{rendered.flatMap((tab, index) => [
+				...(index > 0
+					? [
+							<box key={`separator-${tab.surface}`} width={1} height={1}>
+								<text wrapMode="none" truncate fg={colors.separator}>
+									│
+								</text>
+							</box>,
+						]
+					: []),
 				<box
-					key={`${tab.surface}-${index}`}
+					key={tab.surface}
 					width={tab.text.length}
 					height={1}
-					{...(tab.text.trim().length > 0
-						? {
-								onMouseDown: () => onSelect(tab.surface),
-								onMouseOver: () => setHoveredSurface(tab.surface),
-								onMouseOut: () => setHoveredSurface((current) => (current === tab.surface ? null : current)),
-							}
-						: {})}
+					onMouseDown={() => onSelect(tab.surface)}
+					onMouseOver={() => setHoveredSurface(tab.surface)}
+					onMouseOut={() => setHoveredSurface((current) => (current === tab.surface ? null : current))}
 				>
-					<text
-						wrapMode="none"
-						truncate
-						fg={tab.active ? colors.accent : colors.muted}
-						{...(hoveredSurface === tab.surface && !tab.active ? { bg: rowHoverBackground() } : {})}
-						attributes={tab.active ? TextAttributes.BOLD : 0}
-					>
-						{tab.text}
+					<text wrapMode="none" truncate>
+						<span> </span>
+						<span
+							fg={tab.active ? colors.accent : colors.muted}
+							attributes={tab.active ? TextAttributes.BOLD : 0}
+							{...(hoveredSurface === tab.surface ? { bg: rowHoverBackground() } : {})}
+						>
+							{tab.label}
+						</span>
+						{tab.count === undefined ? null : (
+							<>
+								<span {...(hoveredSurface === tab.surface ? { bg: rowHoverBackground() } : {})}> </span>
+								<span fg={tab.active ? activeCountColor : colors.separator} {...(hoveredSurface === tab.surface ? { bg: rowHoverBackground() } : {})}>
+									{tab.count}
+								</span>
+							</>
+						)}
+						<span> </span>
 					</text>
-				</box>
-			))}
+				</box>,
+			])}
+			<box width={1} height={1}>
+				<text wrapMode="none" truncate fg={colors.separator}>
+					│
+				</text>
+			</box>
 			{filler > 0 ? <TextLine width={filler}>{fitCell("", filler)}</TextLine> : null}
 		</box>
 	)

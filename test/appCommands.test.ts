@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { buildAppCommands } from "../src/appCommands.js"
-import type { PullRequestItem } from "../src/domain.js"
+import type { IssueItem, PullRequestItem } from "../src/domain.js"
 
 const activeView = { _tag: "Queue", mode: "review", repository: null } as const
 const selectedPullRequest: PullRequestItem = {
 	repository: "owner/repo",
 	author: "kit",
 	headRefOid: "abc123",
+	headRefName: "feature/review",
+	baseRefName: "main",
+	defaultBranchName: "main",
 	number: 42,
 	title: "Review UX",
 	body: "",
@@ -26,6 +29,19 @@ const selectedPullRequest: PullRequestItem = {
 	url: "https://github.com/owner/repo/pull/42",
 }
 
+const selectedIssue: IssueItem = {
+	repository: "owner/repo",
+	number: 7,
+	title: "Issue UX",
+	body: "",
+	author: "kit",
+	labels: [],
+	commentCount: 2,
+	createdAt: new Date("2026-01-02T00:00:00Z"),
+	updatedAt: new Date("2026-01-02T00:00:00Z"),
+	url: "https://github.com/owner/repo/issues/7",
+}
+
 const noop = () => {}
 
 const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]> = {}) =>
@@ -34,12 +50,14 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 		filterQuery: "",
 		filterMode: false,
 		selectedRepository: null,
+		activeWorkspaceSurface: "pullRequests",
 		activeViews: [activeView],
 		activeView,
 		loadedPullRequestCount: 1,
 		hasMorePullRequests: false,
 		isLoadingMorePullRequests: false,
 		selectedPullRequest,
+		selectedIssue: null,
 		detailFullView: false,
 		diffFullView: true,
 		commentsViewActive: false,
@@ -64,6 +82,7 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 			openRepositoryPicker: noop,
 			loadMorePullRequests: noop,
 			switchViewTo: noop,
+			switchWorkspaceSurface: noop,
 			openDetails: noop,
 			closeDetails: noop,
 			openDiffView: noop,
@@ -195,5 +214,18 @@ describe("review UX commands", () => {
 				canEditSelectedComment: false,
 			}).disabledReason,
 		).toBe("Only your own (synced) comments can be edited or deleted.")
+	})
+
+	test("comments and labels commands are available for selected issues", () => {
+		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
+		expect(commandById("pull.labels", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
+	})
+
+	test("details command is available for selected issues", () => {
+		expect(commandById("detail.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
+	})
+
+	test("issue comments require an issue selection", () => {
+		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue: null }).disabledReason).toBe("Select an issue first.")
 	})
 })

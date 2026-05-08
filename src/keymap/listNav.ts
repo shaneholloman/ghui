@@ -7,8 +7,13 @@ export interface ListNavCtx {
 	readonly visibleCount: number
 	readonly hasFilter: boolean
 	readonly activeSurface: WorkspaceSurface
+	readonly surfaces: readonly WorkspaceSurface[]
+	readonly canGoUpWorkspace: boolean
 	readonly canScrollDetailPreview: boolean
 	readonly runCommandById: (id: string) => void
+	readonly openSelection: () => void
+	readonly toggleFavoriteRepository: () => void
+	readonly goUpWorkspace: () => void
 	readonly switchQueueMode: (delta: 1 | -1) => void
 	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
 	readonly cycleWorkspaceSurface: (delta: 1 | -1) => void
@@ -27,34 +32,42 @@ export interface ListNavCtx {
 
 const List = context<ListNavCtx>()
 const pullRequestsActive = (s: ListNavCtx) => (s.activeSurface === "pullRequests" ? true : "Pull request surface not active.")
+const itemSelected = (s: ListNavCtx) => (s.visibleCount > 0 ? true : "No item selected.")
+const reposActive = (s: ListNavCtx) => (s.activeSurface === "repos" ? true : "Repository surface not active.")
+const surfaceAt = (s: ListNavCtx, index: number) => s.surfaces[index] ?? null
 
 export const listNavKeymap = List(
 	// Single-key command shortcuts (delegate to existing AppCommand registry)
-	{ id: "workspace.pull-requests", title: "Pull Requests", keys: ["1"], run: (s) => s.switchWorkspaceSurface("pullRequests") },
-	{ id: "workspace.issues", title: "Issues", keys: ["2"], run: (s) => s.switchWorkspaceSurface("issues") },
+	{ id: "workspace.first", title: "First surface", keys: ["1"], run: (s) => (surfaceAt(s, 0) ? s.switchWorkspaceSurface(surfaceAt(s, 0)!) : undefined) },
+	{ id: "workspace.second", title: "Second surface", keys: ["2"], run: (s) => (surfaceAt(s, 1) ? s.switchWorkspaceSurface(surfaceAt(s, 1)!) : undefined) },
+	{ id: "workspace.third", title: "Third surface", keys: ["3"], run: (s) => (surfaceAt(s, 2) ? s.switchWorkspaceSurface(surfaceAt(s, 2)!) : undefined) },
 	{ id: "workspace.next-tab", title: "Next surface", keys: ["tab"], run: (s) => s.cycleWorkspaceSurface(1) },
 	{ id: "workspace.prev-tab", title: "Previous surface", keys: ["shift+tab"], run: (s) => s.cycleWorkspaceSurface(-1) },
 	{ id: "list.filter", title: "Filter", keys: ["/"], enabled: pullRequestsActive, run: (s) => s.runCommandById("filter.open") },
+	{ id: "list.favorite-repo", title: "Favorite repository", keys: ["f"], enabled: reposActive, run: (s) => s.toggleFavoriteRepository() },
 	{ id: "list.refresh", title: "Refresh", keys: ["r"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.refresh") },
 	{ id: "list.theme", title: "Theme", keys: ["t"], run: (s) => s.runCommandById("theme.open") },
 	{ id: "list.diff", title: "Open diff", keys: ["d"], enabled: pullRequestsActive, run: (s) => s.runCommandById("diff.open") },
-	{ id: "list.comments", title: "Open comments", keys: ["c"], enabled: pullRequestsActive, run: (s) => s.runCommandById("comments.open") },
+	{ id: "list.comments", title: "Open comments", keys: ["c"], enabled: itemSelected, run: (s) => s.runCommandById("comments.open") },
 	{ id: "list.review", title: "Review pull request", keys: ["shift+r"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.submit-review") },
-	{ id: "list.labels", title: "Labels", keys: ["l"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.labels") },
+	{ id: "list.labels", title: "Labels", keys: ["l"], enabled: itemSelected, run: (s) => s.runCommandById("pull.labels") },
 	{ id: "list.merge", title: "Merge", keys: ["m", "shift+m"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.merge") },
 	{ id: "list.close-pr", title: "Close PR", keys: ["x"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.close") },
 	{ id: "list.open-browser", title: "Open in browser", keys: ["o"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.open-browser") },
 	{ id: "list.toggle-draft", title: "Toggle draft", keys: ["s", "shift+s"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.toggle-draft") },
 	{ id: "list.copy", title: "Copy metadata", keys: ["y"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.copy-metadata") },
-	{ id: "list.detail.open", title: "Open details", keys: ["return"], enabled: pullRequestsActive, run: (s) => s.runCommandById("detail.open") },
+	{ id: "list.detail.open", title: "Open selected", keys: ["return"], enabled: itemSelected, run: (s) => s.openSelection() },
 
-	// Escape clears filter only when one is set
+	// Escape goes one level up: clear local filter first, otherwise leave repo scope.
 	{
-		id: "list.clear-filter",
-		title: "Clear filter",
+		id: "workspace.escape",
+		title: "Clear filter / go up workspace",
 		keys: ["escape"],
-		enabled: (s) => (s.activeSurface === "pullRequests" && s.hasFilter ? true : "No filter to clear."),
-		run: (s) => s.clearFilter(),
+		enabled: (s) => ((s.activeSurface === "pullRequests" && s.hasFilter) || s.canGoUpWorkspace ? true : "Already at top workspace."),
+		run: (s) => {
+			if (s.activeSurface === "pullRequests" && s.hasFilter) s.clearFilter()
+			else s.goUpWorkspace()
+		},
 	},
 
 	// Wide-layout detail preview scroll
