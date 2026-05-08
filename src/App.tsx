@@ -89,6 +89,7 @@ import {
 	diffWrapModeAtom,
 	pullRequestDiffCacheAtom,
 } from "./ui/diff/atoms.js"
+import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
 import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
 import { useSystemAppearancePolling } from "./ui/theme/useSystemAppearancePolling.js"
 import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
@@ -944,7 +945,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const wideDetailLines = Math.max(8, terminalHeight - 10)
 	const showWorkspaceTabs = !detailFullView && !diffFullView && !commentsViewActive
 	const wideBodyHeight = Math.max(8, terminalHeight - (showWorkspaceTabs ? 6 : 4))
-	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
 	const refreshGenerationRef = useRef(0)
@@ -997,9 +997,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		() => () => {
 			refreshGenerationRef.current += 1
 			detailHydrationRef.current.clear()
-			if (diffPrefetchTimeoutRef.current !== null) {
-				clearTimeout(diffPrefetchTimeoutRef.current)
-			}
 			if (detailPrefetchTimeoutRef.current !== null) {
 				clearTimeout(detailPrefetchTimeoutRef.current)
 			}
@@ -1881,21 +1878,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 	}
 
-	useEffect(() => {
-		if (!selectedPullRequest || diffFullView) return
-		if (diffPrefetchTimeoutRef.current !== null) {
-			clearTimeout(diffPrefetchTimeoutRef.current)
-		}
-		diffPrefetchTimeoutRef.current = setTimeout(() => {
-			loadPullRequestDiff(selectedPullRequest)
-		}, 250)
-		return () => {
-			if (diffPrefetchTimeoutRef.current !== null) {
-				clearTimeout(diffPrefetchTimeoutRef.current)
-				diffPrefetchTimeoutRef.current = null
-			}
-		}
-	}, [selectedIndex, selectedPullRequest?.url, diffFullView])
+	useDiffPrefetch({
+		pullRequest: selectedPullRequest,
+		skip: diffFullView,
+		onPrefetch: (pr) => loadPullRequestDiff(pr),
+	})
 
 	const openDiffView = () => {
 		if (!selectedPullRequest) return
