@@ -54,6 +54,7 @@ import { activeModalAtom } from "./ui/modals/atoms.js"
 import { noticeAtom } from "./ui/notice/atoms.js"
 import { useFlashNotice } from "./ui/notice/useFlashNotice.js"
 import { canEditComment, useCommentMutations } from "./ui/comments/useCommentMutations.js"
+import { useDetailHydration } from "./ui/pullRequests/useDetailHydration.js"
 import {
 	activeViewAtom,
 	addPullRequestLabelAtom,
@@ -68,7 +69,6 @@ import {
 	listRepoLabelsAtom,
 	pruneCacheAtom,
 	pullRequestDetailKey,
-	pullRequestDetailsAtom,
 	pullRequestLoadAtom,
 	pullRequestOverridesAtom,
 	pullRequestRevisionAtomKey,
@@ -76,7 +76,6 @@ import {
 	pullRequestStatusAtom,
 	queueLoadCacheAtom,
 	queueSelectionAtom,
-	readCachedPullRequestAtom,
 	recentlyCompletedPullRequestsAtom,
 	removePullRequestLabelAtom,
 	retryProgressAtom,
@@ -85,7 +84,6 @@ import {
 	usernameAtom,
 	visibleGroupsAtom,
 	visiblePullRequestsAtom,
-	writeCachedPullRequestAtom,
 	writeQueueCacheAtom,
 } from "./ui/pullRequests/atoms.js"
 
@@ -219,13 +217,6 @@ interface DiffCommentRangeSelection {
 	readonly end: StackedDiffCommentAnchor
 }
 
-interface DetailHydration {
-	readonly token: symbol
-	notifyError: boolean
-}
-
-type DetailHydrationState = { readonly _tag: "Loading" } | { readonly _tag: "Error"; readonly message: string }
-
 interface AppProps {
 	readonly systemThemeGeneration?: number
 }
@@ -236,10 +227,6 @@ const AUTO_REFRESH_JITTER_MS = 10_000
 const DIFF_STICKY_HEADER_LINES = 2
 const LOAD_MORE_SELECTION_THRESHOLD = 8
 const LOAD_MORE_SCROLL_THRESHOLD = 3
-const DETAIL_PREFETCH_BEHIND = 1
-const DETAIL_PREFETCH_AHEAD = 3
-const DETAIL_PREFETCH_CONCURRENCY = 3
-const DETAIL_PREFETCH_DELAY_MS = 120
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
 
 const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inner) / 2)
@@ -454,7 +441,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
-	const [detailHydrationState, setDetailHydrationState] = useState<Record<string, DetailHydrationState>>({})
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
@@ -466,8 +452,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const listPullRequestReviewComments = useAtomSet(listPullRequestReviewCommentsAtom, { mode: "promise" })
 	const listPullRequestComments = useAtomSet(listPullRequestCommentsAtom, { mode: "promise" })
 	const listIssueComments = useAtomSet(listIssueCommentsAtom, { mode: "promise" })
-	const readCachedPullRequest = useAtomSet(readCachedPullRequestAtom, { mode: "promise" })
-	const writeCachedPullRequest = useAtomSet(writeCachedPullRequestAtom, { mode: "promise" })
 	const writeQueueCache = useAtomSet(writeQueueCacheAtom, { mode: "promise" })
 	const readWorkspacePreferences = useAtomSet(readWorkspacePreferencesAtom, { mode: "promise" })
 	const writeWorkspacePreferences = useAtomSet(writeWorkspacePreferencesAtom, { mode: "promise" })
@@ -491,8 +475,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const wideDetailLines = Math.max(8, terminalHeight - 10)
 	const showWorkspaceTabs = !detailFullView && !diffFullView && !commentsViewActive
 	const wideBodyHeight = Math.max(8, terminalHeight - (showWorkspaceTabs ? 6 : 4))
-	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
 	const refreshGenerationRef = useRef(0)
 	const didMountQueueModeRef = useRef(false)
 	const lastPullRequestRefreshAtRef = useRef(0)
@@ -501,7 +483,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const maybeRefreshPullRequestsRef = useRef<(minimumAgeMs: number) => void>(() => {})
 	const detailScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const detailPreviewScrollRef = useRef<ScrollBoxRenderable | null>(null)
-	const cachedDetailKeysRef = useRef(new Set<string>())
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const prListScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const issueListScrollRef = useRef<ScrollBoxRenderable | null>(null)
@@ -519,10 +500,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	useEffect(
 		() => () => {
 			refreshGenerationRef.current += 1
-			detailHydrationRef.current.clear()
-			if (detailPrefetchTimeoutRef.current !== null) {
-				clearTimeout(detailPrefetchTimeoutRef.current)
-			}
 		},
 		[],
 	)
@@ -758,11 +735,21 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 		updatePullRequest(pullRequest.url, () => pullRequest)
 	}
+
+	const { detailHydrationState, resetHydration } = useDetailHydration({
+		selectedPullRequest,
+		pullRequestStatus,
+		visiblePullRequests,
+		selectedIndex,
+		currentQueueCacheKey,
+		refreshGenerationRef,
+		flashNotice,
+		setQueueLoadCache,
+	})
+
 	const refreshPullRequests = (message?: string, options: { readonly resetTransientState?: boolean } = {}) => {
 		refreshGenerationRef.current += 1
-		detailHydrationRef.current.clear()
-		setDetailHydrationState({})
-		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
+		resetHydration()
 		setLoadingMoreKey(null)
 		setPullRequestOverrides({})
 		if (options.resetTransientState) {
@@ -786,9 +773,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setSelectedIndex(registry.get(queueSelectionAtom)[viewCacheKey(view)] ?? 0)
 		setSelectedIssueIndex(0)
 		setRecentlyCompletedPullRequests({})
-		detailHydrationRef.current.clear()
-		setDetailHydrationState({})
-		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
+		resetHydration()
 		setLoadingMoreKey(null)
 		setDetailFullView(false)
 		setDiffFullView(false)
@@ -883,77 +868,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 			.finally(() => {
 				setLoadingMoreKey((current) => (current === cacheKey ? null : current))
-			})
-		return true
-	}
-	const applyPullRequestDetail = (detail: PullRequestItem) => {
-		setQueueLoadCache((current) => {
-			const next = { ...current }
-			let changed = false
-			for (const [cacheKey, load] of Object.entries(current)) {
-				if (!load) continue
-				const index = load.data.findIndex((pullRequest) => pullRequest.url === detail.url)
-				if (index < 0) continue
-				const data = [...load.data]
-				data[index] = detail
-				changed = true
-				next[cacheKey] = { ...load, data }
-			}
-			return changed ? next : current
-		})
-	}
-	const hydratePullRequestDetails = (pullRequest: PullRequestItem, notifyError: boolean) => {
-		if (pullRequest.state !== "open") return false
-		const detailKey = pullRequestDetailKey(pullRequest)
-		const forceRefresh = notifyError && pullRequest.detailLoaded && cachedDetailKeysRef.current.has(detailKey)
-		if (pullRequest.detailLoaded && !forceRefresh) return false
-		const existing = detailHydrationRef.current.get(detailKey)
-		if (existing) {
-			if (notifyError) existing.notifyError = true
-			return false
-		}
-		if (!notifyError && detailHydrationRef.current.size >= DETAIL_PREFETCH_CONCURRENCY) return false
-		const entry: DetailHydration = { token: Symbol(detailKey), notifyError }
-		detailHydrationRef.current.set(detailKey, entry)
-		if (notifyError) setDetailHydrationState((current) => ({ ...current, [detailKey]: { _tag: "Loading" } }))
-		const generation = refreshGenerationRef.current
-		if (!pullRequest.detailLoaded) {
-			void readCachedPullRequest({ repository: pullRequest.repository, number: pullRequest.number })
-				.then((cached) => {
-					if (!cached || !cached.detailLoaded || cached.headRefOid !== pullRequest.headRefOid) return
-					if (generation !== refreshGenerationRef.current || detailHydrationRef.current.get(detailKey) !== entry) return
-					cachedDetailKeysRef.current.add(detailKey)
-					applyPullRequestDetail(cached)
-				})
-				.catch(() => {})
-		}
-		const atom = pullRequestDetailsAtom(pullRequestRevisionAtomKey(pullRequest))
-		if (forceRefresh) registry.refresh(atom)
-		void Effect.runPromise(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }))
-			.then((detail) => {
-				if (generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) {
-					cachedDetailKeysRef.current.delete(detailKey)
-					if (entry.notifyError) {
-						setDetailHydrationState((current) => {
-							if (!(detailKey in current)) return current
-							const next = { ...current }
-							delete next[detailKey]
-							return next
-						})
-					}
-					applyPullRequestDetail(detail)
-					void writeCachedPullRequest(detail).catch(() => {})
-				}
-			})
-			.catch((error) => {
-				if (entry.notifyError && generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) {
-					const message = errorMessage(error)
-					setDetailHydrationState((current) => ({ ...current, [detailKey]: { _tag: "Error", message } }))
-					flashNotice(message)
-				}
-			})
-			.finally(() => {
-				if (detailHydrationRef.current.get(detailKey) === entry) detailHydrationRef.current.delete(detailKey)
 			})
 		return true
 	}
@@ -1199,42 +1113,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	useEffect(() => {
 		if (pullRequestStatus !== "ready" || !selectedPullRequest) return
-		hydratePullRequestDetails(selectedPullRequest, true)
-	}, [
-		pullRequestStatus,
-		selectedPullRequest?.url,
-		selectedPullRequest?.headRefOid,
-		selectedPullRequest?.state,
-		selectedPullRequest?.detailLoaded,
-		selectedPullRequest?.repository,
-		selectedPullRequest?.number,
-	])
-
-	useEffect(() => {
-		if (pullRequestStatus !== "ready" || !selectedPullRequest) return
 		loadPullRequestComments(selectedPullRequest)
 	}, [pullRequestStatus, selectedPullRequest?.url, selectedPullRequest?.headRefOid, selectedPullRequest?.repository, selectedPullRequest?.number])
-
-	useEffect(() => {
-		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
-		if (pullRequestStatus !== "ready" || visiblePullRequests.length === 0) return
-		detailPrefetchTimeoutRef.current = globalThis.setTimeout(() => {
-			detailPrefetchTimeoutRef.current = null
-			let started = 0
-			for (let distance = 1; distance <= Math.max(DETAIL_PREFETCH_AHEAD, DETAIL_PREFETCH_BEHIND); distance++) {
-				const offsets = [distance <= DETAIL_PREFETCH_AHEAD ? distance : null, distance <= DETAIL_PREFETCH_BEHIND ? -distance : null]
-				for (const offset of offsets) {
-					if (offset === null) continue
-					if (started >= DETAIL_PREFETCH_CONCURRENCY) return
-					const pullRequest = visiblePullRequests[selectedIndex + offset]
-					if (pullRequest && hydratePullRequestDetails(pullRequest, false)) started += 1
-				}
-			}
-		}, DETAIL_PREFETCH_DELAY_MS)
-		return () => {
-			if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
-		}
-	}, [pullRequestStatus, currentQueueCacheKey, selectedIndex, visiblePullRequests])
 
 	const detailPlaceholderContent = getDetailPlaceholderContent({
 		status: pullRequestStatus,
