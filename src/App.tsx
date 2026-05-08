@@ -85,6 +85,7 @@ import {
 	diffScrollTopAtom,
 	diffWhitespaceModeAtom,
 	diffWrapModeAtom,
+	pullRequestDiffCacheAtom,
 } from "./ui/diff/atoms.js"
 import { systemAppearanceAtom, themeConfigAtom, themeIdAtom } from "./ui/theme/atoms.js"
 import { insertText, type CommentEditorValue } from "./ui/commentEditor.js"
@@ -406,7 +407,6 @@ const issuesAtom = githubRuntime
 	.pipe(Atom.keepAlive)
 const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
 const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecentRepositories).pipe(Atom.keepAlive)
-const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
 const usernameAtom = githubRuntime.atom(GitHubService.use((github) => github.getAuthenticatedUser())).pipe(Atom.keepAlive)
 

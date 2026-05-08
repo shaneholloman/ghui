@@ -2,7 +2,7 @@ import { Effect } from "effect"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import type { DiffCommentSide, PullRequestReviewComment } from "../../domain.js"
 import { loadStoredDiffWhitespaceMode } from "../../themeStore.js"
-import type { DiffView, DiffWhitespaceMode, DiffWrapMode } from "../diff.js"
+import { type DiffView, type DiffWhitespaceMode, type DiffWrapMode, type PullRequestDiffState } from "../diff.js"
 
 export const initialDiffWhitespaceMode = await Effect.runPromise(loadStoredDiffWhitespaceMode)
 
@@ -17,3 +17,4 @@ export const diffPreferredSideAtom = Atom.make<DiffCommentSide | null>(null)
 export const diffCommentRangeStartIndexAtom = Atom.make<number | null>(null)
 export const diffCommentThreadsAtom = Atom.make<Record<string, readonly PullRequestReviewComment[]>>({}).pipe(Atom.keepAlive)
 export const diffCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
+export const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
