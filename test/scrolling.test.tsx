@@ -340,13 +340,13 @@ describe("PR list scrolling", () => {
 		await press(mockInput, renderOnce, { kind: "arrow", dir: "down" }, 2)
 		expect(detailPaneNumber(captureCharFrame())).toBe(numberFromIndex(26))
 
-		// And the row right above the selected should still be the previous PR (no skip).
+		// And the previous PR title should still be directly above its metadata row (no skip).
 		const frame = captureCharFrame()
 		const selectedRow = leftPaneRowOf(frame, numberFromIndex(26))
 		expect(selectedRow).not.toBeNull()
 		const lines = frame.split("\n")
-		if (selectedRow! > 4) {
-			const above = lines[selectedRow! - 1]!
+		if (selectedRow! > 5) {
+			const above = lines[selectedRow! - 2]!
 			expect(above.split("│")[0] ?? above).toMatch(new RegExp(`#${numberFromIndex(25)}\\s+`))
 		}
 		renderer.destroy()

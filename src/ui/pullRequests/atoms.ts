@@ -175,7 +175,13 @@ export const closePullRequestAtom = githubRuntime.fn<{ readonly repository: stri
 const pullRequestFilterScore = (pullRequest: PullRequestItem, query: string) => {
 	const normalized = query.trim().toLowerCase()
 	if (normalized.length === 0) return 0
-	const fields = [pullRequest.title.toLowerCase(), pullRequest.repository.toLowerCase(), pullRequest.headRefName.toLowerCase(), String(pullRequest.number)]
+	const fields = [
+		pullRequest.title.toLowerCase(),
+		pullRequest.repository.toLowerCase(),
+		pullRequest.author.toLowerCase(),
+		pullRequest.headRefName.toLowerCase(),
+		String(pullRequest.number),
+	]
 	const scores = fields.flatMap((field, index) => {
 		const matchIndex = field.indexOf(normalized)
 		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []

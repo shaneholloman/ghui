@@ -8,6 +8,8 @@ import { pullRequestRowDisplay, repoColor, reviewIcon } from "./pullRequests.js"
 
 export type PullRequestGroups = Array<[string, PullRequestItem[]]>
 
+const pullRequestListRowHeight = (row: PullRequestListRow) => (row._tag === "pull-request" ? 2 : 1)
+
 export type PullRequestListRow =
 	| { readonly _tag: "title" }
 	| { readonly _tag: "filter" }
@@ -93,8 +95,12 @@ export const buildPullRequestListRows = ({
 
 export const pullRequestListRowIndex = (rows: readonly PullRequestListRow[], url: string | null) => {
 	if (!url) return null
-	const index = rows.findIndex((row) => row._tag === "pull-request" && row.pullRequest.url === url)
-	return index >= 0 ? index : null
+	let line = 0
+	for (const row of rows) {
+		if (row._tag === "pull-request" && row.pullRequest.url === url) return line
+		line += pullRequestListRowHeight(row)
+	}
+	return null
 }
 
 const PullRequestRow = ({
@@ -119,27 +125,38 @@ const PullRequestRow = ({
 	onHoverChange: (hovered: boolean) => void
 }) => {
 	const ageText = `${daysOpen(pullRequest.createdAt)}d`
+	const title = pullRequest.title.trim()
 	const { reviewWidth, checkWidth, ageWidth, numberWidth, titleWidth } = getRowLayout(contentWidth, numWidth, ageColWidth)
 	const rowWidth = reviewWidth + 1 + numberWidth + 1 + titleWidth + checkWidth + ageWidth
 	const fillerWidth = Math.max(0, contentWidth - rowWidth)
+	const metaIndentWidth = reviewWidth + 1 + numberWidth + 1
+	const metaWidth = Math.max(8, contentWidth - metaIndentWidth)
+	const branchText = pullRequest.headRefName === pullRequest.baseRefName ? null : `${pullRequest.headRefName} → ${pullRequest.baseRefName}`
+	const metaText = branchText ? `@${pullRequest.author} · ${branchText}` : `@${pullRequest.author}`
 	const display = pullRequestRowDisplay(pullRequest, selected)
 	const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
 
 	return (
-		<TextLine width={contentWidth} fg={display.rowFg} bg={rowBg} onMouseDown={onSelect} onMouseOver={() => onHoverChange(true)} onMouseOut={() => onHoverChange(false)}>
-			<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
-			<span> </span>
-			<span fg={display.numberFg}>
-				<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
-			</span>
-			<span> </span>
-			<span>
-				<MatchedCell text={pullRequest.title} width={titleWidth} query={filterText} />
-			</span>
-			<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
-			<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
-			{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
-		</TextLine>
+		<box width={contentWidth} flexDirection="column" onMouseDown={onSelect} onMouseOver={() => onHoverChange(true)} onMouseOut={() => onHoverChange(false)}>
+			<TextLine width={contentWidth} fg={display.rowFg} bg={rowBg}>
+				<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
+				<span> </span>
+				<span fg={display.numberFg}>
+					<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
+				</span>
+				<span> </span>
+				<span>
+					<MatchedCell text={title} width={titleWidth} query={filterText} />
+				</span>
+				<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
+				<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
+				{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
+			</TextLine>
+			<TextLine width={contentWidth} fg={colors.muted} bg={rowBg}>
+				<span>{" ".repeat(metaIndentWidth)}</span>
+				<MatchedCell text={metaText} width={metaWidth} query={filterText} />
+			</TextLine>
+		</box>
 	)
 }
 

@@ -66,7 +66,11 @@ export const IssuesWorkspace = ({
 						</box>
 					)
 				}
-				right={<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} />}
+				right={
+					<scrollbox ref={detailPreviewScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
+						<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
+					</scrollbox>
+				}
 			/>
 		)
 	}
