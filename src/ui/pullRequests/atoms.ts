@@ -16,7 +16,8 @@ import { mergeCachedDetails } from "../../pullRequestCache.js"
 import type { PullRequestLoad } from "../../pullRequestLoad.js"
 import { initialPullRequestView, type PullRequestView, viewCacheKey, viewMode, viewRepository } from "../../pullRequestViews.js"
 import { CacheService, type PullRequestCacheKey } from "../../services/CacheService.js"
-import { GitHubService } from "../../services/GitHubService.js"
+import { isCommandTimeoutError } from "../../services/CommandRunner.js"
+import { GitHubService, isGitHubRateLimitError } from "../../services/GitHubService.js"
 import { detectedRepository, githubRuntime, pullRequestPageSize } from "../../services/runtime.js"
 import { effectiveFilterQueryAtom } from "../filter/atoms.js"
 import { initialRetryProgress, RetryProgress } from "../FooterHints.js"
@@ -25,6 +26,8 @@ import { groupBy } from "../pullRequests.js"
 
 export const PR_FETCH_RETRIES = 6
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
+
+export const shouldRetryPullRequestFetch = (error: unknown): boolean => !isGitHubRateLimitError(error) && !isCommandTimeoutError(error)
 
 // === UI cache atoms ===
 export const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}).pipe(Atom.keepAlive)
@@ -81,7 +84,7 @@ export const pullRequestsAtom = githubRuntime
 					const cachedLoad = yield* cacheService.readQueue(cacheViewer, view).pipe(Effect.catch(() => Effect.succeed(null)))
 					if (cachedLoad) {
 						const cache = yield* Atom.get(queueLoadCacheAtom)
-						yield* Atom.set(queueLoadCacheAtom, trimQueueLoadCache({ ...cache, [cacheKey]: cachedLoad }))
+						if (!cache[cacheKey]) yield* Atom.set(queueLoadCacheAtom, trimQueueLoadCache({ ...cache, [cacheKey]: cachedLoad }))
 					}
 				}
 				yield* Atom.set(retryProgressAtom, initialRetryProgress)
@@ -93,15 +96,17 @@ export const pullRequestsAtom = githubRuntime
 						pageSize: Math.min(pullRequestPageSize, config.prFetchLimit),
 					})
 					.pipe(
-						Effect.tapError(() =>
-							Atom.update(retryProgressAtom, (current) =>
-								RetryProgress.Retrying({
-									attempt: Math.min(RetryProgress.$match(current, { Idle: () => 0, Retrying: ({ attempt }) => attempt }) + 1, PR_FETCH_RETRIES),
-									max: PR_FETCH_RETRIES,
-								}),
-							),
+						Effect.tapError((error) =>
+							shouldRetryPullRequestFetch(error)
+								? Atom.update(retryProgressAtom, (current) =>
+										RetryProgress.Retrying({
+											attempt: Math.min(RetryProgress.$match(current, { Idle: () => 0, Retrying: ({ attempt }) => attempt }) + 1, PR_FETCH_RETRIES),
+											max: PR_FETCH_RETRIES,
+										}),
+									)
+								: Effect.void,
 						),
-						Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2) }),
+						Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2), while: shouldRetryPullRequestFetch }),
 						Effect.tapError(() => Atom.set(retryProgressAtom, initialRetryProgress)),
 					)
 

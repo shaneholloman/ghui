@@ -109,6 +109,7 @@ export const buildAppCommands = ({
 	const selectedPullRequestLabel = selectedPullRequest ? `#${selectedPullRequest.number} ${selectedPullRequest.repository}` : "No pull request selected"
 	const selectedIssueLabel = selectedIssue ? `#${selectedIssue.number} ${selectedIssue.repository}` : "No issue selected"
 	const selectedItemLabel = activeWorkspaceSurface === "issues" ? selectedIssueLabel : selectedPullRequestLabel
+	const activeSurfaceLabel = workspaceSurfaceLabels[activeWorkspaceSurface].toLowerCase()
 	const pullRequestSurfaceReason = activeWorkspaceSurface === "pullRequests" ? null : "Pull request surface is not active."
 	const noPullRequestReason = pullRequestSurfaceReason ?? (selectedPullRequest ? null : "Select a pull request first.")
 	const noSelectedItemReason = activeWorkspaceSurface === "issues" ? (selectedIssue ? null : "Select an issue first.") : noPullRequestReason
@@ -153,21 +154,20 @@ export const buildAppCommands = ({
 		}),
 		defineCommand({
 			id: "filter.open",
-			title: "Filter pull requests",
+			title: `Filter ${activeSurfaceLabel}`,
 			scope: "Global",
-			subtitle: "Search the visible queue",
+			subtitle: "Search the visible surface",
 			shortcut: "/",
-			disabledReason: pullRequestSurfaceReason,
 			keywords: ["search"],
 			run: actions.openFilter,
 		}),
 		defineCommand({
 			id: "filter.clear",
-			title: "Clear pull request filter",
+			title: "Clear filter",
 			scope: "Global",
-			subtitle: "Show every pull request in the current queue",
+			subtitle: "Show every item in the current surface",
 			shortcut: "esc",
-			disabledReason: pullRequestSurfaceReason ?? (filterQuery.length > 0 || filterMode ? null : "No filter is active."),
+			disabledReason: filterQuery.length > 0 || filterMode ? null : "No filter is active.",
 			run: actions.clearFilter,
 		}),
 		defineCommand({

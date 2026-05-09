@@ -1,4 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
+import { config } from "../config.js"
+import { errorMessage } from "../errors.js"
+import { classifyGitHubRateLimit } from "./githubRateLimit.js"
 
 export interface CommandResult {
 	readonly stdout: string
@@ -24,9 +27,37 @@ export class JsonParseError extends Schema.TaggedErrorClass<JsonParseError>()("J
 	cause: Schema.Defect,
 }) {}
 
+export const isCommandTimeoutError = (error: unknown): boolean => {
+	return errorMessage(error).startsWith("Timed out after ")
+}
+
 const readStream = async (stream: ReadableStream | null | undefined) => {
 	if (!stream) return ""
 	return Bun.readableStreamToText(stream)
+}
+
+const valueAfter = (args: readonly string[], flag: string, prefix: string) => {
+	for (let index = 0; index < args.length - 1; index++) {
+		if (args[index] === flag && args[index + 1]?.startsWith(prefix)) return args[index + 1]!.slice(prefix.length)
+	}
+	return null
+}
+
+const firstRestApiPath = (args: readonly string[]) => args.find((arg) => /^[a-z0-9_.-]+\//i.test(arg) || arg.startsWith("user")) ?? null
+
+export const commandTelemetryAttributes = (command: string, args: readonly string[]) => {
+	const githubKind = command !== "gh" ? "none" : args[0] === "api" && args[1] === "graphql" ? "graphql" : args[0] === "api" ? "rest" : (args[0] ?? "unknown")
+	const first = valueAfter(args, "-F", "first=")
+	const limit = valueAfter(args, "--limit", "")
+	return {
+		"process.command": command,
+		"process.argv.count": args.length,
+		"github.command.kind": githubKind,
+		"github.graphql.has_cursor": args.some((arg) => arg.startsWith("after=")),
+		...(first ? { "github.page_size": Number.parseInt(first, 10) } : {}),
+		...(limit ? { "github.limit": Number.parseInt(limit, 10) } : {}),
+		...(githubKind === "rest" ? { "github.rest.path": firstRestApiPath(args) ?? "unknown" } : {}),
+	}
 }
 
 export class CommandRunner extends Context.Service<
@@ -43,34 +74,72 @@ export class CommandRunner extends Context.Service<
 	static readonly layer = Layer.effect(
 		CommandRunner,
 		Effect.gen(function* () {
-			const runProcess = Effect.fn("CommandRunner.runProcess")((command: string, args: readonly string[], stdin: string | undefined) =>
+			const commandTimeoutError = (command: string, args: readonly string[]) =>
+				new CommandError({
+					command,
+					args: [...args],
+					detail: `Timed out after ${config.commandTimeoutMs}ms`,
+					cause: { timeoutMs: config.commandTimeoutMs },
+				})
+
+			const runProcessRaw = Effect.fn("CommandRunner.runProcessRaw")((command: string, args: readonly string[], stdin: string | undefined) =>
 				Effect.tryPromise({
-					async try() {
+					async try(signal) {
 						const proc = Bun.spawn({
 							cmd: [command, ...args],
 							stdin: stdin === undefined ? "ignore" : "pipe",
 							stdout: "pipe",
 							stderr: "pipe",
 						})
-						if (stdin !== undefined && proc.stdin) {
-							proc.stdin.write(stdin)
-							proc.stdin.end()
-						}
+						const kill = () => proc.kill("SIGKILL")
+						signal.addEventListener("abort", kill, { once: true })
 
-						const [exitCode, stdout, stderr] = await Promise.all([proc.exited, readStream(proc.stdout), readStream(proc.stderr)])
-						return { stdout, stderr, exitCode }
+						try {
+							if (stdin !== undefined && proc.stdin) {
+								proc.stdin.write(stdin)
+								proc.stdin.end()
+							}
+							const [exitCode, stdout, stderr] = await Promise.all([proc.exited, readStream(proc.stdout), readStream(proc.stderr)])
+							return { stdout, stderr, exitCode }
+						} catch (cause) {
+							proc.kill("SIGKILL")
+							throw cause
+						} finally {
+							signal.removeEventListener("abort", kill)
+						}
 					},
-					catch: (cause) => new CommandError({ command, args: [...args], detail: `Failed to run ${command}`, cause }),
+					catch: (cause) =>
+						new CommandError({
+							command,
+							args: [...args],
+							detail: errorMessage(cause) || `Failed to run ${command}`,
+							cause,
+						}),
 				}),
+			)
+			const runProcess = Effect.fn("CommandRunner.runProcess")((command: string, args: readonly string[], stdin: string | undefined) =>
+				runProcessRaw(command, args, stdin).pipe(
+					Effect.timeoutOrElse({
+						duration: `${config.commandTimeoutMs} millis`,
+						orElse: () => Effect.fail(commandTimeoutError(command, args)),
+					}),
+				),
 			)
 
 			const run = Effect.fn("CommandRunner.run")(function* (command: string, args: readonly string[], options?: RunOptions) {
+				const startedAt = Date.now()
+				const attributes = commandTelemetryAttributes(command, args)
 				const result = yield* runProcess(command, args, options?.stdin).pipe(
+					Effect.tap((result) =>
+						Effect.annotateCurrentSpan({
+							...attributes,
+							"process.duration_ms": Date.now() - startedAt,
+							"process.exit_code": result.exitCode,
+							...(result.exitCode === 0 ? {} : { "github.rate_limit.kind": classifyGitHubRateLimit(result.stderr || result.stdout) ?? "none" }),
+						}),
+					),
 					Effect.withSpan("ghui.command.runProcess", {
-						attributes: {
-							"process.command": command,
-							"process.argv.count": args.length,
-						},
+						attributes,
 					}),
 				)
 				if (result.exitCode !== 0) {

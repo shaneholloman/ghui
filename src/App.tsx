@@ -8,7 +8,7 @@ import { useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
-import { useContext, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
@@ -354,7 +354,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const { width, height } = useTerminalDimensions()
 	const registry = useContext(RegistryContext)
 	const pullRequestResult = useAtomValue(pullRequestsAtom)
-	const refreshPullRequestsAtom = useAtomRefresh(pullRequestsAtom)
+	const refreshPullRequestsAtomRaw = useAtomRefresh(pullRequestsAtom)
+	const refreshPullRequestsAtom = useCallback(() => {
+		if (registry.get(pullRequestsAtom).waiting) return
+		refreshPullRequestsAtomRaw()
+	}, [refreshPullRequestsAtomRaw, registry])
 	const [activeView, setActiveView] = useAtom(activeViewAtom)
 	const setQueueLoadCache = useAtomSet(queueLoadCacheAtom)
 	const setQueueSelection = useAtomSet(queueSelectionAtom)
@@ -513,13 +517,14 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [selectedIssueIndex, setSelectedIssueIndex] = useAtom(selectedIssueIndexAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
+	const pullRequestFetchInFlight = pullRequestResult.waiting
 	const selectedRepository = viewRepository(activeView)
 	const isInitialLoading = !startupLoadComplete && pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const issueOverrides = useAtomValue(issueOverridesAtom)
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
 	const rawIssues = selectedRepository === null && mockPrCount !== null ? mockUserIssues : AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
-	const allIssues = rawIssues.map((issue) => issueOverrides[issue.url] ?? issue)
+	const allIssues = useMemo(() => rawIssues.map((issue) => issueOverrides[issue.url] ?? issue), [rawIssues, issueOverrides])
 	const issues = useMemo(
 		() => (activeWorkspaceSurface === "issues" ? filterByScore(allIssues, visibleFilterText, issueFilterScore, (issue) => issue.updatedAt.getTime()) : allIssues),
 		[activeWorkspaceSurface, allIssues, visibleFilterText],
@@ -748,6 +753,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	})
 
 	const refreshPullRequests = (message?: string, options: { readonly resetTransientState?: boolean } = {}) => {
+		if (pullRequestFetchInFlight) return
 		refreshGenerationRef.current += 1
 		resetHydration()
 		setLoadingMoreKey(null)
@@ -918,7 +924,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 	}
 	maybeRefreshPullRequestsRef.current = (minimumAgeMs) => {
-		if (!terminalFocusedRef.current || pullRequestStatusRef.current === "loading") return
+		if (!terminalFocusedRef.current || pullRequestStatusRef.current === "loading" || pullRequestFetchInFlight) return
 		const lastRefreshAt = lastPullRequestRefreshAtRef.current
 		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
 		refreshPullRequestsRef.current()
@@ -936,9 +942,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			didMountQueueModeRef.current = true
 			return
 		}
+		if (pullRequestFetchInFlight) return
 		if (registry.get(queueLoadCacheAtom)[currentQueueCacheKey]) return
 		refreshPullRequestsAtom()
-	}, [currentQueueCacheKey, refreshPullRequestsAtom, registry])
+	}, [currentQueueCacheKey, pullRequestFetchInFlight, refreshPullRequestsAtom, registry])
 
 	useEffect(() => {
 		if (!refreshCompletionMessage || refreshStartedAt === null) return

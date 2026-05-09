@@ -31,9 +31,9 @@ export interface ListNavCtx {
 }
 
 const List = context<ListNavCtx>()
-const pullRequestsActive = (s: ListNavCtx) => (s.activeSurface === "pullRequests" ? true : "Pull request surface not active.")
 const itemSelected = (s: ListNavCtx) => (s.visibleCount > 0 ? true : "No item selected.")
 const reposActive = (s: ListNavCtx) => (s.activeSurface === "repos" ? true : "Repository surface not active.")
+const pullRequestsActive = (s: ListNavCtx) => (s.activeSurface === "pullRequests" ? true : "Pull request surface not active.")
 const surfaceAt = (s: ListNavCtx, index: number) => s.surfaces[index] ?? null
 
 export const listNavKeymap = List(
@@ -43,7 +43,7 @@ export const listNavKeymap = List(
 	{ id: "workspace.third", title: "Third surface", keys: ["3"], run: (s) => (surfaceAt(s, 2) ? s.switchWorkspaceSurface(surfaceAt(s, 2)!) : undefined) },
 	{ id: "workspace.next-tab", title: "Next surface", keys: ["tab"], run: (s) => s.cycleWorkspaceSurface(1) },
 	{ id: "workspace.prev-tab", title: "Previous surface", keys: ["shift+tab"], run: (s) => s.cycleWorkspaceSurface(-1) },
-	{ id: "list.filter", title: "Filter", keys: ["/"], enabled: pullRequestsActive, run: (s) => s.runCommandById("filter.open") },
+	{ id: "list.filter", title: "Filter", keys: ["/"], run: (s) => s.runCommandById("filter.open") },
 	{ id: "list.favorite-repo", title: "Favorite repository", keys: ["f"], enabled: reposActive, run: (s) => s.toggleFavoriteRepository() },
 	{ id: "list.refresh", title: "Refresh", keys: ["r"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.refresh") },
 	{ id: "list.theme", title: "Theme", keys: ["t"], run: (s) => s.runCommandById("theme.open") },
@@ -63,9 +63,9 @@ export const listNavKeymap = List(
 		id: "workspace.escape",
 		title: "Clear filter / go up workspace",
 		keys: ["escape"],
-		enabled: (s) => ((s.activeSurface === "pullRequests" && s.hasFilter) || s.canGoUpWorkspace ? true : "Already at top workspace."),
+		enabled: (s) => (s.hasFilter || s.canGoUpWorkspace ? true : "Already at top workspace."),
 		run: (s) => {
-			if (s.activeSurface === "pullRequests" && s.hasFilter) s.clearFilter()
+			if (s.hasFilter) s.clearFilter()
 			else s.goUpWorkspace()
 		},
 	},

@@ -20,7 +20,8 @@ import {
 	type SubmitPullRequestReviewInput,
 } from "../domain.js"
 import { mergeActionCliArgs } from "../mergeActions.js"
-import { CommandError, CommandRunner, type JsonParseError } from "./CommandRunner.js"
+import { CommandError, CommandRunner, commandTelemetryAttributes, type JsonParseError } from "./CommandRunner.js"
+export { isGitHubRateLimitError } from "./githubRateLimit.js"
 
 const NullableString = Schema.NullOr(Schema.String)
 const OptionalNullableString = Schema.optionalKey(NullableString)
@@ -257,7 +258,7 @@ const SUMMARY_FIELDS_FRAGMENT = `
         headRefOid
         headRefName
         baseRefName
-        repository { nameWithOwner defaultBranchRef { name } }${STATUS_CHECK_FRAGMENT}`
+		repository { nameWithOwner defaultBranchRef { name } }`
 
 const DETAIL_FIELDS_FRAGMENT = `
         number
@@ -275,10 +276,11 @@ const DETAIL_FIELDS_FRAGMENT = `
         closedAt
         url
         author { login }
-        headRefOid
-        headRefName
-        repository { nameWithOwner }
-        labels(first: 20) { nodes { name color } }${STATUS_CHECK_FRAGMENT}`
+		headRefOid
+		headRefName
+		baseRefName
+		repository { nameWithOwner defaultBranchRef { name } }
+		labels(first: 20) { nodes { name color } }${STATUS_CHECK_FRAGMENT}`
 
 const pullRequestSearchQuery = `
 query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
@@ -651,15 +653,21 @@ export class GitHubService extends Context.Service<
 		Effect.gen(function* () {
 			const command = yield* CommandRunner
 
-			const ghJson = <S extends Schema.Top>(label: string, schema: S, args: readonly string[]) =>
-				command.runSchema(schema, "gh", args).pipe(Effect.withSpan(`GitHubService.${label}`))
+			const githubApiAttributes = (label: string, args: readonly string[]) => ({
+				...commandTelemetryAttributes("gh", args),
+				"github.operation": label,
+			})
 
-			const ghVoid = (label: string, args: readonly string[]) => command.run("gh", args).pipe(Effect.withSpan(`GitHubService.${label}`), Effect.asVoid)
+			const ghJson = <S extends Schema.Top>(label: string, schema: S, args: readonly string[]) =>
+				command.runSchema(schema, "gh", args).pipe(Effect.withSpan(`GitHubService.${label}`, { attributes: githubApiAttributes(label, args) }))
+
+			const ghVoid = (label: string, args: readonly string[]) =>
+				command.run("gh", args).pipe(Effect.withSpan(`GitHubService.${label}`, { attributes: githubApiAttributes(label, args) }), Effect.asVoid)
 
 			const searchPage = <Item extends Schema.Top>(label: string, query: string, schema: Item, parse: (node: Item["Type"]) => PullRequestItem) => {
 				const responseSchema = SearchResponseSchema(schema)
 				return Effect.fn(`GitHubService.${label}`)(function* (input: ListPullRequestPageInput) {
-					const response: SearchResponse<Item["Type"]> = yield* command.runSchema(responseSchema, "gh", [
+					const args = [
 						"api",
 						"graphql",
 						"-f",
@@ -669,7 +677,8 @@ export class GitHubService extends Context.Service<
 						"-F",
 						`first=${input.pageSize}`,
 						...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
-					])
+					] as const
+					const response: SearchResponse<Item["Type"]> = yield* ghJson(label, responseSchema, args)
 					return pullRequestPage(response.data.search, parse)
 				})
 			}
@@ -684,7 +693,7 @@ export class GitHubService extends Context.Service<
 					return yield* new CommandError({ command: "gh", args: [], detail: `Invalid repository: ${input.repository}`, cause: input.repository })
 				}
 
-				const response = yield* command.runSchema(RepositoryPullRequestsResponseSchema, "gh", [
+				const args = [
 					"api",
 					"graphql",
 					"-f",
@@ -696,7 +705,8 @@ export class GitHubService extends Context.Service<
 					"-F",
 					`first=${input.pageSize}`,
 					...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
-				])
+				] as const
+				const response = yield* ghJson("listRepositoryPullRequestPage", RepositoryPullRequestsResponseSchema, args)
 				const connection = response.data.repository?.pullRequests
 				if (!connection) {
 					return yield* new CommandError({ command: "gh", args: [], detail: `Repository not found: ${input.repository}`, cause: input.repository })

@@ -8,6 +8,7 @@ import { bodyPreview, wrapText } from "./DetailsPane.js"
 import { LabelChips, labelChipRows } from "./LabelChips.js"
 import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
 import { Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
+import { groupBy, repoColor } from "./pullRequests.js"
 
 const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: number) => {
 	const fixedWidth = numberWidth + 1 + ageWidth
@@ -15,7 +16,14 @@ const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: numbe
 	return { numberWidth, titleWidth, ageWidth }
 }
 
+const GROUP_ICON = "◆"
+
 const IssueDetailLine = ({ children, width }: { children: ReactNode; width: number }) => <PaneInsetLine width={width}>{children}</PaneInsetLine>
+
+const issueGroups = (issues: readonly IssueItem[], showRepositoryGroups: boolean) => {
+	const indexed = issues.map((issue, index) => ({ issue, index }))
+	return showRepositoryGroups ? groupBy(indexed, ({ issue }) => issue.repository) : ([[null, indexed]] as const)
+}
 
 export const IssueList = ({
 	issues,
@@ -24,6 +32,9 @@ export const IssueList = ({
 	error,
 	repository,
 	contentWidth,
+	filterText = "",
+	showFilterBar = false,
+	isFilterEditing = false,
 	onSelectIssue,
 }: {
 	issues: readonly IssueItem[]
@@ -32,42 +43,71 @@ export const IssueList = ({
 	error: string | null
 	repository: string | null
 	contentWidth: number
+	filterText?: string
+	showFilterBar?: boolean
+	isFilterEditing?: boolean
 	onSelectIssue: (index: number) => void
 }) => {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 	const numberWidth = Math.max(4, ...issues.map((issue) => `#${issue.number}`.length))
 	const ageWidth = Math.max(4, ...issues.map((issue) => `${daysOpen(issue.createdAt)}d`.length + 1))
 	const { titleWidth } = getRowLayout(contentWidth, numberWidth, ageWidth)
+	const groups = issueGroups(issues, repository === null)
 
 	return (
 		<box width={contentWidth} flexDirection="column">
-			{repository ? null : <PlainLine text="- Open a repository to list issues." fg={colors.muted} />}
-			{status === "loading" && repository ? <PlainLine text="- Loading issues..." fg={colors.muted} /> : null}
+			{showFilterBar ? (
+				<TextLine>
+					<span fg={colors.count}>/</span>
+					<span fg={colors.muted}> </span>
+					<span fg={isFilterEditing ? colors.text : colors.count}>{filterText.length > 0 ? filterText : "type to filter..."}</span>
+				</TextLine>
+			) : null}
+			{status === "ready" && repository === null && issues.length === 0 ? (
+				<PlainLine text={filterText.length > 0 ? "- No matching issues." : "- No issues in your repositories."} fg={colors.muted} />
+			) : null}
+			{status === "loading" && issues.length === 0 ? <PlainLine text="- Loading issues..." fg={colors.muted} /> : null}
 			{status === "error" ? <PlainLine text={`- ${error ?? "Could not load issues."}`} fg={colors.error} /> : null}
-			{status === "ready" && repository && issues.length === 0 ? <PlainLine text="- No open issues." fg={colors.muted} /> : null}
-			{issues.map((issue, index) => {
-				const selected = index === selectedIndex
-				const hovered = index === hoveredIndex
-				const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
-				const ageText = `${daysOpen(issue.createdAt)}d`
-				return (
-					<TextLine
-						key={issue.url}
-						width={contentWidth}
-						fg={selected ? colors.selectedText : colors.text}
-						bg={rowBg}
-						onMouseDown={() => onSelectIssue(index)}
-						onMouseOver={() => setHoveredIndex(index)}
-						onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
-					>
-						<span fg={selected ? colors.accent : colors.count} attributes={selected ? TextAttributes.BOLD : 0}>
-							{fitCell(`#${issue.number}`, numberWidth, "right")}
-						</span>
-						<span> </span>
-						<MatchedCell text={issue.title} width={titleWidth} query="" />
-						<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
-					</TextLine>
-				)
+			{status === "ready" && repository && issues.length === 0 ? (
+				<PlainLine text={filterText.length > 0 ? "- No matching issues." : "- No open issues."} fg={colors.muted} />
+			) : null}
+			{groups.flatMap(([groupRepository, groupIssues]) => {
+				const rows: ReactNode[] = []
+				if (groupRepository) {
+					rows.push(
+						<TextLine key={`group-${groupRepository}`} width={contentWidth}>
+							<span fg={repoColor(groupRepository)}>{GROUP_ICON} </span>
+							<span fg={repoColor(groupRepository)} attributes={TextAttributes.BOLD}>
+								<MatchedCell text={groupRepository} width={contentWidth - 2} query={filterText} />
+							</span>
+						</TextLine>,
+					)
+				}
+				for (const { issue, index } of groupIssues) {
+					const selected = index === selectedIndex
+					const hovered = index === hoveredIndex
+					const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
+					const ageText = `${daysOpen(issue.createdAt)}d`
+					rows.push(
+						<TextLine
+							key={issue.url}
+							width={contentWidth}
+							fg={selected ? colors.selectedText : colors.text}
+							bg={rowBg}
+							onMouseDown={() => onSelectIssue(index)}
+							onMouseOver={() => setHoveredIndex(index)}
+							onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
+						>
+							<span fg={selected ? colors.accent : colors.count} attributes={selected ? TextAttributes.BOLD : 0}>
+								{fitCell(`#${issue.number}`, numberWidth, "right")}
+							</span>
+							<span> </span>
+							<MatchedCell text={issue.title} width={titleWidth} query={filterText} />
+							<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
+						</TextLine>,
+					)
+				}
+				return rows
 			})}
 		</box>
 	)

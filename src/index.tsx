@@ -4,6 +4,7 @@ import { addDefaultParsers, createCliRenderer } from "@opentui/core"
 import { createRoot, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Effect } from "effect"
 import { useEffect, useState } from "react"
+import { errorMessage } from "./errors.js"
 import { loadStoredSystemThemeAutoReload } from "./themeStore.js"
 import { colors, setSystemThemeColors } from "./ui/colors.js"
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
@@ -33,7 +34,7 @@ type AppBundle = {
 
 let notifySystemThemeReload = () => {}
 
-const StartupLogo = () => {
+const StartupLogo = ({ hint }: { readonly hint: string }) => {
 	const startupRenderer = useRenderer()
 	const { width, height } = useTerminalDimensions()
 	const [frame, setFrame] = useState(0)
@@ -49,7 +50,7 @@ const StartupLogo = () => {
 
 	return (
 		<box width={width} height={height} flexDirection="column" backgroundColor={colors.background}>
-			<LoadingLogoPane content={{ hint: "Fetching latest open PRs" }} width={width} height={height} frame={frame} />
+			<LoadingLogoPane content={{ hint }} width={width} height={height} frame={frame} />
 		</box>
 	)
 }
@@ -84,21 +85,28 @@ process.on("SIGUSR2", () => {
 
 const Bootstrap = () => {
 	const [appBundle, setAppBundle] = useState<AppBundle | null>(null)
+	const [bootHint, setBootHint] = useState("Starting ghui")
 	const [systemThemeGeneration, setSystemThemeGeneration] = useState(0)
 
 	useEffect(() => {
 		let cancelled = false
 		notifySystemThemeReload = () => setSystemThemeGeneration((current) => current + 1)
 		const timer = globalThis.setTimeout(() => {
+			setBootHint("Registering syntax parsers")
 			addGhUiParsers()
 
-			const appBundlePromise = Promise.all([import("@effect/atom-react"), import("./App.js")])
-			const palettePromise = reloadSystemThemeColors().catch(() => {})
-
-			void Promise.all([appBundlePromise, palettePromise]).then(([[{ RegistryProvider }, { App }]]) => {
-				if (cancelled) return
-				setAppBundle({ RegistryProvider, App })
-			})
+			setBootHint("Loading ghui app")
+			void Promise.all([import("@effect/atom-react"), import("./App.js")]).then(
+				([{ RegistryProvider }, { App }]) => {
+					if (cancelled) return
+					setBootHint("Mounting ghui app")
+					setAppBundle({ RegistryProvider, App })
+				},
+				(error) => {
+					if (cancelled) return
+					setBootHint(errorMessage(error))
+				},
+			)
 		}, 0)
 
 		return () => {
@@ -117,7 +125,7 @@ const Bootstrap = () => {
 		)
 	}
 
-	return <StartupLogo />
+	return <StartupLogo hint={bootHint} />
 }
 
 process.stdout.write(FOCUS_REPORTING_ENABLE)

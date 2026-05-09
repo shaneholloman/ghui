@@ -147,7 +147,7 @@ describe("PR list scrolling", () => {
 		expect(captureCharFrame()).not.toContain("PULL REQUESTS    ISSUES")
 		await press(mockInput, renderOnce, { kind: "key", name: "3" }, 2)
 		expect(captureCharFrame()).toContain("ISSUES")
-		expect(captureCharFrame()).toContain("Open a repository to list issues.")
+		expect(captureCharFrame()).toContain("No issues in your repositories.")
 		expect(captureCharFrame()).not.toContain("1/2 surface")
 		expect(captureCharFrame()).not.toContain("tab surface")
 
