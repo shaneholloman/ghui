@@ -1,6 +1,6 @@
 import { Data } from "effect"
 import { colors } from "./colors.js"
-import { HintRow, type HintItem } from "./primitives.js"
+import { HintRow, TextLine, type HintItem } from "./primitives.js"
 
 export type RetryProgress = Data.TaggedEnum<{
 	Idle: {}
@@ -12,6 +12,8 @@ export const initialRetryProgress: RetryProgress = RetryProgress.Idle()
 
 interface HintsContext {
 	readonly filterEditing: boolean
+	readonly filterText: string
+	readonly filterPlaceholder: string
 	readonly showFilterClear: boolean
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
@@ -23,6 +25,8 @@ interface HintsContext {
 	readonly hasSelection: boolean
 	readonly canOpenDetails: boolean
 	readonly canOpenRepository: boolean
+	readonly canAddRepository: boolean
+	readonly canRemoveRepository: boolean
 	readonly canOpenDiff: boolean
 	readonly canOpenComments: boolean
 	readonly hasComments: boolean
@@ -32,14 +36,35 @@ interface HintsContext {
 	readonly retryProgress: RetryProgress
 }
 
-const filterEditingHints: readonly HintItem[] = [
-	{ key: "search", label: "typing" },
-	{ key: "↑↓", label: "move" },
-	{ key: "enter", label: "apply" },
-	{ key: "esc", label: "cancel" },
-	{ key: "ctrl-u", label: "clear" },
-	{ key: "ctrl-w", label: "word" },
-]
+const FILTER_CURSOR = "█"
+
+const filterPlaceholder = (ctx: HintsContext) => `${ctx.filterPlaceholder.charAt(0).toUpperCase()}${ctx.filterPlaceholder.slice(1)}`
+const activeFilterLabel = (ctx: HintsContext) => (ctx.filterText.length > 0 ? ctx.filterText : filterPlaceholder(ctx))
+
+const FilterEditingPrompt = (ctx: HintsContext) => {
+	const placeholder = filterPlaceholder(ctx)
+	const placeholderCursor = placeholder.charAt(0)
+	const placeholderRest = placeholder.slice(1)
+	return (
+		<TextLine>
+			<span fg={colors.count}>/</span>
+			<span fg={colors.muted}> </span>
+			{ctx.filterText.length > 0 ? (
+				<>
+					<span fg={colors.text}>{ctx.filterText}</span>
+					<span fg={colors.muted}>{FILTER_CURSOR}</span>
+				</>
+			) : (
+				<>
+					<span fg={colors.background} bg={colors.muted}>
+						{placeholderCursor}
+					</span>
+					<span fg={colors.muted}>{placeholderRest}</span>
+				</>
+			)}
+		</TextLine>
+	)
+}
 
 const diffViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "esc", label: "back" },
@@ -72,7 +97,7 @@ const commentsViewHints = (ctx: HintsContext): readonly HintItem[] => [
 const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 	const retrying = ctx.retryProgress._tag === "Retrying"
 	return [
-		{ key: "/", label: "filter" },
+		{ key: "/", label: ctx.showFilterClear ? activeFilterLabel(ctx) : "filter" },
 		{ key: "esc", label: "clear", when: ctx.showFilterClear },
 		{
 			key: "retry",
@@ -82,7 +107,9 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		},
 		{ key: ctx.loadingIndicator, label: "loading", when: !retrying && ctx.isLoading, keyFg: colors.status.pending },
 		{ key: "r", label: "retry", when: ctx.hasError },
+		{ key: "a", label: "add repo", when: ctx.canAddRepository },
 		{ key: "enter", label: "open repo", when: ctx.canOpenRepository },
+		{ key: "x", label: "remove", when: ctx.canRemoveRepository },
 		{ key: "enter", label: "details", when: ctx.canOpenDetails },
 		{ key: "c", label: "comments", when: ctx.canOpenComments && ctx.hasComments },
 		{ key: "d", label: "diff", when: ctx.canOpenDiff },
@@ -91,11 +118,10 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 }
 
 const footerHints = (ctx: HintsContext): readonly HintItem[] => {
-	if (ctx.filterEditing) return filterEditingHints
 	if (ctx.commentsViewActive) return commentsViewHints(ctx)
 	if (ctx.diffFullView) return diffViewHints(ctx)
 	if (ctx.detailFullView) return detailFullViewHints(ctx)
 	return defaultHints(ctx)
 }
 
-export const FooterHints = (props: HintsContext) => <HintRow items={footerHints(props)} />
+export const FooterHints = (props: HintsContext) => (props.filterEditing ? <FilterEditingPrompt {...props} /> : <HintRow items={footerHints(props)} />)

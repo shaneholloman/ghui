@@ -10,6 +10,7 @@ import { DiffStats } from "./diffStats.js"
 import { collectUrlPositions, findUrlAt, inlineSegments, type InlinePalette } from "./inlineSegments.js"
 import { LabelChips, labelChipRows } from "./LabelChips.js"
 import { centerCell, Divider, Filler, fitCell, PaddedRow, PlainLine, TextLine, trimCell } from "./primitives.js"
+import { SubjectMetaLine } from "./SubjectMetaLine.js"
 
 const inlinePalette = (): InlinePalette => ({ text: colors.text, inlineCode: colors.inlineCode, link: colors.link, count: colors.count })
 
@@ -521,8 +522,6 @@ export const DetailHeader = ({
 	const statsText = diffStatText(pullRequest)
 	const commentsText = commentsStatus === "ready" && comments.length > 0 ? commentCountText(comments.length) : null
 	const opened = formatRelativeDate(pullRequest.createdAt)
-	const leftMeta = `#${pullRequest.number} by ${pullRequest.author} · ${opened}`
-	const commentsGap = commentsText ? Math.max(2, contentWidth - leftMeta.length - commentsText.length) : 0
 	const target = pullRequest.baseRefName && pullRequest.baseRefName !== pullRequest.defaultBranchName ? ` → ${pullRequest.baseRefName}` : ""
 	const branchBudget = Math.max(0, contentWidth - statsText.length - target.length - 2)
 	const branch = pullRequest.headRefName && branchBudget >= 4 ? `${trimCell(pullRequest.headRefName, branchBudget)}${target}` : ""
@@ -537,12 +536,7 @@ export const DetailHeader = ({
 			</box>
 			<PaddedRow>
 				<TextLine>
-					<span fg={colors.count}>#{pullRequest.number}</span>
-					<span fg={colors.muted}> by </span>
-					<span fg={colors.count}>{pullRequest.author}</span>
-					<span fg={colors.muted}> · {opened}</span>
-					{commentsText ? <span fg={colors.muted}>{" ".repeat(commentsGap)}</span> : null}
-					{commentsText ? <span fg={colors.muted}>{commentsText}</span> : null}
+					<SubjectMetaLine number={pullRequest.number} author={pullRequest.author} dateText={opened} commentsText={commentsText} contentWidth={contentWidth} />
 				</TextLine>
 			</PaddedRow>
 			<PaddedRow>

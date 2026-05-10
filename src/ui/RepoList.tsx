@@ -1,23 +1,24 @@
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
-import type { RefObject } from "react"
+import { useState, type RefObject } from "react"
 import { daysOpen } from "../date.js"
-import { colors } from "./colors.js"
+import { colors, rowHoverBackground } from "./colors.js"
 import { wrapText } from "./DetailsPane.js"
+import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
 import { Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
 
 export interface RepositoryListItem {
 	readonly repository: string
 	readonly pullRequestCount: number
 	readonly issueCount: number
+	readonly current: boolean
 	readonly favorite: boolean
 	readonly recent: boolean
 	readonly lastActivityAt: Date | null
 	readonly description: string | null
 }
 
-const plural = (count: number, singular: string, pluralText = `${singular}s`) => `${count} ${count === 1 ? singular : pluralText}`
-const pullRequestText = (item: RepositoryListItem) => plural(item.pullRequestCount, "PR")
-const issueText = (item: RepositoryListItem) => plural(item.issueCount, "iss")
+export const getRepoDetailJunctionRows = (repository: RepositoryListItem | null): readonly number[] => (repository ? [2, 4] : [])
+
 const activityText = (date: Date | null) => (date ? `${daysOpen(date)}d` : "-")
 
 export const RepoList = ({
@@ -37,6 +38,8 @@ export const RepoList = ({
 	isFilterEditing?: boolean
 	onSelectRepository: (index: number) => void
 }) => {
+	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+
 	if (repositories.length === 0) {
 		return (
 			<box width={contentWidth} flexDirection="column">
@@ -52,10 +55,8 @@ export const RepoList = ({
 		)
 	}
 
-	const prWidth = Math.max(5, ...repositories.map((repo) => pullRequestText(repo).length))
-	const issueWidth = Math.max(5, ...repositories.map((repo) => issueText(repo).length))
 	const ageWidth = Math.max(4, ...repositories.map((repo) => activityText(repo.lastActivityAt).length))
-	const repoWidth = Math.max(12, contentWidth - 2 - prWidth - 1 - issueWidth - 1 - ageWidth)
+	const repoWidth = Math.max(12, contentWidth - 3 - ageWidth)
 
 	return (
 		<box width={contentWidth} flexDirection="column">
@@ -68,23 +69,34 @@ export const RepoList = ({
 			) : null}
 			{repositories.map((repo, index) => {
 				const selected = index === selectedIndex
-				const marker = repo.favorite ? "★" : repo.recent ? "›" : " "
+				const hovered = index === hoveredIndex
+				const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
+				const marker = repo.current ? "›" : repo.favorite ? "★" : "·"
+				const markerFg = repo.current ? colors.count : repo.favorite ? colors.accent : colors.muted
+				const nameFg = repo.current ? colors.count : colors.text
 				const age = activityText(repo.lastActivityAt)
 				return (
 					<box
 						key={repo.repository}
+						width={contentWidth}
 						height={1}
-						{...(selected ? { backgroundColor: colors.selectedBg } : {})}
+						{...(rowBg ? { backgroundColor: rowBg } : {})}
 						onMouseDown={() => onSelectRepository(index)}
-						onMouseOver={() => onSelectRepository(index)}
+						onMouseOver={() => setHoveredIndex(index)}
+						onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
 					>
-						<TextLine bg={selected ? colors.selectedBg : undefined}>
-							<span fg={repo.favorite ? colors.accent : colors.muted}>{marker}</span>
+						<TextLine
+							width={contentWidth}
+							bg={rowBg}
+							onMouseDown={() => onSelectRepository(index)}
+							onMouseOver={() => setHoveredIndex(index)}
+							onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
+						>
+							<span fg={markerFg}>{marker}</span>
 							<span> </span>
-							<MatchedCell text={repo.repository} width={repoWidth} query={filterText} />
-							<span fg={colors.muted}>{fitCell(pullRequestText(repo), prWidth, "right")}</span>
-							<span fg={colors.muted}> </span>
-							<span fg={colors.muted}>{fitCell(issueText(repo), issueWidth, "right")}</span>
+							<span fg={nameFg}>
+								<MatchedCell text={repo.repository} width={repoWidth} query={filterText} />
+							</span>
 							<span fg={colors.muted}> </span>
 							<span fg={colors.muted}>{fitCell(age, ageWidth, "right")}</span>
 						</TextLine>
@@ -108,11 +120,13 @@ export const RepoDetailPane = ({
 	descriptionLineLimit?: number
 	descriptionScrollRef?: RefObject<ScrollBoxRenderable | null>
 }) => {
-	const contentWidth = Math.max(1, width - 2)
+	const contentWidth = paneContentWidth(width)
 	if (!repository) {
 		return (
-			<box width={width} height={height} flexDirection="column" paddingLeft={1} paddingRight={1}>
-				<PlainLine text="No repository selected" fg={colors.muted} />
+			<box width={width} height={height} flexDirection="column">
+				<PaneInsetLine width={width}>
+					<span fg={colors.muted}>No repository selected</span>
+				</PaneInsetLine>
 				<Filler rows={Math.max(0, height - 1)} prefix="repo-empty" />
 			</box>
 		)
@@ -121,31 +135,35 @@ export const RepoDetailPane = ({
 	const description = repository.description ?? "Open this repository to view pull requests and issues."
 	const wrappedDescriptionLines = wrapText(description, contentWidth)
 	const descriptionLines = descriptionScrollRef ? wrappedDescriptionLines : wrappedDescriptionLines.slice(0, descriptionLineLimit)
-	const status = repository.favorite ? "favorite" : repository.recent ? "recent" : "repository"
+	const status = repository.current ? "current" : repository.favorite ? "favorite" : repository.recent ? "recent" : "repository"
 	const activity = repository.lastActivityAt ? `${daysOpen(repository.lastActivityAt)}d ago` : "unknown"
 	const fixedRows = 6
 	const descriptionHeight = Math.max(1, height - fixedRows)
 	return (
-		<box width={width} height={height} flexDirection="column" paddingLeft={1} paddingRight={1}>
-			<TextLine width={contentWidth}>
+		<box width={width} height={height} flexDirection="column">
+			<PaneInsetLine width={width}>
 				<span fg={colors.text} attributes={TextAttributes.BOLD}>
 					{fitCell(repository.repository, contentWidth)}
 				</span>
-			</TextLine>
-			<TextLine width={contentWidth}>
-				<span fg={repository.favorite ? colors.accent : colors.count}>{status}</span>
-				<span fg={colors.muted}> · updated {activity}</span>
-			</TextLine>
-			<box height={1} />
-			<TextLine width={contentWidth}>
-				<span fg={colors.count}>{fitCell(String(repository.pullRequestCount), 4, "right")}</span>
-				<span fg={colors.muted}> pull requests</span>
-			</TextLine>
-			<TextLine width={contentWidth}>
-				<span fg={colors.count}>{fitCell(String(repository.issueCount), 4, "right")}</span>
+			</PaneInsetLine>
+			<PaneInsetLine width={width}>
+				<span fg={repository.current || repository.favorite ? colors.accent : colors.count}>{status}</span>
+				<span fg={colors.muted}> updated {activity}</span>
+			</PaneInsetLine>
+			<PaneDivider width={width} />
+			<PaneInsetLine width={width}>
+				<span fg={colors.muted}>known </span>
+				<span fg={colors.count}>{repository.pullRequestCount}</span>
+				<span fg={colors.muted}> PRs </span>
+				<span fg={colors.count}>{repository.issueCount}</span>
 				<span fg={colors.muted}> issues</span>
-			</TextLine>
-			<box height={1} />
+			</PaneInsetLine>
+			<PaneDivider width={width} />
+			<PaneInsetLine width={width}>
+				<span fg={colors.count} attributes={TextAttributes.BOLD}>
+					About
+				</span>
+			</PaneInsetLine>
 			<scrollbox
 				{...(descriptionScrollRef ? { ref: descriptionScrollRef } : {})}
 				focusable={false}
@@ -155,7 +173,9 @@ export const RepoDetailPane = ({
 			>
 				<box flexDirection="column">
 					{descriptionLines.map((line, index) => (
-						<PlainLine key={index} text={fitCell(line, contentWidth)} fg={colors.muted} />
+						<PaneInsetLine key={index} width={width}>
+							<span fg={colors.muted}>{fitCell(line, contentWidth)}</span>
+						</PaneInsetLine>
 					))}
 				</box>
 			</scrollbox>

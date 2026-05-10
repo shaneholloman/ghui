@@ -26,6 +26,7 @@ const addGhUiParsers = () =>
 
 const FOCUS_REPORTING_ENABLE = "\x1b[?1004h"
 const FOCUS_REPORTING_DISABLE = "\x1b[?1004l"
+const FULL_SCREEN_REPAINT = "\x1b[2J\x1b[3J\x1b[H"
 
 type AppBundle = {
 	readonly RegistryProvider: (typeof import("@effect/atom-react"))["RegistryProvider"]
@@ -129,5 +130,9 @@ const Bootstrap = () => {
 }
 
 process.stdout.write(FOCUS_REPORTING_ENABLE)
+if (process.env.GHUI_FORCE_FULL_REPAINT_ON_START === "1") {
+	process.stdout.write(FULL_SCREEN_REPAINT)
+	renderer.requestRender()
+}
 
 createRoot(renderer).render(<Bootstrap />)

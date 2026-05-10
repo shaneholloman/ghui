@@ -39,7 +39,7 @@ const REVIEW_ICON: Record<ReviewStatus, string> = {
 	approved: "✓",
 	changes: "!",
 	review: "◐",
-	none: "·",
+	none: "⌥",
 }
 
 const CHECK_ICON: Record<PullRequestItem["checkStatus"], string> = {

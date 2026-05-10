@@ -1,4 +1,4 @@
-import type { ScrollBoxRenderable } from "@opentui/core"
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { RegistryContext, useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
 import { useKeymap } from "@ghui/keymap/react"
 import { appKeymap, type AppCtx } from "./keymap/all.js"
@@ -22,13 +22,12 @@ import {
 	type PullRequestReviewComment,
 	type SubmitPullRequestReviewInput,
 } from "./domain.js"
-import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import type { PullRequestLoad } from "./pullRequestLoad.js"
-import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewLabel, viewMode, viewRepository } from "./pullRequestViews.js"
+import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewMode, viewRepository } from "./pullRequestViews.js"
 
 import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
-import { colors } from "./ui/colors.js"
+import { colors, rowHoverBackground } from "./ui/colors.js"
 import {
 	favoriteRepositoriesAtom,
 	readWorkspacePreferencesAtom,
@@ -149,7 +148,7 @@ import {
 import { FooterHints, RetryProgress } from "./ui/FooterHints.js"
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
 import { SplitPane } from "./ui/paneLayout.js"
-import { Divider, Filler, fitCell, PlainLine } from "./ui/primitives.js"
+import { Divider, Filler, fitCell, PlainLine, TextLine } from "./ui/primitives.js"
 import {
 	filterChangedFiles,
 	filterLabels,
@@ -192,7 +191,7 @@ import { IssuesWorkspace } from "./surfaces/IssuesWorkspace.js"
 import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
 import { WorkspaceModals } from "./surfaces/WorkspaceModals.js"
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
-import { getIssueDetailJunctionRows, IssueDetailPane } from "./ui/IssueList.js"
+import { getIssueDetailJunctionRows, issueListRowIndex, issueListVisualLineCount, IssueDetailPane } from "./ui/IssueList.js"
 import { singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
@@ -234,7 +233,13 @@ const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inn
 const repositoryFilterScore = (repository: RepositoryListItem, query: string) => {
 	const normalized = query.trim().toLowerCase()
 	if (normalized.length === 0) return 0
-	const fields = [repository.repository.toLowerCase(), repository.description?.toLowerCase() ?? "", repository.favorite ? "favorite" : "", repository.recent ? "recent" : ""]
+	const fields = [
+		repository.repository.toLowerCase(),
+		repository.description?.toLowerCase() ?? "",
+		repository.current ? "current" : "",
+		repository.favorite ? "favorite" : "",
+		repository.recent ? "recent" : "",
+	]
 	const scores = fields.flatMap((field, index) => {
 		const matchIndex = field.indexOf(normalized)
 		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
@@ -444,6 +449,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
 	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
+	const [homeCrumbHovered, setHomeCrumbHovered] = useState(false)
 	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
@@ -532,6 +538,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const issuesStatus: LoadStatus = selectedRepository === null ? "ready" : issuesResult.waiting ? "loading" : AsyncResult.isFailure(issuesResult) ? "error" : "ready"
 	const issuesError = AsyncResult.isFailure(issuesResult) ? errorMessage(Cause.squash(issuesResult.cause)) : null
 	const selectedIssue = issues[Math.max(0, Math.min(selectedIssueIndex, issues.length - 1))] ?? null
+	const showIssueRepositoryGroups = selectedRepository === null
+	const selectedIssueRowIndex = issueListRowIndex(issues, selectedIssueIndex, showIssueRepositoryGroups)
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 
@@ -550,6 +558,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				repository,
 				pullRequestCount: catalogItem?.pullRequestCount ?? 0,
 				issueCount: catalogItem?.issueCount ?? 0,
+				current: repository === detectedRepository,
 				favorite: favoriteRepositories[repository] === true,
 				recent: recentRepositories.includes(repository),
 				lastActivityAt: null,
@@ -578,6 +587,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			touch(issue.repository, issue.updatedAt, issue.title, { pullRequestCount: 0, issueCount: 1 })
 		}
 		return [...byRepository.values()].sort((left, right) => {
+			if (left.current !== right.current) return left.current ? -1 : 1
 			if (left.favorite !== right.favorite) return left.favorite ? -1 : 1
 			if (left.recent !== right.recent) return left.recent ? -1 : 1
 			const leftTime = left.lastActivityAt?.getTime() ?? 0
@@ -604,12 +614,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				status: pullRequestStatus,
 				error: pullRequestError,
 				filterText: visibleFilterText,
-				showFilterBar: filterMode || filterQuery.length > 0,
 				loadedCount: loadedPullRequestCount,
 				hasMore: hasMorePullRequests,
 				isLoadingMore: isLoadingMorePullRequests,
 			}),
-		[visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, filterMode, filterQuery, loadedPullRequestCount, hasMorePullRequests, isLoadingMorePullRequests],
+		[visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, loadedPullRequestCount, hasMorePullRequests, isLoadingMorePullRequests],
 	)
 	const selectedPullRequestRowIndex = pullRequestListRowIndex(pullRequestListRows, selectedPullRequest?.url ?? null)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
@@ -695,15 +704,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 		return low
 	}
-	const summaryRight =
-		activeWorkspaceSurface === "pullRequests" && pullRequestLoad?.fetchedAt
-			? `updated ${formatShortDate(pullRequestLoad.fetchedAt)} ${formatTimestamp(pullRequestLoad.fetchedAt)}`
-			: activeWorkspaceSurface === "pullRequests" && pullRequestStatus === "loading"
-				? "loading pull requests..."
-				: ""
-	const headerLeft = selectedRepository ?? username ?? viewLabel(activeView)
-	const headerLine = `${fitCell(headerLeft, Math.max(0, headerFooterWidth - summaryRight.length))}${summaryRight}`
+	const headerRight = username ? `@${username}` : ""
+	const headerLeftWidth = Math.max(0, headerFooterWidth - headerRight.length)
 	const footerNotice = notice ? fitCell(notice, headerFooterWidth) : null
+	const homeCrumb = "HOME"
+	const breadcrumbSeparator = "/"
+	const breadcrumbSeparatorText = ` ${breadcrumbSeparator} `
+	const headerRepoWidth = selectedRepository ? Math.max(0, headerLeftWidth - homeCrumb.length - breadcrumbSeparatorText.length) : 0
 	const selectPullRequestByUrl = (url: string) => {
 		const index = visiblePullRequests.findIndex((pullRequest) => pullRequest.url === url)
 		if (index >= 0) {
@@ -834,6 +841,18 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			}
 			return { ...current, [repository]: true }
 		})
+	}
+	const removeSelectedRepository = () => {
+		if (!selectedRepositoryItem) return
+		const repository = selectedRepositoryItem.repository
+		setFavoriteRepositories((current) => {
+			if (!current[repository]) return current
+			const next = { ...current }
+			delete next[repository]
+			return next
+		})
+		setRecentRepositories((current) => current.filter((item) => item !== repository))
+		flashNotice(repository === detectedRepository ? `Removed saved state for ${repository}; current repo stays pinned` : `Removed ${repository} from tracked repositories`)
 	}
 	const loadMorePullRequests = () => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
@@ -1023,7 +1042,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}, [visiblePullRequests.length, filterMode, filterQuery, detailFullView, diffFullView, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
 
 	useScrollFollowSelected(prListScrollRef, selectedPullRequestRowIndex)
-	useScrollFollowSelected(issueListScrollRef, issues.length === 0 ? null : selectedIssueIndex)
+	useScrollFollowSelected(issueListScrollRef, issues.length === 0 ? null : selectedIssueRowIndex)
 
 	useEffect(() => {
 		setDiffFileIndex(0)
@@ -2176,7 +2195,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				if (activeWorkspaceSurface === "repos") openSelectedRepository()
 				else runCommandById("detail.open")
 			},
+			openRepositoryPicker,
 			toggleFavoriteRepository,
+			removeSelectedRepository,
 			goUpWorkspace: () => {
 				goUpWorkspaceScope()
 			},
@@ -2278,8 +2299,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		status: pullRequestStatus,
 		error: pullRequestError,
 		filterText: visibleFilterText,
-		showFilterBar: filterMode || filterQuery.length > 0,
-		isFilterEditing: filterMode,
 		loadedCount: loadedPullRequestCount,
 		hasMore: hasMorePullRequests,
 		isLoadingMore: isLoadingMorePullRequests,
@@ -2295,7 +2314,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		error: issuesError,
 		repository: selectedRepository,
 		filterText: visibleFilterText,
-		showFilterBar: activeWorkspaceSurface === "issues" && (filterMode || filterQuery.length > 0),
+		showFilterBar: false,
 		isFilterEditing: filterMode,
 		onSelectIssue: setSelectedIssueIndex,
 	} as const
@@ -2303,7 +2322,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		repositories: repositoryItems,
 		selectedIndex: selectedRepositoryIndex,
 		filterText: visibleFilterText,
-		showFilterBar: activeWorkspaceSurface === "repos" && (filterMode || filterQuery.length > 0),
+		showFilterBar: false,
 		isFilterEditing: filterMode,
 		onSelectRepository: setSelectedRepositoryIndex,
 	} as const
@@ -2322,8 +2341,9 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const showIssueSplit = activeWorkspaceSurface === "issues" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 	const issueJunctions = showIssueSplit ? getIssueDetailJunctionRows(selectedIssue, rightPaneWidth) : []
 	const showPaneSplit = showWideSplit || showRepoSplit || showIssueSplit
-	const issueListNeedsScroll = issuesStatus === "ready" && issues.length > wideBodyHeight
-	const narrowIssueListNeedsScroll = issuesStatus === "ready" && issues.length > narrowIssueListHeight
+	const issueVisualLineCount = issueListVisualLineCount(issues, showIssueRepositoryGroups)
+	const issueListNeedsScroll = issuesStatus === "ready" && issueVisualLineCount > wideBodyHeight
+	const narrowIssueListNeedsScroll = issuesStatus === "ready" && issueVisualLineCount > narrowIssueListHeight
 	const repoListNeedsScroll = repositoryItems.length > wideBodyHeight
 	const narrowRepoListNeedsScroll = repositoryItems.length > narrowRepoListHeight
 	const workspaceTabCounts = {
@@ -2331,6 +2351,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		pullRequests: hasMorePullRequests ? `${visiblePullRequests.length}+` : visiblePullRequests.length,
 		issues: issues.length,
 	}
+	const filterPlaceholder = activeWorkspaceSurface === "pullRequests" ? "filter pull requests" : activeWorkspaceSurface === "issues" ? "filter issues" : "filter repositories"
 	const workspaceTabJunctions = workspaceTabSeparatorColumns(workspaceTabCounts, workspaceTabSurfaces)
 	const workspaceTopDividerJunctions = showWorkspaceTabs ? workspaceTabJunctions.map((at) => ({ at, char: "┬" })) : []
 	const workspaceBottomDividerJunctions = showWorkspaceTabs
@@ -2372,11 +2393,44 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 		return selectedDiffCommentAnchor && selectedDiffCommentLabel ? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}` : "No diff line selected"
 	})()
+	const homeCrumbBg = selectedRepository && homeCrumbHovered ? rowHoverBackground() : undefined
+	const headerContent = selectedRepository ? (
+		<>
+			<box width={homeCrumb.length} height={1} onMouseDown={() => goUpWorkspaceScope()} onMouseOver={() => setHomeCrumbHovered(true)} onMouseOut={() => setHomeCrumbHovered(false)}>
+				<text wrapMode="none" truncate fg={colors.muted} {...(homeCrumbBg === undefined ? {} : { bg: homeCrumbBg })} attributes={TextAttributes.BOLD}>
+					{homeCrumb}
+				</text>
+			</box>
+			<TextLine width={breadcrumbSeparatorText.length}>
+				<span fg={colors.separator} attributes={TextAttributes.BOLD}>
+					{breadcrumbSeparatorText}
+				</span>
+			</TextLine>
+			<TextLine width={headerRepoWidth}>
+				<span fg={colors.text} attributes={TextAttributes.BOLD}>
+					{headerRepoWidth > 0 ? fitCell(selectedRepository, headerRepoWidth) : ""}
+				</span>
+			</TextLine>
+		</>
+	) : (
+		<TextLine width={headerLeftWidth}>
+			<span fg={colors.text} attributes={TextAttributes.BOLD}>
+				{fitCell(homeCrumb, headerLeftWidth)}
+			</span>
+		</TextLine>
+	)
 
 	return (
 		<box width={terminalWidth} height={terminalHeight} flexDirection="column" backgroundColor={colors.background}>
 			<box paddingLeft={1} paddingRight={1} flexDirection="column" backgroundColor={colors.background}>
-				<PlainLine text={headerLine} fg={colors.muted} bold />
+				<box width={headerFooterWidth} height={1} flexDirection="row">
+					{headerContent}
+					{headerRight ? (
+						<TextLine width={headerRight.length}>
+							<span fg={colors.muted}>{headerRight}</span>
+						</TextLine>
+					) : null}
+				</box>
 			</box>
 			<Divider width={contentWidth} junctions={workspaceTopDividerJunctions} />
 			{showWorkspaceTabs ? (
@@ -2711,6 +2765,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				) : (
 					<FooterHints
 						filterEditing={filterMode}
+						filterText={visibleFilterText}
+						filterPlaceholder={filterPlaceholder}
 						showFilterClear={filterMode || filterQuery.length > 0}
 						detailFullView={detailFullView}
 						diffFullView={diffFullView}
@@ -2722,6 +2778,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						hasSelection={selectedCommentSubject !== null}
 						canOpenDetails={selectedCommentSubject !== null}
 						canOpenRepository={activeWorkspaceSurface === "repos" && selectedRepositoryItem !== null}
+						canAddRepository={activeWorkspaceSurface === "repos"}
+						canRemoveRepository={activeWorkspaceSurface === "repos" && selectedRepositoryItem !== null}
 						canOpenDiff={activeWorkspaceSurface === "pullRequests" && selectedPullRequest !== null}
 						canOpenComments={selectedCommentSubject !== null}
 						hasComments={selectedCommentCount > 0}

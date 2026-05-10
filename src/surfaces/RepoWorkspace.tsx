@@ -3,7 +3,7 @@ import type { ComponentProps, MutableRefObject } from "react"
 import { DETAIL_BODY_SCROLL_LIMIT } from "../ui/DetailsPane.js"
 import { SplitPane } from "../ui/paneLayout.js"
 import { Divider } from "../ui/primitives.js"
-import { RepoDetailPane, RepoList, type RepositoryListItem } from "../ui/RepoList.js"
+import { getRepoDetailJunctionRows, RepoDetailPane, RepoList, type RepositoryListItem } from "../ui/RepoList.js"
 
 export interface RepoWorkspaceProps {
 	readonly isWideLayout: boolean
@@ -47,6 +47,7 @@ export const RepoWorkspace = ({
 				height={wideBodyHeight}
 				leftWidth={leftPaneWidth}
 				rightWidth={rightPaneWidth}
+				junctionRows={getRepoDetailJunctionRows(selectedRepositoryItem)}
 				left={
 					repoListNeedsScroll ? (
 						<scrollbox focusable={false} height={wideBodyHeight} flexGrow={0}>

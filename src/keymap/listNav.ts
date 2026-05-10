@@ -12,7 +12,9 @@ export interface ListNavCtx {
 	readonly canScrollDetailPreview: boolean
 	readonly runCommandById: (id: string) => void
 	readonly openSelection: () => void
+	readonly openRepositoryPicker: () => void
 	readonly toggleFavoriteRepository: () => void
+	readonly removeSelectedRepository: () => void
 	readonly goUpWorkspace: () => void
 	readonly switchQueueMode: (delta: 1 | -1) => void
 	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
@@ -35,6 +37,10 @@ const itemSelected = (s: ListNavCtx) => (s.visibleCount > 0 ? true : "No item se
 const reposActive = (s: ListNavCtx) => (s.activeSurface === "repos" ? true : "Repository surface not active.")
 const pullRequestsActive = (s: ListNavCtx) => (s.activeSurface === "pullRequests" ? true : "Pull request surface not active.")
 const surfaceAt = (s: ListNavCtx, index: number) => s.surfaces[index] ?? null
+const goHome = (s: ListNavCtx) => {
+	if (s.canGoUpWorkspace) s.goUpWorkspace()
+	else s.switchWorkspaceSurface("repos")
+}
 
 export const listNavKeymap = List(
 	// Single-key command shortcuts (delegate to existing AppCommand registry)
@@ -43,8 +49,14 @@ export const listNavKeymap = List(
 	{ id: "workspace.third", title: "Third surface", keys: ["3"], run: (s) => (surfaceAt(s, 2) ? s.switchWorkspaceSurface(surfaceAt(s, 2)!) : undefined) },
 	{ id: "workspace.next-tab", title: "Next surface", keys: ["tab"], run: (s) => s.cycleWorkspaceSurface(1) },
 	{ id: "workspace.prev-tab", title: "Previous surface", keys: ["shift+tab"], run: (s) => s.cycleWorkspaceSurface(-1) },
+	{ id: "workspace.go-home", title: "Go home", keys: ["g h"], run: goHome },
+	{ id: "workspace.go-repos", title: "Go to repositories", keys: ["g r"], run: goHome },
+	{ id: "workspace.go-pulls", title: "Go to pull requests", keys: ["g p"], run: (s) => s.switchWorkspaceSurface("pullRequests") },
+	{ id: "workspace.go-issues", title: "Go to issues", keys: ["g i"], run: (s) => s.switchWorkspaceSurface("issues") },
 	{ id: "list.filter", title: "Filter", keys: ["/"], run: (s) => s.runCommandById("filter.open") },
+	{ id: "list.add-repo", title: "Add repository", keys: ["a"], enabled: reposActive, run: (s) => s.openRepositoryPicker() },
 	{ id: "list.favorite-repo", title: "Favorite repository", keys: ["f"], enabled: reposActive, run: (s) => s.toggleFavoriteRepository() },
+	{ id: "list.remove-repo", title: "Remove repository", keys: ["x"], enabled: reposActive, run: (s) => s.removeSelectedRepository() },
 	{ id: "list.refresh", title: "Refresh", keys: ["r"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.refresh") },
 	{ id: "list.theme", title: "Theme", keys: ["t"], run: (s) => s.runCommandById("theme.open") },
 	{ id: "list.diff", title: "Open diff", keys: ["d"], enabled: pullRequestsActive, run: (s) => s.runCommandById("diff.open") },

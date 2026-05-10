@@ -12,7 +12,6 @@ const pullRequestListRowHeight = (row: PullRequestListRow) => (row._tag === "pul
 
 export type PullRequestListRow =
 	| { readonly _tag: "title" }
-	| { readonly _tag: "filter" }
 	| { readonly _tag: "message"; readonly text: string; readonly color: string }
 	| { readonly _tag: "group"; readonly repository: string; readonly pullRequests: readonly PullRequestItem[] }
 	| { readonly _tag: "pull-request"; readonly pullRequest: PullRequestItem; readonly numberWidth: number; readonly ageWidth: number }
@@ -54,7 +53,6 @@ export const buildPullRequestListRows = ({
 	status,
 	error,
 	filterText,
-	showFilterBar,
 	loadedCount,
 	hasMore,
 	isLoadingMore,
@@ -66,7 +64,6 @@ export const buildPullRequestListRows = ({
 	readonly status: LoadStatus
 	readonly error: string | null
 	readonly filterText: string
-	readonly showFilterBar: boolean
 	readonly loadedCount: number
 	readonly hasMore: boolean
 	readonly isLoadingMore: boolean
@@ -76,7 +73,6 @@ export const buildPullRequestListRows = ({
 }): readonly PullRequestListRow[] => {
 	const itemCount = groups.reduce((count, [, pullRequests]) => count + pullRequests.length, 0)
 	const rows: PullRequestListRow[] = showTitle ? [{ _tag: "title" }] : []
-	if (showFilterBar) rows.push({ _tag: "filter" })
 	if (status === "loading" && itemCount === 0) rows.push({ _tag: "message", text: "- Loading pull requests...", color: colors.muted })
 	if (status === "error") rows.push({ _tag: "message", text: `- ${error ?? "Could not load pull requests."}`, color: colors.error })
 	if (status === "ready" && itemCount === 0)
@@ -129,10 +125,16 @@ const PullRequestRow = ({
 	const { reviewWidth, checkWidth, ageWidth, numberWidth, titleWidth } = getRowLayout(contentWidth, numWidth, ageColWidth)
 	const rowWidth = reviewWidth + 1 + numberWidth + 1 + titleWidth + checkWidth + ageWidth
 	const fillerWidth = Math.max(0, contentWidth - rowWidth)
-	const metaIndentWidth = reviewWidth + 1 + numberWidth + 1
+	const metaIndentWidth = reviewWidth + 1
 	const metaWidth = Math.max(8, contentWidth - metaIndentWidth)
-	const branchText = pullRequest.headRefName === pullRequest.baseRefName ? null : `${pullRequest.headRefName} → ${pullRequest.baseRefName}`
-	const metaText = branchText ? `@${pullRequest.author} · ${branchText}` : `@${pullRequest.author}`
+	const branchText =
+		pullRequest.headRefName === pullRequest.baseRefName
+			? null
+			: pullRequest.baseRefName === pullRequest.defaultBranchName
+				? pullRequest.headRefName
+				: `${pullRequest.headRefName} → ${pullRequest.baseRefName}`
+	const authorText = `@${pullRequest.author}`
+	const branchWidth = branchText ? Math.max(0, metaWidth - authorText.length - 1) : 0
 	const display = pullRequestRowDisplay(pullRequest, selected)
 	const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
 
@@ -154,7 +156,13 @@ const PullRequestRow = ({
 			</TextLine>
 			<TextLine width={contentWidth} fg={colors.muted} bg={rowBg}>
 				<span>{" ".repeat(metaIndentWidth)}</span>
-				<MatchedCell text={metaText} width={metaWidth} query={filterText} />
+				<MatchedCell text={authorText} width={branchText ? authorText.length : metaWidth} query={filterText} />
+				{branchText ? <span> </span> : null}
+				{branchText ? (
+					<span fg={colors.separator}>
+						<MatchedCell text={branchText} width={branchWidth} query={filterText} />
+					</span>
+				) : null}
 			</TextLine>
 		</box>
 	)
@@ -167,8 +175,6 @@ export const PullRequestList = ({
 	error,
 	contentWidth,
 	filterText,
-	showFilterBar,
-	isFilterEditing,
 	loadedCount,
 	hasMore,
 	isLoadingMore,
@@ -183,8 +189,6 @@ export const PullRequestList = ({
 	error: string | null
 	contentWidth: number
 	filterText: string
-	showFilterBar: boolean
-	isFilterEditing: boolean
 	loadedCount: number
 	hasMore: boolean
 	isLoadingMore: boolean
@@ -198,7 +202,6 @@ export const PullRequestList = ({
 		status,
 		error,
 		filterText,
-		showFilterBar,
 		loadedCount,
 		hasMore,
 		isLoadingMore,
@@ -212,15 +215,6 @@ export const PullRequestList = ({
 		<box width={contentWidth} flexDirection="column">
 			{rows.map((row, index) => {
 				if (row._tag === "title") return <SectionTitle key="title" title="PULL REQUESTS" />
-				if (row._tag === "filter") {
-					return (
-						<TextLine key="filter">
-							<span fg={colors.count}>/</span>
-							<span fg={colors.muted}> </span>
-							<span fg={isFilterEditing ? colors.text : colors.count}>{filterText.length > 0 ? filterText : "type to filter..."}</span>
-						</TextLine>
-					)
-				}
 				if (row._tag === "message") return <PlainLine key={`message-${index}`} text={row.text} fg={row.color} />
 				if (row._tag === "load-more") return <PlainLine key="load-more" text={row.text} fg={colors.muted} />
 				if (row._tag === "group") return <GroupTitle key={`group-${row.repository}`} label={row.repository} color={repoColor(row.repository)} filterText={filterText} />

@@ -11,7 +11,9 @@ export interface BuildListNavCtxInput {
 	readonly canScrollDetailPreview: boolean
 	readonly runCommandById: (id: string) => void
 	readonly openSelection: () => void
+	readonly openRepositoryPicker: () => void
 	readonly toggleFavoriteRepository: () => void
+	readonly removeSelectedRepository: () => void
 	readonly goUpWorkspace: () => void
 	readonly switchQueueMode: (delta: 1 | -1) => void
 	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
@@ -38,7 +40,9 @@ export const buildListNavCtx = (input: BuildListNavCtxInput): ListNavCtx => ({
 	canScrollDetailPreview: input.canScrollDetailPreview,
 	runCommandById: input.runCommandById,
 	openSelection: input.openSelection,
+	openRepositoryPicker: input.openRepositoryPicker,
 	toggleFavoriteRepository: input.toggleFavoriteRepository,
+	removeSelectedRepository: input.removeSelectedRepository,
 	goUpWorkspace: input.goUpWorkspace,
 	switchQueueMode: input.switchQueueMode,
 	switchWorkspaceSurface: input.switchWorkspaceSurface,

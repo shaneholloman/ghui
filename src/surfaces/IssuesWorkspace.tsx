@@ -2,7 +2,7 @@ import type { ScrollBoxRenderable } from "@opentui/core"
 import type { ComponentProps, MutableRefObject } from "react"
 import type { IssueItem } from "../domain.js"
 import { DETAIL_BODY_SCROLL_LIMIT } from "../ui/DetailsPane.js"
-import { IssueDetailPane, IssueList } from "../ui/IssueList.js"
+import { getIssueDetailContentHeight, IssueDetailPane, IssueList } from "../ui/IssueList.js"
 import { SplitPane } from "../ui/paneLayout.js"
 import { Divider } from "../ui/primitives.js"
 
@@ -45,6 +45,9 @@ export const IssuesWorkspace = ({
 	issueListScrollRef,
 	detailPreviewScrollRef,
 }: IssuesWorkspaceProps) => {
+	const wideDetailNeedsScroll = selectedIssue !== null && getIssueDetailContentHeight(selectedIssue, rightPaneWidth, wideBodyHeight, DETAIL_BODY_SCROLL_LIMIT) > wideBodyHeight
+	const narrowDetailNeedsScroll =
+		selectedIssue !== null && getIssueDetailContentHeight(selectedIssue, contentWidth, narrowIssueDetailHeight, DETAIL_BODY_SCROLL_LIMIT) > narrowIssueDetailHeight
 	if (isWideLayout) {
 		return (
 			<SplitPane
@@ -67,7 +70,7 @@ export const IssuesWorkspace = ({
 					)
 				}
 				right={
-					<scrollbox ref={detailPreviewScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
+					<scrollbox ref={detailPreviewScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0} verticalScrollbarOptions={{ visible: wideDetailNeedsScroll }}>
 						<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
 					</scrollbox>
 				}
@@ -89,7 +92,7 @@ export const IssuesWorkspace = ({
 				</box>
 			)}
 			<Divider width={contentWidth} />
-			<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowIssueDetailHeight} flexGrow={0}>
+			<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowIssueDetailHeight} flexGrow={0} verticalScrollbarOptions={{ visible: narrowDetailNeedsScroll }}>
 				<IssueDetailPane issue={selectedIssue} width={contentWidth} height={narrowIssueDetailHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
 			</scrollbox>
 		</box>

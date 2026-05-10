@@ -92,7 +92,7 @@ describe("reviewIcon", () => {
 		["approved", "✓"],
 		["changes", "!"],
 		["review", "◐"],
-		["none", "·"],
+		["none", "⌥"],
 	])("review status %s → %s", (status, icon) => {
 		expect(reviewIcon({ ...open, reviewStatus: status })).toBe(icon)
 	})
