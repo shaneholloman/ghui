@@ -1,11 +1,12 @@
 import { TextAttributes } from "@opentui/core"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, type ReactNode } from "react"
 import { daysOpen, formatRelativeDate } from "../date.js"
 import type { IssueItem, LoadStatus } from "../domain.js"
-import { colors, rowHoverBackground } from "./colors.js"
+import { colors } from "./colors.js"
 import { CommentSegments } from "./comments.js"
 import { bodyPreview, wrapText } from "./DetailsPane.js"
 import { LabelChips, labelChipRows } from "./LabelChips.js"
+import { SelectableRow, useHoverState } from "./listSelection/SelectableRow.js"
 import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
 import { Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
 import { groupBy, repoColor } from "./pullRequests.js"
@@ -13,10 +14,12 @@ import { SubjectMetaLine } from "./SubjectMetaLine.js"
 
 const ISSUE_ICON = "⊙"
 
-const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: number) => {
-	const fixedWidth = 1 + 1 + numberWidth + 1 + ageWidth
-	const titleWidth = Math.max(8, contentWidth - fixedWidth)
-	return { numberWidth, titleWidth, ageWidth }
+// Title width is computed per-row from the actual number width, not from a
+// list-wide max. Padding every short `#7` to align with a stray `#12723` from
+// another repo pushed titles inward and looked broken.
+const issueRowTitleWidth = (contentWidth: number, numberText: string, ageWidth: number) => {
+	const fixedWidth = 1 + 1 + numberText.length + 1 + ageWidth
+	return Math.max(8, contentWidth - fixedWidth)
 }
 
 const GROUP_ICON = "◆"
@@ -66,10 +69,8 @@ export const IssueList = ({
 	isFilterEditing?: boolean
 	onSelectIssue: (index: number) => void
 }) => {
-	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-	const numberWidth = Math.max(3, ...issues.map((issue) => `#${issue.number}`.length))
+	const { isHovered, onHoverChange } = useHoverState<number>()
 	const ageWidth = Math.max(4, ...issues.map((issue) => `${daysOpen(issue.createdAt)}d`.length + 1))
-	const { titleWidth } = getRowLayout(contentWidth, numberWidth, ageWidth)
 	const groups = issueGroups(issues, repository === null)
 
 	return (
@@ -103,33 +104,37 @@ export const IssueList = ({
 				}
 				for (const { issue, index } of groupIssues) {
 					const selected = index === selectedIndex
-					const hovered = index === hoveredIndex
-					const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
 					const ageText = `${daysOpen(issue.createdAt)}d`
+					const numberText = `#${issue.number}`
+					const titleWidth = issueRowTitleWidth(contentWidth, numberText, ageWidth)
 					rows.push(
-						<box
+						<SelectableRow
 							key={issue.url}
 							width={contentWidth}
-							flexDirection="column"
-							onMouseDown={() => onSelectIssue(index)}
-							onMouseOver={() => setHoveredIndex(index)}
-							onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
+							selected={selected}
+							hovered={isHovered(index)}
+							onSelect={() => onSelectIssue(index)}
+							onHoverChange={onHoverChange(index)}
 						>
-							<TextLine width={contentWidth} fg={selected ? colors.selectedText : colors.text} bg={rowBg}>
-								<span fg={selected ? colors.accent : colors.muted}>{ISSUE_ICON}</span>
-								<span> </span>
-								<span fg={selected ? colors.accent : colors.count} attributes={selected ? TextAttributes.BOLD : 0}>
-									{fitCell(`#${issue.number}`, numberWidth, "right")}
-								</span>
-								<span> </span>
-								<MatchedCell text={issue.title} width={titleWidth} query={filterText} />
-								<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
-							</TextLine>
-							<TextLine width={contentWidth} fg={colors.muted} bg={rowBg}>
-								<span>{"  "}</span>
-								<MatchedCell text={`@${issue.author}`} width={Math.max(1, contentWidth - 2)} query={filterText} />
-							</TextLine>
-						</box>,
+							{(rowBg) => (
+								<>
+									<TextLine width={contentWidth} fg={selected ? colors.selectedText : colors.text} bg={rowBg}>
+										<span fg={selected ? colors.accent : colors.muted}>{ISSUE_ICON}</span>
+										<span> </span>
+										<span fg={selected ? colors.accent : colors.count} attributes={selected ? TextAttributes.BOLD : 0}>
+											{numberText}
+										</span>
+										<span> </span>
+										<MatchedCell text={issue.title} width={titleWidth} query={filterText} />
+										<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
+									</TextLine>
+									<TextLine width={contentWidth} fg={colors.muted} bg={rowBg}>
+										<span>{"  "}</span>
+										<MatchedCell text={`@${issue.author}`} width={Math.max(1, contentWidth - 2)} query={filterText} />
+									</TextLine>
+								</>
+							)}
+						</SelectableRow>,
 					)
 				}
 				return rows

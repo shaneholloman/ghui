@@ -1,8 +1,8 @@
 import { TextAttributes } from "@opentui/core"
-import { useState } from "react"
 import type { LoadStatus, PullRequestItem } from "../domain.js"
 import { daysOpen } from "../date.js"
-import { colors, rowHoverBackground } from "./colors.js"
+import { colors } from "./colors.js"
+import { SelectableRow, useHoverState } from "./listSelection/SelectableRow.js"
 import { fitCell, MatchedCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
 import { pullRequestRowDisplay, repoColor, reviewIcon } from "./pullRequests.js"
 
@@ -138,35 +138,38 @@ const PullRequestRow = ({
 	const authorText = `@${pullRequest.author}`
 	const branchWidth = branchText ? Math.max(0, metaWidth - authorText.length - 1) : 0
 	const display = pullRequestRowDisplay(pullRequest, selected)
-	const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
 
 	return (
-		<box width={contentWidth} flexDirection="column" onMouseDown={onSelect} onMouseOver={() => onHoverChange(true)} onMouseOut={() => onHoverChange(false)}>
-			<TextLine width={contentWidth} fg={display.rowFg} bg={rowBg}>
-				<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
-				<span> </span>
-				<span fg={display.numberFg}>
-					<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
-				</span>
-				<span> </span>
-				<span>
-					<MatchedCell text={title} width={titleWidth} query={filterText} />
-				</span>
-				<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
-				<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
-				{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
-			</TextLine>
-			<TextLine width={contentWidth} fg={colors.muted} bg={rowBg}>
-				<span>{" ".repeat(metaIndentWidth)}</span>
-				<MatchedCell text={authorText} width={branchText ? authorText.length : metaWidth} query={filterText} />
-				{branchText ? <span> </span> : null}
-				{branchText ? (
-					<span fg={colors.separator}>
-						<MatchedCell text={branchText} width={branchWidth} query={filterText} />
-					</span>
-				) : null}
-			</TextLine>
-		</box>
+		<SelectableRow width={contentWidth} selected={selected} hovered={hovered} onSelect={onSelect} onHoverChange={onHoverChange}>
+			{(rowBg) => (
+				<>
+					<TextLine width={contentWidth} fg={display.rowFg} bg={rowBg}>
+						<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
+						<span> </span>
+						<span fg={display.numberFg}>
+							<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
+						</span>
+						<span> </span>
+						<span>
+							<MatchedCell text={title} width={titleWidth} query={filterText} />
+						</span>
+						<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
+						<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
+						{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
+					</TextLine>
+					<TextLine width={contentWidth} fg={colors.muted} bg={rowBg}>
+						<span>{" ".repeat(metaIndentWidth)}</span>
+						<MatchedCell text={authorText} width={branchText ? authorText.length : metaWidth} query={filterText} />
+						{branchText ? <span> </span> : null}
+						{branchText ? (
+							<span fg={colors.separator}>
+								<MatchedCell text={branchText} width={branchWidth} query={filterText} />
+							</span>
+						) : null}
+					</TextLine>
+				</>
+			)}
+		</SelectableRow>
 	)
 }
 
@@ -211,7 +214,7 @@ export const PullRequestList = ({
 		showTitle,
 		showRepositoryGroups,
 	})
-	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
+	const { isHovered, onHoverChange } = useHoverState<string>()
 
 	return (
 		<box width={contentWidth} flexDirection="column">
@@ -227,15 +230,13 @@ export const PullRequestList = ({
 						key={pullRequestUrl}
 						pullRequest={row.pullRequest}
 						selected={pullRequestUrl === selectedUrl}
-						hovered={pullRequestUrl === hoveredUrl}
+						hovered={isHovered(pullRequestUrl)}
 						contentWidth={contentWidth}
 						numWidth={row.numberWidth}
 						ageColWidth={row.ageWidth}
 						filterText={filterText}
 						onSelect={() => onSelectPullRequest(pullRequestUrl)}
-						onHoverChange={(hovered) =>
-							setHoveredUrl((current) => (hovered ? (current === pullRequestUrl ? current : pullRequestUrl) : current === pullRequestUrl ? null : current))
-						}
+						onHoverChange={onHoverChange(pullRequestUrl)}
 					/>
 				)
 			})}

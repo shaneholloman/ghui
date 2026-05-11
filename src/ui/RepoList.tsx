@@ -1,9 +1,10 @@
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
-import { useState, type RefObject } from "react"
+import { type RefObject } from "react"
 import { daysOpen } from "../date.js"
 import type { RepositoryDetails } from "../domain.js"
-import { colors, rowHoverBackground } from "./colors.js"
+import { colors } from "./colors.js"
 import { wrapText } from "./DetailsPane.js"
+import { SelectableRow, useHoverState } from "./listSelection/SelectableRow.js"
 import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
 import { Filler, fitCell, MatchedCell, PlainLine, TextLine, trimCell } from "./primitives.js"
 
@@ -57,7 +58,7 @@ export const RepoList = ({
 	isFilterEditing?: boolean
 	onSelectRepository: (index: number) => void
 }) => {
-	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+	const { isHovered, onHoverChange } = useHoverState<number>()
 
 	if (repositories.length === 0) {
 		return (
@@ -89,42 +90,36 @@ export const RepoList = ({
 			) : null}
 			{repositories.map((repo, index) => {
 				const selected = index === selectedIndex
-				const hovered = index === hoveredIndex
-				const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
 				const marker = repo.favorite ? "★" : "·"
 				const markerFg = repo.favorite ? colors.accent : colors.muted
 				const nameFg = repo.current ? colors.count : colors.text
 				const age = activityText(repo.lastActivityAt)
 				return (
-					<box
+					<SelectableRow
 						key={repo.repository}
 						width={contentWidth}
 						height={1}
-						{...(rowBg ? { backgroundColor: rowBg } : {})}
-						onMouseDown={() => onSelectRepository(index)}
-						onMouseOver={() => setHoveredIndex(index)}
-						onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
+						selected={selected}
+						hovered={isHovered(index)}
+						onSelect={() => onSelectRepository(index)}
+						onHoverChange={onHoverChange(index)}
 					>
-						<TextLine
-							width={contentWidth}
-							bg={rowBg}
-							onMouseDown={() => onSelectRepository(index)}
-							onMouseOver={() => setHoveredIndex(index)}
-							onMouseOut={() => setHoveredIndex((current) => (current === index ? null : current))}
-						>
-							<span fg={markerFg}>{marker}</span>
-							<span> </span>
-							<span fg={nameFg}>
-								{filterText.length > 0 ? (
-									<MatchedCell text={repo.repository} width={repoWidth} query={filterText} />
-								) : (
-									<RepoNameCell repository={repo.repository} width={repoWidth} current={repo.current} />
-								)}
-							</span>
-							<span fg={colors.muted}> </span>
-							<span fg={colors.muted}>{fitCell(age, ageWidth, "right")}</span>
-						</TextLine>
-					</box>
+						{(rowBg) => (
+							<TextLine width={contentWidth} bg={rowBg}>
+								<span fg={markerFg}>{marker}</span>
+								<span> </span>
+								<span fg={nameFg}>
+									{filterText.length > 0 ? (
+										<MatchedCell text={repo.repository} width={repoWidth} query={filterText} />
+									) : (
+										<RepoNameCell repository={repo.repository} width={repoWidth} current={repo.current} />
+									)}
+								</span>
+								<span fg={colors.muted}> </span>
+								<span fg={colors.muted}>{fitCell(age, ageWidth, "right")}</span>
+							</TextLine>
+						)}
+					</SelectableRow>
 				)
 			})}
 		</box>
@@ -186,16 +181,21 @@ export const RepoDetailPane = ({
 		details?.isPrivate ? "private" : null,
 		details?.isArchived ? "archived" : null,
 	].filter((part): part is string => part !== null)
-	const status = statusParts.length > 0 ? statusParts.join(" · ") : "repository"
+	const status = statusParts.length > 0 ? statusParts.join("  ") : "repository"
 
 	const pushedAt = details?.pushedAt ? relativeTime(details.pushedAt) : repository.lastActivityAt ? `${daysOpen(repository.lastActivityAt)}d ago` : "unknown"
 
-	const statsRow = details
-		? `★ ${formatCount(details.stargazerCount)}  ⑂ ${formatCount(details.forkCount)}  ${details.openPullRequestCount} PRs  ${details.openIssueCount} issues`
+	const stats = details
+		? [
+				{ icon: "★", value: formatCount(details.stargazerCount) },
+				{ icon: "⑂", value: formatCount(details.forkCount) },
+				{ icon: "⌥", value: formatCount(details.openPullRequestCount) },
+				{ icon: "⊙", value: formatCount(details.openIssueCount) },
+			]
 		: null
 	const branchRow = details?.defaultBranch ? `branch ${details.defaultBranch}` : null
 
-	const fixedRows = 4 + (statsRow ? 1 : 0) + (branchRow ? 1 : 0)
+	const fixedRows = 4 + (stats ? 1 : 0) + (branchRow ? 1 : 0)
 	const descriptionHeight = Math.max(1, height - fixedRows)
 
 	return (
@@ -207,11 +207,19 @@ export const RepoDetailPane = ({
 			</PaneInsetLine>
 			<PaneInsetLine width={width}>
 				<span fg={repository.current || repository.favorite ? colors.accent : colors.count}>{status}</span>
-				<span fg={colors.muted}> · pushed {pushedAt}</span>
+				<span fg={colors.muted}> pushed {pushedAt}</span>
 			</PaneInsetLine>
-			{statsRow ? (
+			{stats ? (
 				<PaneInsetLine width={width}>
-					<span fg={colors.count}>{fitCell(statsRow, contentWidth)}</span>
+					{stats.flatMap((item, index) => [
+						...(index === 0 ? [] : [<span key={`${item.icon}-gap`}> </span>]),
+						<span key={`${item.icon}-icon`} fg={colors.muted} attributes={TextAttributes.BOLD}>
+							{item.icon}
+						</span>,
+						<span key={`${item.icon}-value`} fg={colors.count}>
+							{` ${item.value}`}
+						</span>,
+					])}
 				</PaneInsetLine>
 			) : null}
 			{branchRow ? (

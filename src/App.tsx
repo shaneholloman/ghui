@@ -23,8 +23,7 @@ import {
 	type SubmitPullRequestReviewInput,
 } from "./domain.js"
 import { errorMessage } from "./errors.js"
-import type { PullRequestLoad } from "./pullRequestLoad.js"
-import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewRepository, viewToListInput } from "./pullRequestViews.js"
+import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewRepository } from "./pullRequestViews.js"
 
 import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
 import { ActiveFilterBar, ACTIVE_FILTER_BAR_HEIGHT } from "./ui/ActiveFilterBar.js"
@@ -58,14 +57,11 @@ import { useDetailHydration } from "./ui/pullRequests/useDetailHydration.js"
 import {
 	activeViewAtom,
 	addPullRequestLabelAtom,
-	appendPullRequestPage,
-	cacheViewerFor,
 	closePullRequestAtom,
 	displayedPullRequestsAtom,
 	groupStartsAtom,
 	issueOverridesAtom,
 	labelCacheAtom,
-	listOpenPullRequestPageAtom,
 	listRepoLabelsAtom,
 	pruneCacheAtom,
 	pullRequestDetailKey,
@@ -85,10 +81,12 @@ import {
 	usernameAtom,
 	visibleGroupsAtom,
 	visiblePullRequestsAtom,
-	writeQueueCacheAtom,
 } from "./ui/pullRequests/atoms.js"
 
 import { useIdleRefresh } from "./ui/pullRequests/useIdleRefresh.js"
+import { useLoadMore } from "./ui/pullRequests/useLoadMore.js"
+import { useFilterModal } from "./ui/filter/useFilterModal.js"
+import { useRefreshCompletionToast } from "./ui/pullRequests/useRefreshCompletionToast.js"
 import { copyToClipboardAtom, openInBrowserAtom, openUrlAtom, submitPullRequestReviewAtom } from "./services/systemAtoms.js"
 import {
 	diffCommentAnchorIndexAtom,
@@ -153,12 +151,10 @@ import { Divider, Filler, fitCell, PlainLine, TextLine } from "./ui/primitives.j
 import {
 	filterChangedFiles,
 	filterLabels,
-	filterOptions,
 	initialChangedFilesModalState,
 	initialCloseModalState,
 	initialCommandPaletteState,
 	initialCommentModalState,
-	initialCommentThreadModalState,
 	initialDeleteCommentModalState,
 	initialFilterModalState,
 	initialLabelModalState,
@@ -174,7 +170,6 @@ import {
 	type CloseModalState,
 	type CommandPaletteState,
 	type CommentModalState,
-	type CommentThreadModalState,
 	type DeleteCommentModalState,
 	type FilterModalState,
 	type LabelModalState,
@@ -205,7 +200,7 @@ import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
-import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath, pullRequestPageSize } from "./services/runtime.js"
+import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath } from "./services/runtime.js"
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
@@ -417,7 +412,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const mergeModal: MergeModalState = mergeModalActive ? activeModal : initialMergeModalState
 	const commentModal: CommentModalState = commentModalActive ? activeModal : initialCommentModalState
 	const deleteCommentModal: DeleteCommentModalState = deleteCommentModalActive ? activeModal : initialDeleteCommentModalState
-	const commentThreadModal: CommentThreadModalState = commentThreadModalActive ? activeModal : initialCommentThreadModalState
 	const changedFilesModal: ChangedFilesModalState = changedFilesModalActive ? activeModal : initialChangedFilesModalState
 	const filterModal: FilterModalState = filterModalActive ? activeModal : initialFilterModalState
 	const submitReviewModal: SubmitReviewModalState = submitReviewModalActive ? activeModal : initialSubmitReviewModalState
@@ -454,14 +448,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setIssueOverrides = useAtomSet(issueOverridesAtom)
 	const setRecentlyCompletedPullRequests = useAtomSet(recentlyCompletedPullRequestsAtom)
 	const retryProgress = useAtomValue(retryProgressAtom)
-	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
-	const [refreshStartedAt, setRefreshStartedAt] = useState<number | null>(null)
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [homeCrumbHovered, setHomeCrumbHovered] = useState(false)
-	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
-	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
 	const addPullRequestLabel = useAtomSet(addPullRequestLabelAtom, { mode: "promise" })
 	const removePullRequestLabel = useAtomSet(removePullRequestLabelAtom, { mode: "promise" })
 	const addIssueLabel = useAtomSet(addIssueLabelAtom, { mode: "promise" })
@@ -470,7 +460,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const listPullRequestReviewComments = useAtomSet(listPullRequestReviewCommentsAtom, { mode: "promise" })
 	const listPullRequestComments = useAtomSet(listPullRequestCommentsAtom, { mode: "promise" })
 	const listIssueComments = useAtomSet(listIssueCommentsAtom, { mode: "promise" })
-	const writeQueueCache = useAtomSet(writeQueueCacheAtom, { mode: "promise" })
 	const readWorkspacePreferences = useAtomSet(readWorkspacePreferencesAtom, { mode: "promise" })
 	const writeWorkspacePreferences = useAtomSet(writeWorkspacePreferencesAtom, { mode: "promise" })
 	const pruneCache = useAtomSet(pruneCacheAtom, { mode: "promise" })
@@ -622,7 +611,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const hasMorePullRequests = Boolean(pullRequestLoad?.hasNextPage && loadedPullRequestCount < config.prFetchLimit)
 	const pullRequestListFilterActive = filterMode || filterQuery.length > 0
 	const visibleHasMorePullRequests = !pullRequestListFilterActive && hasMorePullRequests
-	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
+	const { loadMorePullRequests, isLoadingMorePullRequests, resetLoadingMore } = useLoadMore({
+		activeView,
+		currentQueueCacheKey,
+		pullRequestLoad,
+		hasMorePullRequests,
+		username,
+		refreshGenerationRef,
+		flashNotice,
+		setQueueLoadCache,
+	})
 	const pullRequestListRows = useMemo(
 		() =>
 			buildPullRequestListRows({
@@ -780,7 +778,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		if (pullRequestFetchInFlight) return
 		refreshGenerationRef.current += 1
 		resetHydration()
-		setLoadingMoreKey(null)
+		resetLoadingMore()
 		setPullRequestOverrides({})
 		if (options.resetTransientState) {
 			setRecentlyCompletedPullRequests({})
@@ -789,8 +787,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 		if (message) {
 			setNotice(null)
-			setRefreshCompletionMessage(message)
-			setRefreshStartedAt(lastPullRequestRefreshAtRef.current)
+			armRefreshToast(message)
 		}
 		refreshPullRequestsAtom()
 	}
@@ -804,14 +801,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setSelectedIssueIndex(0)
 		setRecentlyCompletedPullRequests({})
 		resetHydration()
-		setLoadingMoreKey(null)
+		resetLoadingMore()
 		setDetailFullView(false)
 		setDiffFullView(false)
 		setDiffCommentRangeStartIndex(null)
 		setFilterDraft(filterQuery)
 		setNotice(null)
-		setRefreshCompletionMessage(null)
-		setRefreshStartedAt(null)
+		cancelRefreshToast()
 		// Keep the issue view's repository scope mirrored to the PR view so the
 		// two surfaces share workspace context until issues get a dedicated picker.
 		if (view._tag === "Repository") {
@@ -877,71 +873,17 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setRecentRepositories((current) => current.filter((item) => item !== repository))
 		flashNotice(repository === detectedRepository ? `Removed saved state for ${repository}; current repo stays pinned` : `Removed ${repository} from tracked repositories`)
 	}
-	const openFilterModal = () => {
-		if (!selectedRepository || (activeWorkspaceSurface !== "pullRequests" && activeWorkspaceSurface !== "issues")) return
-		// Read the active filter from the surface's own view — one source of truth.
-		const isMine =
-			activeWorkspaceSurface === "pullRequests"
-				? activeView._tag === "Queue" && activeView.mode === "authored"
-				: activeIssueView._tag === "Queue" && activeIssueView.mode === "authored"
-		setFilterModal({
-			surface: activeWorkspaceSurface,
-			selectedIndex: Math.max(
-				0,
-				filterOptions.findIndex((option) => option.value === (isMine ? "mine" : "all")),
-			),
-		})
-	}
-	const moveFilterSelection = (delta: -1 | 1) => {
-		setFilterModal((current) => ({ ...current, selectedIndex: wrapIndex(current.selectedIndex + delta, filterOptions.length) }))
-	}
-	const applySelectedFilter = () => {
-		const option = filterOptions[filterModal.selectedIndex]
-		if (!option) return
-		if (filterModal.surface === "pullRequests" && selectedRepository) {
-			switchViewTo(option.value === "mine" ? { _tag: "Queue", mode: "authored", repository: selectedRepository } : { _tag: "Repository", repository: selectedRepository })
-		} else if (filterModal.surface === "issues" && selectedRepository) {
-			setActiveIssueView(option.value === "mine" ? { _tag: "Queue", mode: "authored", repository: selectedRepository } : { _tag: "Repository", repository: selectedRepository })
-		}
-		closeActiveModal()
-	}
-	const loadMorePullRequests = () => {
-		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
-		const remaining = config.prFetchLimit - pullRequestLoad.data.length
-		if (remaining <= 0) return false
-		const cacheKey = currentQueueCacheKey
-		const generation = refreshGenerationRef.current
-		setLoadingMoreKey(cacheKey)
-		void loadPullRequestPage(viewToListInput(activeView, pullRequestLoad.endCursor, Math.min(pullRequestPageSize, remaining)))
-			.then((page) => {
-				if (generation !== refreshGenerationRef.current) return
-				const currentLoad = registry.get(queueLoadCacheAtom)[cacheKey]
-				if (!currentLoad) return
-				const data = appendPullRequestPage(currentLoad.data, page.items)
-				const persistedLoad: PullRequestLoad = {
-					...currentLoad,
-					data,
-					endCursor: page.endCursor,
-					hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
-				}
-				setQueueLoadCache((current) => {
-					if (!current[cacheKey]) return current
-					return {
-						...current,
-						[cacheKey]: persistedLoad,
-					}
-				})
-				const viewer = cacheViewerFor(activeView, username)
-				if (viewer) void writeQueueCache({ viewer, load: persistedLoad }).catch(() => {})
-			})
-			.catch((error) => {
-				flashNotice(errorMessage(error))
-			})
-			.finally(() => {
-				setLoadingMoreKey((current) => (current === cacheKey ? null : current))
-			})
-		return true
-	}
+	const { openFilterModal, moveFilterSelection, applySelectedFilter } = useFilterModal({
+		activeWorkspaceSurface,
+		activeView,
+		activeIssueView,
+		selectedRepository,
+		filterModal,
+		setFilterModal,
+		switchViewTo,
+		setActiveIssueView,
+		closeActiveModal,
+	})
 	const loadPullRequestComments = (pullRequest: PullRequestItem, force = false) => {
 		const key = pullRequestDiffKey(pullRequest)
 		const previousLoadState = registry.get(pullRequestCommentsLoadedAtom)[key]
@@ -1007,20 +949,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	// cache first, so the user sees the previous list instantly while the new
 	// view's fetch lands.
 
-	useEffect(() => {
-		if (!refreshCompletionMessage || refreshStartedAt === null) return
-		const fetchedAt = pullRequestLoad?.fetchedAt?.getTime()
-		const isHydratingDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
-		if (pullRequestStatus === "ready" && fetchedAt !== undefined && fetchedAt !== refreshStartedAt && !isHydratingDetails) {
-			flashNotice(`✓ ${refreshCompletionMessage}`)
-			setRefreshCompletionMessage(null)
-			setRefreshStartedAt(null)
-		} else if (pullRequestStatus === "error" || pullRequestError) {
-			flashNotice(pullRequestLoad ? "Refresh failed; showing cached data" : "Refresh failed")
-			setRefreshCompletionMessage(null)
-			setRefreshStartedAt(null)
-		}
-	}, [refreshCompletionMessage, refreshStartedAt, pullRequestStatus, pullRequestError, pullRequestLoad?.fetchedAt, pullRequests])
+	const { armRefreshToast, cancelRefreshToast } = useRefreshCompletionToast({
+		pullRequestStatus,
+		pullRequestError,
+		fetchedAt: pullRequestLoad?.fetchedAt?.getTime(),
+		pullRequestLoad,
+		selectedPullRequest,
+		lastPullRequestRefreshAtRef,
+		flashNotice,
+		pullRequests,
+	})
 
 	// Best-effort startup prune: writeQueue prunes after each successful refresh,
 	// but a session that only browses cached state (or stays offline) never prunes.
@@ -2883,6 +2821,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				)}
 			</box>
 			<WorkspaceModals
+				activeModal={activeModal}
 				loadingIndicator={loadingIndicator}
 				selectedItemLabels={selectedItemLabels}
 				commentAnchorLabel={commentAnchorLabel}
@@ -2893,45 +2832,21 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				selectedCommandIndex={selectedCommandIndex}
 				onSelectCommandIndex={selectCommandPaletteIndex}
 				onRunCommand={runCommandPaletteCommand}
-				labelModalActive={labelModalActive}
-				closeModalActive={closeModalActive}
-				pullRequestStateModalActive={pullRequestStateModalActive}
-				commentModalActive={commentModalActive}
-				deleteCommentModalActive={deleteCommentModalActive}
-				commentThreadModalActive={commentThreadModalActive}
-				changedFilesModalActive={changedFilesModalActive}
-				filterModalActive={filterModalActive}
-				submitReviewModalActive={submitReviewModalActive}
-				mergeModalActive={mergeModalActive}
-				themeModalActive={themeModalActive}
-				openRepositoryModalActive={openRepositoryModalActive}
-				commandPaletteActive={commandPaletteActive}
-				labelModal={labelModal}
-				closeModal={closeModal}
-				pullRequestStateModal={pullRequestStateModal}
-				commentModal={commentModal}
-				deleteCommentModal={deleteCommentModal}
-				commentThreadModal={commentThreadModal}
-				changedFilesModal={changedFilesModal}
-				filterModal={filterModal}
-				submitReviewModal={submitReviewModal}
-				mergeModal={mergeModal}
-				themeModal={themeModal}
-				openRepositoryModal={openRepositoryModal}
-				commandPalette={commandPalette}
-				labelLayout={labelLayout}
-				closeLayout={closeLayout}
-				pullRequestStateLayout={pullRequestStateLayout}
-				commentLayout={commentLayout}
-				deleteCommentLayout={deleteCommentLayout}
-				commentThreadLayout={commentThreadLayout}
-				changedFilesLayout={changedFilesLayout}
-				filterLayout={filterLayout}
-				submitReviewLayout={submitReviewLayout}
-				mergeLayout={mergeLayout}
-				themeLayout={themeLayout}
-				openRepositoryLayout={openRepositoryLayout}
-				commandPaletteLayout={commandPaletteLayout}
+				layouts={{
+					Label: labelLayout,
+					Close: closeLayout,
+					PullRequestState: pullRequestStateLayout,
+					Comment: commentLayout,
+					DeleteComment: deleteCommentLayout,
+					CommentThread: commentThreadLayout,
+					ChangedFiles: changedFilesLayout,
+					Filter: filterLayout,
+					SubmitReview: submitReviewLayout,
+					Merge: mergeLayout,
+					Theme: themeLayout,
+					OpenRepository: openRepositoryLayout,
+					CommandPalette: commandPaletteLayout,
+				}}
 			/>
 		</box>
 	)
