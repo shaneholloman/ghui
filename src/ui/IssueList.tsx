@@ -1,5 +1,6 @@
-import { TextAttributes } from "@opentui/core"
-import { useMemo, type ReactNode } from "react"
+import { TextAttributes, type BoxRenderable, type MouseEvent } from "@opentui/core"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useRenderer } from "@opentui/react"
 import { daysOpen, formatRelativeDate } from "../date.js"
 import type { IssueItem, LoadStatus } from "../domain.js"
 import { colors } from "./colors.js"
@@ -11,6 +12,7 @@ import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
 import { Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
 import { groupBy, repoColor } from "./pullRequests.js"
 import { SubjectMetaLine } from "./SubjectMetaLine.js"
+import { collectUrlPositions, findUrlAt } from "./inlineSegments.js"
 
 const ISSUE_ICON = "⊙"
 
@@ -161,15 +163,59 @@ export const getIssueDetailContentHeight = (issue: IssueItem | null, width: numb
 	return titleLines + 1 + labelRows + 1 + bodyLines
 }
 
-export const IssueDetailPane = ({ issue, width, height, bodyLineLimit }: { issue: IssueItem | null; width: number; height: number; bodyLineLimit?: number }) => {
+export const IssueDetailPane = ({
+	issue,
+	width,
+	height,
+	bodyLineLimit,
+	onLinkOpen,
+}: {
+	issue: IssueItem | null
+	width: number
+	height: number
+	bodyLineLimit?: number
+	onLinkOpen?: (url: string) => void
+}) => {
+	const renderer = useRenderer()
+	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
 	const contentWidth = paneContentWidth(width)
 	const titleLines = issue ? wrapText(issue.title, Math.max(1, contentWidth)) : []
 	const labelRows = issue ? labelChipRows(issue.labels, contentWidth) : []
 	const resolvedBodyLineLimit = bodyLineLimit ?? Math.max(1, height - titleLines.length - labelRows.length - 2)
 	const visibleBodyLines = useMemo(
-		() => bodyPreview(issue?.body ?? "", contentWidth, resolvedBodyLineLimit, { tableMode: "truncate" }),
-		[issue?.body, contentWidth, resolvedBodyLineLimit],
+		() => bodyPreview(issue?.body ?? "", contentWidth, resolvedBodyLineLimit, { tableMode: "truncate", issueReferenceRepository: issue?.repository ?? null }),
+		[issue?.body, issue?.repository, contentWidth, resolvedBodyLineLimit],
 	)
+	const urlPositions = useMemo(() => collectUrlPositions(visibleBodyLines), [visibleBodyLines])
+
+	useEffect(() => {
+		if (hoveredUrl === null) return
+		renderer.setMousePointer("pointer")
+		return () => renderer.setMousePointer("default")
+	}, [hoveredUrl, renderer])
+
+	const handleMouseMove = function (this: BoxRenderable, event: MouseEvent) {
+		if (urlPositions.length === 0) return
+		const localX = event.x - this.x - 1
+		const localY = event.y - this.y
+		const next = findUrlAt(urlPositions, localY, localX)
+		if (next !== hoveredUrl) setHoveredUrl(next)
+	}
+
+	const handleMouseOut = () => {
+		if (hoveredUrl !== null) setHoveredUrl(null)
+	}
+
+	const handleMouseDown = function (this: BoxRenderable, event: MouseEvent) {
+		if (!onLinkOpen || event.button !== 0) return
+		const localX = event.x - this.x - 1
+		const localY = event.y - this.y
+		const url = findUrlAt(urlPositions, localY, localX)
+		if (url === null) return
+		event.stopPropagation()
+		onLinkOpen(url)
+	}
+
 	if (!issue) {
 		return (
 			<box width={width} height={height} flexDirection="column">
@@ -204,11 +250,13 @@ export const IssueDetailPane = ({ issue, width, height, bodyLineLimit }: { issue
 				</IssueDetailLine>
 			))}
 			<PaneDivider width={width} />
-			{visibleBodyLines.map((line, index) => (
-				<IssueDetailLine key={index} width={width}>
-					<CommentSegments segments={line.segments} />
-				</IssueDetailLine>
-			))}
+			<box flexDirection="column" onMouseMove={handleMouseMove} onMouseOut={handleMouseOut} onMouseDown={handleMouseDown}>
+				{visibleBodyLines.map((line, index) => (
+					<IssueDetailLine key={index} width={width}>
+						<CommentSegments segments={line.segments} hoveredUrl={hoveredUrl} />
+					</IssueDetailLine>
+				))}
+			</box>
 			<Filler rows={Math.max(0, contentHeight - usedRows)} prefix="issue-detail" />
 		</box>
 	)

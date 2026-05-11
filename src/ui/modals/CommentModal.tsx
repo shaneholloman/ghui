@@ -1,7 +1,21 @@
+import type { TextareaOptions, TextareaRenderable } from "@opentui/core"
+import { useEffect, useRef } from "react"
 import { colors } from "../colors.js"
-import { clampCursor, commentEditorSoftLines, type CommentEditorLine } from "../commentEditor.js"
-import { fitCell, HintRow, PlainLine, standardModalDims, StandardModal, TextLine } from "../primitives.js"
+import { fitCell, HintRow, PlainLine, standardModalDims, StandardModal } from "../primitives.js"
 import type { CommentModalState } from "./types.js"
+
+const commentTextareaKeyBindings: TextareaOptions["keyBindings"] = [
+	{ name: "return", action: "submit" },
+	{ name: "s", ctrl: true, action: "submit" },
+	{ name: "return", shift: true, action: "newline" },
+]
+
+const commentModalEditorKey = (state: CommentModalState) => {
+	const target = state.target
+	if (target.kind === "edit") return `edit:${target.commentId}:${state.body.length}`
+	if (target.kind === "reply") return `reply:${target.inReplyTo}:${state.body.length}`
+	return `${target.kind}:${state.body.length}`
+}
 
 export const CommentModal = ({
 	state,
@@ -10,6 +24,8 @@ export const CommentModal = ({
 	modalHeight,
 	offsetLeft,
 	offsetTop,
+	onChange,
+	onSubmit,
 }: {
 	state: CommentModalState
 	anchorLabel: string
@@ -17,43 +33,25 @@ export const CommentModal = ({
 	modalHeight: number
 	offsetLeft: number
 	offsetTop: number
+	onChange: (body: string, cursor: number) => void
+	onSubmit: () => void
 }) => {
+	const textareaRef = useRef<TextareaRenderable | null>(null)
 	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
 	const title = state.target.kind === "edit" ? "Edit comment" : "Comment"
 	const editorHeight = Math.max(1, bodyHeight - (state.error ? 1 : 0))
-	const lineRanges = commentEditorSoftLines(state.body, contentWidth)
-	const cursor = clampCursor(state.body, state.cursor)
-	const cursorLineIndex = Math.max(
-		0,
-		lineRanges.findIndex((line, index) => cursor < line.end || index === lineRanges.length - 1),
-	)
-	const visibleStart = Math.min(Math.max(0, lineRanges.length - editorHeight), Math.max(0, cursorLineIndex - editorHeight + 1))
-	const visibleLines = lineRanges.slice(visibleStart, visibleStart + editorHeight)
-	const renderEditorLine = (line: CommentEditorLine, index: number) => {
-		const lineIndex = visibleStart + index
-		const isCursorLine = lineIndex === cursorLineIndex
-		const cursorColumn = Math.max(0, Math.min(cursor - line.start, Math.max(0, contentWidth - 1), line.text.length))
-		const visibleText = line.text
-
-		if (!isCursorLine) {
-			return <PlainLine key={lineIndex} text={fitCell(visibleText, contentWidth)} fg={state.body.length > 0 ? colors.text : colors.muted} />
-		}
-
-		const before = visibleText.slice(0, cursorColumn)
-		const placeholder = state.body.length === 0 ? "Write a comment..." : ""
-		const cursorChar = placeholder ? (placeholder[0] ?? " ") : (visibleText[cursorColumn] ?? " ")
-		const after = placeholder ? placeholder.slice(1) : visibleText.slice(cursorColumn + 1)
-
-		return (
-			<TextLine key={lineIndex}>
-				{before ? <span fg={colors.text}>{before}</span> : null}
-				<span bg={colors.accent} fg={colors.background}>
-					{cursorChar}
-				</span>
-				{after ? <span fg={placeholder ? colors.muted : colors.text}>{after}</span> : null}
-			</TextLine>
-		)
+	const editorKey = commentModalEditorKey(state)
+	const syncTextarea = () => {
+		const textarea = textareaRef.current
+		if (!textarea) return
+		onChange(textarea.plainText, textarea.cursorOffset)
 	}
+
+	useEffect(() => {
+		const textarea = textareaRef.current
+		if (!textarea) return
+		textarea.cursorOffset = state.cursor
+	}, [editorKey, state.cursor])
 
 	return (
 		<StandardModal
@@ -76,7 +74,24 @@ export const CommentModal = ({
 			}
 		>
 			{state.error ? <PlainLine text={fitCell(state.error, contentWidth)} fg={colors.error} /> : null}
-			{visibleLines.map(renderEditorLine)}
+			<textarea
+				key={editorKey}
+				ref={textareaRef}
+				width={contentWidth}
+				height={editorHeight}
+				initialValue={state.body}
+				placeholder="Write a comment..."
+				focused
+				wrapMode="word"
+				textColor={colors.text}
+				focusedTextColor={colors.text}
+				placeholderColor={colors.muted}
+				cursorColor={colors.accent}
+				keyBindings={commentTextareaKeyBindings}
+				onContentChange={syncTextarea}
+				onCursorChange={syncTextarea}
+				onSubmit={onSubmit}
+			/>
 		</StandardModal>
 	)
 }

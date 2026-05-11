@@ -181,7 +181,7 @@ import {
 	type SubmitReviewModalState,
 	type ThemeModalState,
 } from "./ui/modals.js"
-import { pullRequestMetadataText } from "./ui/pullRequests.js"
+import { issueMetadataText, pullRequestMetadataText } from "./ui/pullRequests.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, pullRequestListVisualLineCount, PullRequestList } from "./ui/PullRequestList.js"
@@ -191,6 +191,7 @@ import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
 import { WorkspaceModals } from "./surfaces/WorkspaceModals.js"
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
 import { getIssueDetailJunctionRows, issueListRowIndex, issueListVisualLineCount, IssueDetailPane } from "./ui/IssueList.js"
+import { parseIssueReferenceUrl } from "./ui/inlineSegments.js"
 import { singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
@@ -1425,12 +1426,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setDiffFileIndex(nextAnchor.fileIndex)
 	}
 
-	const editComment = (transform: (state: CommentEditorValue) => CommentEditorValue) => {
-		setCommentModal((current) => {
-			const next = transform({ body: current.body, cursor: current.cursor })
-			if (next.body === current.body && next.cursor === current.cursor && current.error === null) return current
-			return { ...current, body: next.body, cursor: next.cursor, error: null }
-		})
+	const setCommentEditorValue = (body: string, cursor: number) => {
+		setCommentModal((current) => (current.body === body && current.cursor === cursor && current.error === null ? current : { ...current, body, cursor, error: null }))
 	}
 
 	const editSubmitReview = (transform: (state: CommentEditorValue) => CommentEditorValue) => {
@@ -1563,9 +1560,54 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
-	const openLinkInBrowser = (url: string) => {
-		void openUrl(url)
-			.then(() => flashNotice(`Opened ${url}`))
+	const navigateIssueReference = (repository: string, number: number) => {
+		const issueIndex = issues.findIndex((issue) => issue.repository === repository && issue.number === number)
+		if (issueIndex >= 0) {
+			setActiveWorkspaceSurface("issues")
+			setSelectedIssueIndex(issueIndex)
+			setDetailFullView(false)
+			flashNotice(`Opened ${repository}#${number}`)
+			return true
+		}
+
+		const unfilteredIssueIndex = allIssues.findIndex((issue) => issue.repository === repository && issue.number === number)
+		if (unfilteredIssueIndex >= 0) {
+			setFilterQuery("")
+			setFilterDraft("")
+			setFilterMode(false)
+			setActiveWorkspaceSurface("issues")
+			setSelectedIssueIndex(unfilteredIssueIndex)
+			setDetailFullView(false)
+			flashNotice(`Opened ${repository}#${number}`)
+			return true
+		}
+
+		const pullRequest = pullRequests.find((item) => item.repository === repository && item.number === number)
+		if (pullRequest) {
+			setActiveWorkspaceSurface("pullRequests")
+			selectPullRequestByUrl(pullRequest.url)
+			setDetailFullView(false)
+			flashNotice(`Opened ${repository}#${number}`)
+			return true
+		}
+
+		if (selectedRepository !== repository) {
+			switchViewTo({ _tag: "Repository", repository })
+			setActiveWorkspaceSurface("issues")
+			setSelectedIssueIndex(0)
+			flashNotice(`Opened ${repository}; #${number} will appear if it is loaded`)
+			return true
+		}
+
+		return false
+	}
+
+	const openInlineLink = (url: string) => {
+		const issueReference = parseIssueReferenceUrl(url)
+		const targetUrl = issueReference ? `https://github.com/${issueReference.repository}/issues/${issueReference.number}` : url
+		if (issueReference && navigateIssueReference(issueReference.repository, issueReference.number)) return
+		void openUrl(targetUrl)
+			.then(() => flashNotice(`Opened ${targetUrl}`))
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
@@ -1573,6 +1615,12 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		if (!selectedPullRequest) return
 		void copyToClipboard(pullRequestMetadataText(selectedPullRequest))
 			.then(() => flashNotice(`Copied #${selectedPullRequest.number} metadata`))
+			.catch((error) => flashNotice(errorMessage(error)))
+	}
+	const copySelectedIssueMetadata = () => {
+		if (!selectedIssue) return
+		void copyToClipboard(issueMetadataText(selectedIssue))
+			.then(() => flashNotice(`Copied #${selectedIssue.number} metadata`))
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
@@ -1783,10 +1831,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			editThemeQuery((query) => query + singleLineText(text))
 			return true
 		}
-		if (commentModalActive) {
-			editComment((state) => insertText(state, text.replace(/\r\n?/g, "\n")))
-			return true
-		}
+		if (commentModalActive) return false
 		if (submitReviewModalActive) {
 			setSubmitReviewModal((current) => {
 				const next = insertText({ body: current.body, cursor: current.cursor }, text.replace(/\r\n?/g, "\n"))
@@ -1898,6 +1943,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				if (selectedPullRequest) openSelectedPullRequestInBrowser(selectedPullRequest)
 			},
 			copyPullRequestMetadata: copySelectedPullRequestMetadata,
+			copyIssueMetadata: copySelectedIssueMetadata,
 			quit: () => renderer.destroy(),
 		},
 	})
@@ -2122,7 +2168,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		labelModal: { closeActiveModal, toggleLabelAtIndex, moveLabelSelection },
 		themeModal: { themeModal, closeThemeModal, updateThemeQuery, toggleThemeMode, toggleThemeTone, moveThemeSelection },
 		openRepositoryModal: { closeActiveModal, openRepositoryFromInput },
-		commentModal: { closeActiveModal, submitCommentModal, editComment },
+		commentModal: { closeActiveModal },
 		deleteCommentModal: { closeActiveModal, confirmDeleteComment },
 		commandPalette: { closeActiveModal, selectedCommand, runCommandPaletteCommand, moveCommandPaletteSelection },
 		filterModeCtx: {
@@ -2226,7 +2272,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setLabelModal,
 		setFilterDraft,
 		editThemeQuery,
-		editComment,
 		editSubmitReview,
 	})
 
@@ -2486,6 +2531,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					selectedIssue={selectedIssue}
 					issueListScrollRef={issueListScrollRef}
 					detailPreviewScrollRef={detailPreviewScrollRef}
+					onLinkOpen={openInlineLink}
 				/>
 			) : commentsViewActive && selectedCommentSubject ? (
 				<CommentsPane
@@ -2522,7 +2568,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					themeGeneration={systemThemeGeneration}
 				/>
 			) : detailFullView && activeWorkspaceSurface === "issues" ? (
-				<IssueDetailPane issue={selectedIssue} width={contentWidth} height={wideBodyHeight} />
+				<IssueDetailPane issue={selectedIssue} width={contentWidth} height={wideBodyHeight} onLinkOpen={openInlineLink} />
 			) : detailFullView && isSelectedPullRequestDetailError && selectedPullRequest ? (
 				<box flexGrow={1} flexDirection="column">
 					<DetailHeader
@@ -2570,7 +2616,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 									loadingIndicator={loadingIndicator}
 									themeId={themeId}
 									themeGeneration={systemThemeGeneration}
-									onLinkOpen={openLinkInBrowser}
+									onLinkOpen={openInlineLink}
 								/>
 							</scrollbox>
 						</>
@@ -2583,7 +2629,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
 							themeGeneration={systemThemeGeneration}
-							onLinkOpen={openLinkInBrowser}
+							onLinkOpen={openInlineLink}
 						/>
 					)}
 				</box>
@@ -2653,7 +2699,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 										loadingIndicator={loadingIndicator}
 										themeId={themeId}
 										themeGeneration={systemThemeGeneration}
-										onLinkOpen={openLinkInBrowser}
+										onLinkOpen={openInlineLink}
 									/>
 								</scrollbox>
 							</>
@@ -2696,7 +2742,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 									loadingIndicator={loadingIndicator}
 									themeId={themeId}
 									themeGeneration={systemThemeGeneration}
-									onLinkOpen={openLinkInBrowser}
+									onLinkOpen={openInlineLink}
 								/>
 							</scrollbox>
 						</>
@@ -2709,7 +2755,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
 							themeGeneration={systemThemeGeneration}
-							onLinkOpen={openLinkInBrowser}
+							onLinkOpen={openInlineLink}
 						/>
 					)}
 				</box>
@@ -2766,7 +2812,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 										loadingIndicator={loadingIndicator}
 										themeId={themeId}
 										themeGeneration={systemThemeGeneration}
-										onLinkOpen={openLinkInBrowser}
+										onLinkOpen={openInlineLink}
 									/>
 								</scrollbox>
 							</>
@@ -2779,7 +2825,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 								loadingIndicator={loadingIndicator}
 								themeId={themeId}
 								themeGeneration={systemThemeGeneration}
-								onLinkOpen={openLinkInBrowser}
+								onLinkOpen={openInlineLink}
 							/>
 						)}
 					</box>
@@ -2831,6 +2877,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				selectedCommandIndex={selectedCommandIndex}
 				onSelectCommandIndex={selectCommandPaletteIndex}
 				onRunCommand={runCommandPaletteCommand}
+				onCommentChange={setCommentEditorValue}
+				onCommentSubmit={submitCommentModal}
 				layouts={{
 					Label: labelLayout,
 					Close: closeLayout,

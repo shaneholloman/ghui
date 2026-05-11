@@ -26,6 +26,7 @@ export interface IssuesWorkspaceProps {
 	readonly selectedIssue: IssueItem | null
 	readonly issueListScrollRef: MutableRefObject<ScrollBoxRenderable | null>
 	readonly detailPreviewScrollRef: MutableRefObject<ScrollBoxRenderable | null>
+	readonly onLinkOpen?: (url: string) => void
 }
 
 export const IssuesWorkspace = ({
@@ -47,6 +48,7 @@ export const IssuesWorkspace = ({
 	selectedIssue,
 	issueListScrollRef,
 	detailPreviewScrollRef,
+	onLinkOpen,
 }: IssuesWorkspaceProps) => {
 	const wideDetailNeedsScroll = selectedIssue !== null && getIssueDetailContentHeight(selectedIssue, rightPaneWidth, wideBodyHeight, DETAIL_BODY_SCROLL_LIMIT) > wideBodyHeight
 	const narrowDetailNeedsScroll =
@@ -97,7 +99,13 @@ export const IssuesWorkspace = ({
 				}
 				right={
 					<scrollbox ref={detailPreviewScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0} verticalScrollbarOptions={{ visible: wideDetailNeedsScroll }}>
-						<IssueDetailPane issue={selectedIssue} width={rightPaneWidth} height={wideBodyHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
+						<IssueDetailPane
+							issue={selectedIssue}
+							width={rightPaneWidth}
+							height={wideBodyHeight}
+							bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+							{...(onLinkOpen ? { onLinkOpen } : {})}
+						/>
 					</scrollbox>
 				}
 			/>
@@ -122,7 +130,13 @@ export const IssuesWorkspace = ({
 			</box>
 			<Divider width={contentWidth} />
 			<scrollbox ref={detailPreviewScrollRef} focusable={false} height={narrowIssueDetailHeight} flexGrow={0} verticalScrollbarOptions={{ visible: narrowDetailNeedsScroll }}>
-				<IssueDetailPane issue={selectedIssue} width={contentWidth} height={narrowIssueDetailHeight} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} />
+				<IssueDetailPane
+					issue={selectedIssue}
+					width={contentWidth}
+					height={narrowIssueDetailHeight}
+					bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+					{...(onLinkOpen ? { onLinkOpen } : {})}
+				/>
 			</scrollbox>
 		</box>
 	)

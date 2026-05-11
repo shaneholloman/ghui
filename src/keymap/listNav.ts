@@ -38,6 +38,7 @@ const itemSelected = (s: ListNavCtx) => (s.visibleCount > 0 ? true : "No item se
 const reposActive = (s: ListNavCtx) => s.activeSurface === "repos"
 const filterableSurfaceActive = (s: ListNavCtx) => s.canGoUpWorkspace && (s.activeSurface === "pullRequests" || s.activeSurface === "issues")
 const pullRequestsActive = (s: ListNavCtx) => s.activeSurface === "pullRequests"
+const issuesActive = (s: ListNavCtx) => s.activeSurface === "issues"
 const surfaceAt = (s: ListNavCtx, index: number) => s.surfaces[index] ?? null
 const goHome = (s: ListNavCtx) => {
 	if (s.canGoUpWorkspace) s.goUpWorkspace()
@@ -71,6 +72,7 @@ export const listNavKeymap = List(
 	{ id: "list.open-browser", title: "Open in browser", keys: ["o"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.open-browser") },
 	{ id: "list.toggle-draft", title: "Toggle draft", keys: ["s", "shift+s"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.toggle-draft") },
 	{ id: "list.copy", title: "Copy metadata", keys: ["y"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.copy-metadata") },
+	{ id: "list.issue-copy", title: "Copy metadata", keys: ["y"], when: issuesActive, run: (s) => s.runCommandById("issue.copy-metadata") },
 	{ id: "list.detail.open", title: "Open selected", keys: ["return"], enabled: itemSelected, run: (s) => s.openSelection() },
 
 	// Escape goes one level up: clear local filter first, otherwise leave repo scope.

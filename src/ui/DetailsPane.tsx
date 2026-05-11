@@ -55,7 +55,8 @@ export const wrapText = (text: string, width: number): string[] => {
 	return lines.length > 0 ? lines : [""]
 }
 
-const parseInlineSegments = (text: string, fg: string, bold = false): readonly CommentSegment[] => inlineSegments(text, fg, bold, inlinePalette())
+const parseInlineSegments = (text: string, fg: string, bold = false, repository?: string | null): readonly CommentSegment[] =>
+	inlineSegments(text, fg, bold, inlinePalette(), { issueReferenceRepository: repository })
 
 const parseCodeSegments = (text: string): PreviewLine["segments"] => {
 	const segments: Array<PreviewLine["segments"][number]> = []
@@ -178,7 +179,7 @@ const tableDivider = (columnWidths: readonly number[]): PreviewLine => ({
 
 type TableRenderMode = "wrap" | "truncate"
 
-const tableRows = (rows: readonly (readonly string[])[], width: number, mode: TableRenderMode): Array<PreviewLine> => {
+const tableRows = (rows: readonly (readonly string[])[], width: number, mode: TableRenderMode, repository?: string | null): Array<PreviewLine> => {
 	const columnWidths = tableColumnWidths(rows, width)
 	const output: Array<PreviewLine> = []
 	rows.forEach((row, rowIndex) => {
@@ -194,7 +195,7 @@ const tableRows = (rows: readonly (readonly string[])[], width: number, mode: Ta
 			return
 		}
 		const wrappedCells = row.map((cell, cellIndex) =>
-			wrapPreviewSegments(parseInlineSegments(cell, isHeader ? colors.count : colors.text, isHeader), Math.max(1, columnWidths[cellIndex] ?? 1)),
+			wrapPreviewSegments(parseInlineSegments(cell, isHeader ? colors.count : colors.text, isHeader, repository), Math.max(1, columnWidths[cellIndex] ?? 1)),
 		)
 		const rowHeight = Math.max(1, ...wrappedCells.map((cell) => cell.length))
 		for (let lineIndex = 0; lineIndex < rowHeight; lineIndex++) {
@@ -210,11 +211,17 @@ const tableRows = (rows: readonly (readonly string[])[], width: number, mode: Ta
 	return output
 }
 
-export const bodyPreview = (body: string, width: number, limit = DETAIL_BODY_LINES, options: { readonly tableMode?: TableRenderMode } = {}): Array<PreviewLine> => {
+export const bodyPreview = (
+	body: string,
+	width: number,
+	limit = DETAIL_BODY_LINES,
+	options: { readonly tableMode?: TableRenderMode; readonly issueReferenceRepository?: string | null } = {},
+): Array<PreviewLine> => {
 	const sourceLines = body.replace(/\r/g, "").split("\n")
 	const preview: Array<PreviewLine> = []
 	let inCodeBlock = false
 	const tableMode = options.tableMode ?? "wrap"
+	const repository = options.issueReferenceRepository ?? null
 
 	for (let index = 0; index < sourceLines.length; index++) {
 		if (preview.length >= limit) break
@@ -237,7 +244,7 @@ export const bodyPreview = (body: string, width: number, limit = DETAIL_BODY_LIN
 					preview.push(BLANK_PREVIEW_LINE)
 				}
 				if (preview.length >= limit) break
-				preview.push(...tableRows(table.rows, Math.max(16, width), tableMode).slice(0, limit - preview.length))
+				preview.push(...tableRows(table.rows, Math.max(16, width), tableMode, repository).slice(0, limit - preview.length))
 				if (preview.length < limit) {
 					preview.push(BLANK_PREVIEW_LINE)
 				}
@@ -281,7 +288,7 @@ export const bodyPreview = (body: string, width: number, limit = DETAIL_BODY_LIN
 			indent = "  "
 		}
 
-		const wrapped = wrapPreviewSegments(inCodeBlock ? parseCodeSegments(text) : parseInlineSegments(text, fg, bold), Math.max(16, width), indent)
+		const wrapped = wrapPreviewSegments(inCodeBlock ? parseCodeSegments(text) : parseInlineSegments(text, fg, bold, repository), Math.max(16, width), indent)
 		for (const wrappedLine of wrapped) {
 			preview.push(wrappedLine)
 			if (preview.length >= limit) break
@@ -599,7 +606,10 @@ export const DetailBody = ({
 	const renderer = useRenderer()
 	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
 
-	const previewLines = useMemo(() => bodyPreview(pullRequest.body, contentWidth, bodyLineLimit), [pullRequest, contentWidth, bodyLineLimit, themeId, themeGeneration])
+	const previewLines = useMemo(
+		() => bodyPreview(pullRequest.body, contentWidth, bodyLineLimit, { issueReferenceRepository: pullRequest.repository }),
+		[pullRequest, contentWidth, bodyLineLimit, themeId, themeGeneration],
+	)
 
 	const urlPositions = useMemo(() => collectUrlPositions(previewLines), [previewLines])
 

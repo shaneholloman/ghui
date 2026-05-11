@@ -42,6 +42,7 @@ interface AppCommandActions {
 	readonly openCloseModal: () => void
 	readonly openPullRequestInBrowser: () => void
 	readonly copyPullRequestMetadata: () => void
+	readonly copyIssueMetadata: () => void
 	readonly quit: () => void
 }
 
@@ -476,6 +477,16 @@ export const buildAppCommands = ({
 			shortcut: "y",
 			keywords: ["clipboard", "url", "title"],
 			run: actions.copyPullRequestMetadata,
+		}),
+		defineCommand({
+			id: "issue.copy-metadata",
+			title: "Copy issue metadata",
+			scope: "Comments",
+			subtitle: selectedIssueLabel,
+			shortcut: "y",
+			keywords: ["clipboard", "url", "title"],
+			disabledReason: activeWorkspaceSurface === "issues" && selectedIssue ? null : "Select an issue first.",
+			run: actions.copyIssueMetadata,
 		}),
 		defineCommand({
 			id: "app.quit",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { collectUrlPositions, findUrlAt, inlineSegments, type InlinePalette } from "../src/ui/inlineSegments.js"
+import { collectUrlPositions, findUrlAt, inlineSegments, issueReferenceUrl, parseIssueReferenceUrl, type InlinePalette } from "../src/ui/inlineSegments.js"
 
 const PALETTE: InlinePalette = {
 	text: "fg-text",
@@ -9,6 +9,7 @@ const PALETTE: InlinePalette = {
 }
 
 const parse = (text: string) => inlineSegments(text, PALETTE.text, false, PALETTE)
+const parseWithRepo = (text: string) => inlineSegments(text, PALETTE.text, false, PALETTE, { issueReferenceRepository: "owner/name" })
 const parseBold = (text: string) => inlineSegments(text, PALETTE.text, true, PALETTE)
 
 describe("inlineSegments — plain text", () => {
@@ -130,6 +131,17 @@ describe("inlineSegments — references", () => {
 	test("multiple refs all colored", () => {
 		const segments = parse("#1 and #2")
 		expect(segments.filter((segment) => segment.fg === "fg-count").map((segment) => segment.text)).toEqual(["#1", "#2"])
+	})
+
+	test("refs become internal links when a repository is provided", () => {
+		expect(parseWithRepo("see #123")).toEqual([
+			{ text: "see ", fg: "fg-text", bold: false },
+			{ text: "#123", fg: "fg-count", bold: false, underline: true, url: issueReferenceUrl("owner/name", 123) },
+		])
+	})
+
+	test("internal ref links round-trip repository and number", () => {
+		expect(parseIssueReferenceUrl(issueReferenceUrl("owner/name", 123))).toEqual({ repository: "owner/name", number: 123 })
 	})
 
 	test("# alone is not a ref", () => {

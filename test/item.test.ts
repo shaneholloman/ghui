@@ -67,6 +67,10 @@ describe("searchQualifier — issues", () => {
 		expect(searchQualifier(issueInput({ mode: "authored", repository: null }))).toBe("is:issue author:@me is:open archived:false sort:updated-desc")
 	})
 
+	test("authored with repository scopes the issue search", () => {
+		expect(searchQualifier(issueInput({ mode: "authored", repository: "owner/name" }))).toBe("is:issue author:@me repo:owner/name is:open archived:false sort:updated-desc")
+	})
+
 	test("assigned with repository", () => {
 		expect(searchQualifier(issueInput({ mode: "assigned", repository: "owner/name" }))).toBe("is:issue assignee:@me repo:owner/name is:open archived:false sort:updated-desc")
 	})

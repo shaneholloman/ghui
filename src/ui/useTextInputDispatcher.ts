@@ -34,7 +34,6 @@ export interface UseTextInputDispatcherInput {
 	readonly setLabelModal: (next: LabelModalState | ((prev: LabelModalState) => LabelModalState)) => void
 	readonly setFilterDraft: (next: string | ((prev: string) => string)) => void
 	readonly editThemeQuery: (transform: (query: string) => string) => void
-	readonly editComment: (transform: (state: CommentEditorValue) => CommentEditorValue) => void
 	readonly editSubmitReview: (transform: (state: CommentEditorValue) => CommentEditorValue) => void
 }
 
@@ -101,11 +100,7 @@ export const useTextInputDispatcher = (input: UseTextInputDispatcherInput): void
 			return
 		}
 
-		if (input.commentModalActive) {
-			const text = printableKeyText(key)
-			if (text) input.editComment((state) => insertText(state, text))
-			return
-		}
+		if (input.commentModalActive) return
 
 		if (input.submitReviewModalActive) {
 			if (input.submitReviewModal.focus !== "body") return

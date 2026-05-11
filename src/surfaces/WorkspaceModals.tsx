@@ -42,6 +42,8 @@ export interface WorkspaceModalsProps {
 	readonly selectedCommandIndex: number
 	readonly onSelectCommandIndex: (index: number) => void
 	readonly onRunCommand: (command: AppCommand) => void
+	readonly onCommentChange: (body: string, cursor: number) => void
+	readonly onCommentSubmit: () => void
 }
 
 const layoutToProps = (layout: ModalLayout) => ({
@@ -58,7 +60,15 @@ export const WorkspaceModals = (props: WorkspaceModalsProps) =>
 		Close: (state) => <CloseModal state={state} loadingIndicator={props.loadingIndicator} {...layoutToProps(props.layouts.Close)} />,
 		PullRequestState: (state) => <PullRequestStateModal state={state} loadingIndicator={props.loadingIndicator} {...layoutToProps(props.layouts.PullRequestState)} />,
 		Merge: (state) => <MergeModal state={state} loadingIndicator={props.loadingIndicator} {...layoutToProps(props.layouts.Merge)} />,
-		Comment: (state) => <CommentModal state={state} anchorLabel={props.commentAnchorLabel} {...layoutToProps(props.layouts.Comment)} />,
+		Comment: (state) => (
+			<CommentModal
+				state={state}
+				anchorLabel={props.commentAnchorLabel}
+				onChange={props.onCommentChange}
+				onSubmit={props.onCommentSubmit}
+				{...layoutToProps(props.layouts.Comment)}
+			/>
+		),
 		DeleteComment: (state) => <DeleteCommentModal state={state} loadingIndicator={props.loadingIndicator} {...layoutToProps(props.layouts.DeleteComment)} />,
 		CommentThread: (state) => (
 			<CommentThreadModal state={state} anchorLabel={props.commentAnchorLabel} comments={props.selectedDiffCommentThread} {...layoutToProps(props.layouts.CommentThread)} />

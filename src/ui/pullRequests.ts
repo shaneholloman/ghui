@@ -1,4 +1,4 @@
-import type { CheckConclusion, PullRequestItem, PullRequestLabel, ReviewStatus } from "../domain.js"
+import type { CheckConclusion, IssueItem, PullRequestItem, PullRequestLabel, ReviewStatus } from "../domain.js"
 import { colors } from "./colors.js"
 
 export const shortRepoName = (repository: string) => repository.split("/")[1] ?? repository
@@ -29,6 +29,13 @@ export const pullRequestMetadataText = (pullRequest: PullRequestItem) => {
 	if (pullRequest.checkSummary) lines.push(pullRequest.checkSummary)
 	const failed = failingCheckNames(pullRequest)
 	if (failed.length > 0) lines.push(`failing checks: ${failed.join(", ")}`)
+	return lines.join("\n")
+}
+
+export const issueMetadataText = (issue: IssueItem) => {
+	const lines = [issue.title, `${issue.repository} #${issue.number}`, issue.url]
+	if (issue.commentCount > 0) lines.push(`${issue.commentCount} ${issue.commentCount === 1 ? "comment" : "comments"}`)
+	if (issue.labels.length > 0) lines.push(`labels: ${issue.labels.map((label) => label.name).join(", ")}`)
 	return lines.join("\n")
 }
 
