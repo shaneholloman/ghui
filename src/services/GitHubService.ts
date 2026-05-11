@@ -260,26 +260,13 @@ const SUMMARY_FIELDS_FRAGMENT = `
         baseRefName
 		repository { nameWithOwner defaultBranchRef { name } }`
 
-const DETAIL_FIELDS_FRAGMENT = `
-        number
-        title
-        body
-        isDraft
-        reviewDecision
-        autoMergeRequest { enabledAt }
-        additions
-        deletions
-        changedFiles
-        state
-        merged
-        createdAt
-        closedAt
-        url
-        author { login }
-		headRefOid
-		headRefName
-		baseRefName
-		repository { nameWithOwner defaultBranchRef { name } }
+// Compose detail from summary instead of duplicating — keeps the two fragments
+// in lock-step when fields are renamed.
+const DETAIL_FIELDS_FRAGMENT = `${SUMMARY_FIELDS_FRAGMENT}
+		body
+		additions
+		deletions
+		changedFiles
 		labels(first: 20) { nodes { name color } }${STATUS_CHECK_FRAGMENT}`
 
 const pullRequestDetailQuery = `

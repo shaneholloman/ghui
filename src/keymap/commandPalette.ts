@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { selectionModalBindings } from "./helpers.js"
 
 export interface CommandPaletteCtx {
 	readonly closeModal: () => void
@@ -8,9 +9,16 @@ export interface CommandPaletteCtx {
 
 const Palette = context<CommandPaletteCtx>()
 
+// `k`/`j` are typeable text in the palette search field, so the vertical keys
+// stick to arrows + emacs-style ctrl chords.
 export const commandPaletteKeymap = Palette(
-	{ id: "palette.close", title: "Close palette", keys: ["escape", "ctrl+c"], run: (s) => s.closeModal() },
-	{ id: "palette.run", title: "Run command", keys: ["return"], run: (s) => s.runSelected() },
-	{ id: "palette.up", title: "Up", keys: ["up", "ctrl+p", "ctrl+k"], run: (s) => s.moveSelection(-1) },
-	{ id: "palette.down", title: "Down", keys: ["down", "ctrl+n", "ctrl+j"], run: (s) => s.moveSelection(1) },
+	...selectionModalBindings<CommandPaletteCtx>({
+		id: "palette",
+		cancelTitle: "Close palette",
+		cancelKeys: ["escape", "ctrl+c"],
+		close: (s) => s.closeModal(),
+		confirm: { title: "Run command", run: (s) => s.runSelected() },
+		move: (s, delta) => s.moveSelection(delta),
+		verticalKeys: { up: ["up", "ctrl+p", "ctrl+k"], down: ["down", "ctrl+n", "ctrl+j"] },
+	}),
 )

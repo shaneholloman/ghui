@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { selectionModalBindings } from "./helpers.js"
 
 export interface ChangedFilesModalCtx {
 	readonly hasResults: boolean
@@ -10,14 +11,15 @@ export interface ChangedFilesModalCtx {
 const ChangedFiles = context<ChangedFilesModalCtx>()
 
 export const changedFilesModalKeymap = ChangedFiles(
-	{ id: "changed-files.close", title: "Close", keys: ["escape"], run: (s) => s.closeModal() },
-	{
-		id: "changed-files.select",
-		title: "Jump to file",
-		keys: ["return"],
-		enabled: (s) => (s.hasResults ? true : "No matching files."),
-		run: (s) => s.selectFile(),
-	},
-	{ id: "changed-files.up", title: "Up", keys: ["k", "up", "ctrl+p", "ctrl+k"], run: (s) => s.moveSelection(-1) },
-	{ id: "changed-files.down", title: "Down", keys: ["j", "down", "ctrl+n", "ctrl+j"], run: (s) => s.moveSelection(1) },
+	...selectionModalBindings<ChangedFilesModalCtx>({
+		id: "changed-files",
+		cancelTitle: "Close",
+		close: (s) => s.closeModal(),
+		confirm: {
+			title: "Jump to file",
+			enabled: (s) => (s.hasResults ? true : "No matching files."),
+			run: (s) => s.selectFile(),
+		},
+		move: (s, delta) => s.moveSelection(delta),
+	}),
 )

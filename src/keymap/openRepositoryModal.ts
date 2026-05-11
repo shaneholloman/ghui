@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { confirmModalBindings } from "./helpers.js"
 
 export interface OpenRepositoryModalCtx {
 	readonly closeModal: () => void
@@ -8,6 +9,9 @@ export interface OpenRepositoryModalCtx {
 const OpenRepo = context<OpenRepositoryModalCtx>()
 
 export const openRepositoryModalKeymap = OpenRepo(
-	{ id: "open-repo.close", title: "Cancel", keys: ["escape"], run: (s) => s.closeModal() },
-	{ id: "open-repo.open", title: "Open repository", keys: ["return"], run: (s) => s.openFromInput() },
+	...confirmModalBindings<OpenRepositoryModalCtx>({
+		id: "open-repo",
+		close: (s) => s.closeModal(),
+		confirm: { title: "Open repository", run: (s) => s.openFromInput() },
+	}),
 )

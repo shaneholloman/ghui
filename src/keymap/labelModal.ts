@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { selectionModalBindings } from "./helpers.js"
 
 export interface LabelModalCtx {
 	readonly closeModal: () => void
@@ -9,8 +10,11 @@ export interface LabelModalCtx {
 const Label = context<LabelModalCtx>()
 
 export const labelModalKeymap = Label(
-	{ id: "label-modal.close", title: "Close", keys: ["escape"], run: (s) => s.closeModal() },
-	{ id: "label-modal.toggle", title: "Toggle label", keys: ["return"], run: (s) => s.toggleSelected() },
-	{ id: "label-modal.up", title: "Up", keys: ["k", "up", "ctrl+p", "ctrl+k"], run: (s) => s.moveSelection(-1) },
-	{ id: "label-modal.down", title: "Down", keys: ["j", "down", "ctrl+n", "ctrl+j"], run: (s) => s.moveSelection(1) },
+	...selectionModalBindings<LabelModalCtx>({
+		id: "label-modal",
+		cancelTitle: "Close",
+		close: (s) => s.closeModal(),
+		confirm: { title: "Toggle label", run: (s) => s.toggleSelected() },
+		move: (s, delta) => s.moveSelection(delta),
+	}),
 )

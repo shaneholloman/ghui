@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { selectionModalBindings } from "./helpers.js"
 
 export interface FilterModalCtx {
 	readonly closeModal: () => void
@@ -9,8 +10,11 @@ export interface FilterModalCtx {
 const Filter = context<FilterModalCtx>()
 
 export const filterModalKeymap = Filter(
-	{ id: "filter-modal.close", title: "Close", keys: ["escape"], run: (s) => s.closeModal() },
-	{ id: "filter-modal.apply", title: "Apply filter", keys: ["return"], run: (s) => s.applySelected() },
-	{ id: "filter-modal.up", title: "Up", keys: ["k", "up", "ctrl+p", "ctrl+k"], run: (s) => s.moveSelection(-1) },
-	{ id: "filter-modal.down", title: "Down", keys: ["j", "down", "ctrl+n", "ctrl+j"], run: (s) => s.moveSelection(1) },
+	...selectionModalBindings<FilterModalCtx>({
+		id: "filter-modal",
+		cancelTitle: "Close",
+		close: (s) => s.closeModal(),
+		confirm: { title: "Apply filter", run: (s) => s.applySelected() },
+		move: (s, delta) => s.moveSelection(delta),
+	}),
 )
