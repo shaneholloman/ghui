@@ -7,11 +7,11 @@ import type {
 	PullRequestComment,
 	PullRequestItem,
 	PullRequestMergeInfo,
-	PullRequestPage,
 	PullRequestQueueMode,
 	PullRequestReviewComment,
 	ReviewStatus,
 } from "../domain.js"
+import type { ItemListInput } from "../item.js"
 import { mergeInfoFromPullRequest } from "../mergeActions.js"
 import { mockAuthor, mockBody, mockIssueTitle, mockLabels, mockPullRequestBranch, mockPullRequestTitle } from "./mockData.js"
 import { GitHubService } from "./GitHubService.js"
@@ -129,16 +129,12 @@ const filterByView = (mode: PullRequestQueueMode, repository: string | null, sou
 	return source.filter((item) => item.author !== username).slice(0, Math.ceil(source.length / 8))
 }
 
-const pageItems = (source: readonly PullRequestItem[], cursor: string | null, pageSize: number): PullRequestPage => {
+const slicePage = <T>(source: readonly T[], cursor: string | null, pageSize: number): { items: readonly T[]; endCursor: string | null; hasNextPage: boolean } => {
 	const start = cursor ? Number.parseInt(cursor, 10) : 0
 	const safeStart = Number.isFinite(start) && start >= 0 ? start : 0
 	const safePageSize = Math.max(1, Math.min(100, pageSize))
 	const end = Math.min(source.length, safeStart + safePageSize)
-	return {
-		items: source.slice(safeStart, end),
-		endCursor: end > safeStart ? String(end) : null,
-		hasNextPage: end < source.length,
-	}
+	return { items: source.slice(safeStart, end), endCursor: end > safeStart ? String(end) : null, hasNextPage: end < source.length }
 }
 
 const mockDiff = `diff --git a/src/mockDiff.ts b/src/mockDiff.ts
@@ -179,27 +175,27 @@ export const MockGitHubService = {
 					...(options.repositories ? { repositories: options.repositories } : {}),
 					username,
 				})
-			: items
+			: items.map((item) => ({ ...item, author: username }))
 		const issues = fixture ? fixture.issues : buildMockIssues(options)
 		const fixturePullRequestsByKey = new Map(fixture?.pullRequests.map((item) => [`${item.repository}#${item.number}`, item]))
 		const fixtureIssuesByKey = new Map(fixture?.issues.map((item) => [`${item.repository}#${item.number}`, item]))
 		const pullRequestSource = (mode: PullRequestQueueMode, repository: string | null) => (mode === "repository" || repository ? items : userItems)
-		const summaryItems = items.map(
-			(item) =>
-				({
-					...item,
-					body: "",
-					labels: [],
-					additions: 0,
-					deletions: 0,
-					changedFiles: 0,
-					detailLoaded: false,
-				}) satisfies PullRequestItem,
-		)
+
+		// Map the new `ItemListMode` onto the legacy `PullRequestQueueMode` filter
+		// path so the mock applies the same scoping as the real service.
+		const queueModeForListMode = (mode: "all" | "authored" | "review" | "assigned" | "mentioned"): PullRequestQueueMode => (mode === "all" ? "repository" : mode)
+
+		const filterIssuesByMode = (mode: "all" | "authored" | "assigned" | "mentioned", repository: string | null, source: readonly IssueItem[]): readonly IssueItem[] => {
+			const scopedToRepo = repository ? source.filter((issue) => issue.repository === repository) : source
+			if (mode === "all") return scopedToRepo
+			if (mode === "authored") return scopedToRepo.filter((issue) => issue.author === username)
+			// Mock has no assignee/mentions metadata; treat both as "items not authored by me"
+			// so the mode visibly differs from "authored".
+			return scopedToRepo.filter((issue) => issue.author !== username).slice(0, Math.max(1, Math.ceil(scopedToRepo.length / 4)))
+		}
 		const fixturePullRequest = (repository: string, number: number) => fixturePullRequestsByKey.get(`${repository}#${number}`) ?? null
 		const fixtureIssue = (repository: string, number: number) => fixtureIssuesByKey.get(`${repository}#${number}`) ?? null
 		const findPullRequest = (repository: string, number: number) => [...items, ...userItems].find((item) => item.repository === repository && item.number === number) ?? items[0]!
-		const findIssues = (repository: string) => issues.filter((issue) => issue.repository === repository)
 		const labelsForRepository = (repository: string) =>
 			uniqueLabels([...items.filter((item) => item.repository === repository), ...issues.filter((issue) => issue.repository === repository)])
 		const comments = (repository: string, number: number): readonly PullRequestComment[] => [
@@ -272,21 +268,30 @@ export const MockGitHubService = {
 		return Layer.succeed(
 			GitHubService,
 			GitHubService.of({
-				listOpenPullRequests: (mode: PullRequestQueueMode, repository: string | null) =>
-					Effect.succeed(filterByView(mode, repository, mode === "repository" || repository ? summaryItems : userItems, username, strictUserScope)),
-				listOpenPullRequestPage: (input) =>
-					Effect.succeed(
-						pageItems(filterByView(input.mode, input.repository, pullRequestSource(input.mode, input.repository), username, strictUserScope), input.cursor, input.pageSize),
-					),
-				listOpenPullRequestDetails: (mode: PullRequestQueueMode, repository: string | null) =>
-					Effect.succeed(filterByView(mode, repository, pullRequestSource(mode, repository), username, strictUserScope)),
 				getPullRequestDetails: (repository, number) => Effect.succeed(findPullRequest(repository, number)),
+				getRepositoryDetails: (repository: string) => {
+					const seed = Array.from(repository).reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) >>> 0, 0)
+					const openIssueCount = issues.filter((issue) => issue.repository === repository).length
+					const openPullRequestCount = items.filter((item) => item.repository === repository).length
+					return Effect.succeed({
+						repository,
+						description: `Mock repository ${repository} — synthesized for offline development.`,
+						url: `https://github.com/${repository}`,
+						stargazerCount: 12 + (seed % 4000),
+						forkCount: 1 + (seed % 80),
+						openIssueCount,
+						openPullRequestCount,
+						defaultBranch: "main",
+						pushedAt: new Date(Date.now() - (seed % 86_400_000)),
+						isArchived: false,
+						isPrivate: seed % 5 === 0,
+					})
+				},
 				getAuthenticatedUser: () => Effect.succeed(username),
 				getPullRequestDiff: (repository, number) => Effect.succeed(fixturePullRequest(repository, number)?.diff ?? mockDiff),
 				listPullRequestReviewComments: (repository, number) => Effect.succeed(reviewComments(repository, number)),
 				listPullRequestComments: (repository, number) => Effect.succeed(pullRequestComments(repository, number)),
 				listIssueComments: (repository, number) => Effect.succeed(issueComments(repository, number)),
-				listOpenIssues: (repository) => Effect.succeed(findIssues(repository)),
 				getPullRequestMergeInfo: (repository, number) => {
 					const pr = findPullRequest(repository, number)
 					return Effect.succeed({
@@ -367,6 +372,22 @@ export const MockGitHubService = {
 				removePullRequestLabel: () => Effect.void,
 				addIssueLabel: () => Effect.void,
 				removeIssueLabel: () => Effect.void,
+				listPullRequestPage: (input: ItemListInput<"pullRequest">) => {
+					const queueMode = queueModeForListMode(input.mode)
+					const filtered = filterByView(queueMode, input.repository, pullRequestSource(queueMode, input.repository), username, strictUserScope)
+					return Effect.succeed(slicePage(filtered, input.cursor, input.pageSize))
+				},
+				listIssuePage: (input: ItemListInput<"issue">) => Effect.succeed(slicePage(filterIssuesByMode(input.mode, input.repository, issues), input.cursor, input.pageSize)),
+				listAllPullRequests: (input: {
+					readonly kind: "pullRequest"
+					readonly mode: "all" | "authored" | "review" | "assigned" | "mentioned"
+					readonly repository: string | null
+				}) => {
+					const queueMode = queueModeForListMode(input.mode)
+					return Effect.succeed(filterByView(queueMode, input.repository, pullRequestSource(queueMode, input.repository), username, strictUserScope))
+				},
+				listAllIssues: (input: { readonly kind: "issue"; readonly mode: "all" | "authored" | "assigned" | "mentioned"; readonly repository: string | null }) =>
+					Effect.succeed(filterIssuesByMode(input.mode, input.repository, issues)),
 			}),
 		)
 	},

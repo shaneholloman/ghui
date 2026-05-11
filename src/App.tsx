@@ -24,9 +24,10 @@ import {
 } from "./domain.js"
 import { errorMessage } from "./errors.js"
 import type { PullRequestLoad } from "./pullRequestLoad.js"
-import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewMode, viewRepository } from "./pullRequestViews.js"
+import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewRepository, viewToListInput } from "./pullRequestViews.js"
 
 import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
+import { ActiveFilterBar, ACTIVE_FILTER_BAR_HEIGHT } from "./ui/ActiveFilterBar.js"
 import { colors, rowHoverBackground } from "./ui/colors.js"
 import {
 	favoriteRepositoriesAtom,
@@ -45,7 +46,7 @@ import {
 	pullRequestCommentsAtom,
 	pullRequestCommentsLoadedAtom,
 } from "./ui/comments/atoms.js"
-import { addIssueLabelAtom, issuesAtom, removeIssueLabelAtom } from "./ui/issues/atoms.js"
+import { activeIssueViewAtom, addIssueLabelAtom, issuesAtom, issueViewRepository, removeIssueLabelAtom } from "./ui/issues/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
 import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
@@ -73,6 +74,7 @@ import {
 	pullRequestRevisionAtomKey,
 	pullRequestsAtom,
 	pullRequestStatusAtom,
+	repositoryDetailsAtom,
 	queueLoadCacheAtom,
 	queueSelectionAtom,
 	recentlyCompletedPullRequestsAtom,
@@ -138,7 +140,6 @@ import {
 	DetailHeader,
 	DetailPlaceholder,
 	DetailsPane,
-	getDetailsPaneHeight,
 	getDetailHeaderHeight,
 	getDetailJunctionRows,
 	getScrollableDetailBodyHeight,
@@ -152,12 +153,14 @@ import { Divider, Filler, fitCell, PlainLine, TextLine } from "./ui/primitives.j
 import {
 	filterChangedFiles,
 	filterLabels,
+	filterOptions,
 	initialChangedFilesModalState,
 	initialCloseModalState,
 	initialCommandPaletteState,
 	initialCommentModalState,
 	initialCommentThreadModalState,
 	initialDeleteCommentModalState,
+	initialFilterModalState,
 	initialLabelModalState,
 	initialMergeModalState,
 	initialModal,
@@ -173,6 +176,7 @@ import {
 	type CommentModalState,
 	type CommentThreadModalState,
 	type DeleteCommentModalState,
+	type FilterModalState,
 	type LabelModalState,
 	type MergeModalState,
 	type ModalState,
@@ -185,7 +189,7 @@ import {
 import { pullRequestMetadataText } from "./ui/pullRequests.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
-import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
+import { buildPullRequestListRows, pullRequestListRowIndex, pullRequestListVisualLineCount, PullRequestList } from "./ui/PullRequestList.js"
 import { type RepositoryListItem } from "./ui/RepoList.js"
 import { IssuesWorkspace } from "./surfaces/IssuesWorkspace.js"
 import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
@@ -201,7 +205,7 @@ import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
-import { detectedRepository, mockPrCount, mockRepositoryCatalog, mockUserIssues, mockWorkspacePreferencesPath, pullRequestPageSize } from "./services/runtime.js"
+import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath, pullRequestPageSize } from "./services/runtime.js"
 
 interface DetailPlaceholderInput {
 	readonly status: LoadStatus
@@ -372,6 +376,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [filterQuery, setFilterQuery] = useAtom(filterQueryAtom)
 	const [filterDraft, setFilterDraft] = useAtom(filterDraftAtom)
 	const [filterMode, setFilterMode] = useAtom(filterModeAtom)
+	const [activeIssueView, setActiveIssueView] = useAtom(activeIssueViewAtom)
 	const [detailFullView, setDetailFullView] = useAtom(detailFullViewAtom)
 	const setDetailScrollOffset = useAtomSet(detailScrollOffsetAtom)
 	const [diffFullView, setDiffFullView] = useAtom(diffFullViewAtom)
@@ -401,6 +406,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const deleteCommentModalActive = Modal.$is("DeleteComment")(activeModal)
 	const commentThreadModalActive = Modal.$is("CommentThread")(activeModal)
 	const changedFilesModalActive = Modal.$is("ChangedFiles")(activeModal)
+	const filterModalActive = Modal.$is("Filter")(activeModal)
 	const submitReviewModalActive = Modal.$is("SubmitReview")(activeModal)
 	const themeModalActive = Modal.$is("Theme")(activeModal)
 	const commandPaletteActive = Modal.$is("CommandPalette")(activeModal)
@@ -413,6 +419,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const deleteCommentModal: DeleteCommentModalState = deleteCommentModalActive ? activeModal : initialDeleteCommentModalState
 	const commentThreadModal: CommentThreadModalState = commentThreadModalActive ? activeModal : initialCommentThreadModalState
 	const changedFilesModal: ChangedFilesModalState = changedFilesModalActive ? activeModal : initialChangedFilesModalState
+	const filterModal: FilterModalState = filterModalActive ? activeModal : initialFilterModalState
 	const submitReviewModal: SubmitReviewModalState = submitReviewModalActive ? activeModal : initialSubmitReviewModalState
 	const themeModal: ThemeModalState = themeModalActive ? activeModal : initialThemeModalState
 	const commandPalette: CommandPaletteState = commandPaletteActive ? activeModal : initialCommandPaletteState
@@ -437,6 +444,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setDeleteCommentModal = makeModalSetter("DeleteComment")
 	const setCommentThreadModal = makeModalSetter("CommentThread")
 	const setChangedFilesModal = makeModalSetter("ChangedFiles")
+	const setFilterModal = makeModalSetter("Filter")
 	const setSubmitReviewModal = makeModalSetter("SubmitReview")
 	const setThemeModal = makeModalSetter("Theme")
 	const setCommandPalette = makeModalSetter("CommandPalette")
@@ -486,7 +494,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const showWorkspaceTabs = !detailFullView && !diffFullView && !commentsViewActive
 	const wideBodyHeight = Math.max(8, terminalHeight - (showWorkspaceTabs ? 6 : 4))
 	const refreshGenerationRef = useRef(0)
-	const didMountQueueModeRef = useRef(false)
 	const lastPullRequestRefreshAtRef = useRef(0)
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
 	const refreshPullRequestsRef = useRef<(message?: string, options?: { readonly resetTransientState?: boolean }) => void>(() => {})
@@ -525,12 +532,19 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
 	const pullRequestFetchInFlight = pullRequestResult.waiting
 	const selectedRepository = viewRepository(activeView)
+	const selectedIssueRepository = issueViewRepository(activeIssueView)
+	const pullRequestAuthorFilterActive = selectedRepository !== null && activeView._tag === "Queue" && activeView.mode === "authored"
+	const issueAuthorFilterActive = selectedIssueRepository !== null && activeIssueView._tag === "Queue" && activeIssueView.mode === "authored"
+	const pullRequestActiveFilterLabel = pullRequestAuthorFilterActive ? "author:@me" : null
+	const issueActiveFilterLabel = issueAuthorFilterActive ? "author:@me" : null
 	const isInitialLoading = !startupLoadComplete && pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const issueOverrides = useAtomValue(issueOverridesAtom)
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
-	const rawIssues = selectedRepository === null && mockPrCount !== null ? mockUserIssues : AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
+	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
+	const rawIssues = AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
 	const allIssues = useMemo(() => rawIssues.map((issue) => issueOverrides[issue.url] ?? issue), [rawIssues, issueOverrides])
+	// Server applies mode-based filtering (authored/assigned/mentioned); no client-side scope filter needed.
 	const issues = useMemo(
 		() => (activeWorkspaceSurface === "issues" ? filterByScore(allIssues, visibleFilterText, issueFilterScore, (issue) => issue.updatedAt.getTime()) : allIssues),
 		[activeWorkspaceSurface, allIssues, visibleFilterText],
@@ -540,7 +554,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const selectedIssue = issues[Math.max(0, Math.min(selectedIssueIndex, issues.length - 1))] ?? null
 	const showIssueRepositoryGroups = selectedRepository === null
 	const selectedIssueRowIndex = issueListRowIndex(issues, selectedIssueIndex, showIssueRepositoryGroups)
-	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 
 	const visibleGroups = useAtomValue(visibleGroupsAtom)
@@ -570,21 +583,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		for (const repository of [...recentRepositories, ...Object.keys(favoriteRepositories), ...(detectedRepository ? [detectedRepository] : [])]) {
 			ensure(repository)
 		}
-		const touch = (repository: string, at: Date, description: string | null, counts: Pick<RepositoryListItem, "pullRequestCount" | "issueCount">) => {
+		const touch = (repository: string, at: Date, counts: Pick<RepositoryListItem, "pullRequestCount" | "issueCount">) => {
 			const current = ensure(repository)
 			byRepository.set(repository, {
 				...current,
 				pullRequestCount: current.pullRequestCount + counts.pullRequestCount,
 				issueCount: current.issueCount + counts.issueCount,
 				lastActivityAt: current.lastActivityAt && current.lastActivityAt > at ? current.lastActivityAt : at,
-				description: current.description ?? description,
 			})
 		}
 		for (const pullRequest of pullRequests) {
-			touch(pullRequest.repository, pullRequest.createdAt, pullRequest.title, { pullRequestCount: 1, issueCount: 0 })
+			touch(pullRequest.repository, pullRequest.createdAt, { pullRequestCount: 1, issueCount: 0 })
 		}
 		for (const issue of allIssues) {
-			touch(issue.repository, issue.updatedAt, issue.title, { pullRequestCount: 0, issueCount: 1 })
+			touch(issue.repository, issue.updatedAt, { pullRequestCount: 0, issueCount: 1 })
 		}
 		return [...byRepository.values()].sort((left, right) => {
 			if (left.current !== right.current) return left.current ? -1 : 1
@@ -600,12 +612,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		[activeWorkspaceSurface, allRepositoryItems, visibleFilterText],
 	)
 	const selectedRepositoryItem = repositoryItems[Math.max(0, Math.min(selectedRepositoryIndex, repositoryItems.length - 1))] ?? null
+	const selectedRepositoryDetailsResult = useAtomValue(repositoryDetailsAtom(selectedRepositoryItem?.repository ?? ""))
+	const selectedRepositoryDetails = selectedRepositoryItem && AsyncResult.isSuccess(selectedRepositoryDetailsResult) ? (selectedRepositoryDetailsResult.value ?? null) : null
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
 	const activeViews = activePullRequestViews(activeView)
 	const currentQueueCacheKey = viewCacheKey(activeView)
 	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
 	const hasMorePullRequests = Boolean(pullRequestLoad?.hasNextPage && loadedPullRequestCount < config.prFetchLimit)
+	const pullRequestListFilterActive = filterMode || filterQuery.length > 0
+	const visibleHasMorePullRequests = !pullRequestListFilterActive && hasMorePullRequests
 	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
 	const pullRequestListRows = useMemo(
 		() =>
@@ -615,10 +631,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				error: pullRequestError,
 				filterText: visibleFilterText,
 				loadedCount: loadedPullRequestCount,
-				hasMore: hasMorePullRequests,
+				hasMore: visibleHasMorePullRequests,
 				isLoadingMore: isLoadingMorePullRequests,
 			}),
-		[visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, loadedPullRequestCount, hasMorePullRequests, isLoadingMorePullRequests],
+		[visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, loadedPullRequestCount, visibleHasMorePullRequests, isLoadingMorePullRequests],
 	)
 	const selectedPullRequestRowIndex = pullRequestListRowIndex(pullRequestListRows, selectedPullRequest?.url ?? null)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
@@ -755,6 +771,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		selectedIndex,
 		currentQueueCacheKey,
 		refreshGenerationRef,
+		queueFetchedAtMs: pullRequestLoad?.fetchedAt?.getTime() ?? null,
 		flashNotice,
 		setQueueLoadCache,
 	})
@@ -795,11 +812,17 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setNotice(null)
 		setRefreshCompletionMessage(null)
 		setRefreshStartedAt(null)
+		// Keep the issue view's repository scope mirrored to the PR view so the
+		// two surfaces share workspace context until issues get a dedicated picker.
 		if (view._tag === "Repository") {
+			setActiveIssueView({ _tag: "Repository", repository: view.repository })
 			setRecentRepositories((current) => [view.repository, ...current.filter((repository) => repository !== view.repository)].slice(0, 12))
 			if (activeWorkspaceSurface === "repos") setActiveWorkspaceSurface("pullRequests")
 		} else if (view.repository === null && selectedRepository !== null) {
+			setActiveIssueView({ _tag: "Queue", mode: "authored", repository: null })
 			setActiveWorkspaceSurface("repos")
+		} else if (view.repository !== null && view.repository !== selectedRepository) {
+			setActiveIssueView({ _tag: "Repository", repository: view.repository })
 		}
 	}
 	const switchQueueMode = (delta: 1 | -1) => {
@@ -854,6 +877,34 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setRecentRepositories((current) => current.filter((item) => item !== repository))
 		flashNotice(repository === detectedRepository ? `Removed saved state for ${repository}; current repo stays pinned` : `Removed ${repository} from tracked repositories`)
 	}
+	const openFilterModal = () => {
+		if (!selectedRepository || (activeWorkspaceSurface !== "pullRequests" && activeWorkspaceSurface !== "issues")) return
+		// Read the active filter from the surface's own view — one source of truth.
+		const isMine =
+			activeWorkspaceSurface === "pullRequests"
+				? activeView._tag === "Queue" && activeView.mode === "authored"
+				: activeIssueView._tag === "Queue" && activeIssueView.mode === "authored"
+		setFilterModal({
+			surface: activeWorkspaceSurface,
+			selectedIndex: Math.max(
+				0,
+				filterOptions.findIndex((option) => option.value === (isMine ? "mine" : "all")),
+			),
+		})
+	}
+	const moveFilterSelection = (delta: -1 | 1) => {
+		setFilterModal((current) => ({ ...current, selectedIndex: wrapIndex(current.selectedIndex + delta, filterOptions.length) }))
+	}
+	const applySelectedFilter = () => {
+		const option = filterOptions[filterModal.selectedIndex]
+		if (!option) return
+		if (filterModal.surface === "pullRequests" && selectedRepository) {
+			switchViewTo(option.value === "mine" ? { _tag: "Queue", mode: "authored", repository: selectedRepository } : { _tag: "Repository", repository: selectedRepository })
+		} else if (filterModal.surface === "issues" && selectedRepository) {
+			setActiveIssueView(option.value === "mine" ? { _tag: "Queue", mode: "authored", repository: selectedRepository } : { _tag: "Repository", repository: selectedRepository })
+		}
+		closeActiveModal()
+	}
 	const loadMorePullRequests = () => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
 		const remaining = config.prFetchLimit - pullRequestLoad.data.length
@@ -861,12 +912,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		const cacheKey = currentQueueCacheKey
 		const generation = refreshGenerationRef.current
 		setLoadingMoreKey(cacheKey)
-		void loadPullRequestPage({
-			mode: viewMode(activeView),
-			repository: selectedRepository,
-			cursor: pullRequestLoad.endCursor,
-			pageSize: Math.min(pullRequestPageSize, remaining),
-		})
+		void loadPullRequestPage(viewToListInput(activeView, pullRequestLoad.endCursor, Math.min(pullRequestPageSize, remaining)))
 			.then((page) => {
 				if (generation !== refreshGenerationRef.current) return
 				const currentLoad = registry.get(queueLoadCacheAtom)[cacheKey]
@@ -956,15 +1002,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 	}, [pullRequestLoad?.fetchedAt])
 
-	useEffect(() => {
-		if (!didMountQueueModeRef.current) {
-			didMountQueueModeRef.current = true
-			return
-		}
-		if (pullRequestFetchInFlight) return
-		if (registry.get(queueLoadCacheAtom)[currentQueueCacheKey]) return
-		refreshPullRequestsAtom()
-	}, [currentQueueCacheKey, pullRequestFetchInFlight, refreshPullRequestsAtom, registry])
+	// View-change refetch is now driven by `pullRequestsAtom`'s reactive
+	// dependency on `activeViewAtom`. `pullRequestLoadAtom` reads the in-memory
+	// cache first, so the user sees the previous list instantly while the new
+	// view's fetch lands.
 
 	useEffect(() => {
 		if (!refreshCompletionMessage || refreshStartedAt === null) return
@@ -1022,13 +1063,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}, [currentQueueCacheKey, selectedIndex])
 
 	useEffect(() => {
-		if (filterMode || filterQuery.length > 0 || visiblePullRequests.length === 0) return
+		if (pullRequestListFilterActive || visiblePullRequests.length === 0) return
 		const thresholdIndex = Math.max(0, visiblePullRequests.length - LOAD_MORE_SELECTION_THRESHOLD)
 		if (selectedIndex >= thresholdIndex) loadMorePullRequests()
-	}, [selectedIndex, visiblePullRequests.length, filterMode, filterQuery, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
+	}, [selectedIndex, visiblePullRequests.length, pullRequestListFilterActive, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
 
 	useEffect(() => {
-		if (filterMode || filterQuery.length > 0 || visiblePullRequests.length === 0 || detailFullView || diffFullView) return
+		if (pullRequestListFilterActive || visiblePullRequests.length === 0 || detailFullView || diffFullView) return
 		if (!hasMorePullRequests || isLoadingMorePullRequests) return
 		const checkScroll = () => {
 			const scroll = prListScrollRef.current
@@ -1039,7 +1080,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		checkScroll()
 		const interval = globalThis.setInterval(checkScroll, 120)
 		return () => globalThis.clearInterval(interval)
-	}, [visiblePullRequests.length, filterMode, filterQuery, detailFullView, diffFullView, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
+	}, [visiblePullRequests.length, pullRequestListFilterActive, detailFullView, diffFullView, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
 
 	useScrollFollowSelected(prListScrollRef, selectedPullRequestRowIndex)
 	useScrollFollowSelected(issueListScrollRef, issues.length === 0 ? null : selectedIssueRowIndex)
@@ -2047,7 +2088,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			return
 		}
 		if (visiblePullRequests.length === 0) return
-		if (selectedIndex + count >= visiblePullRequests.length && hasMorePullRequests) {
+		if (selectedIndex + count >= visiblePullRequests.length && visibleHasMorePullRequests) {
 			loadMorePullRequests()
 		}
 		stepSelected(count)
@@ -2068,7 +2109,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 			return
 		}
-		if (visiblePullRequests.length > 0 && selectedIndex >= visiblePullRequests.length - 1 && hasMorePullRequests) {
+		if (visiblePullRequests.length > 0 && selectedIndex >= visiblePullRequests.length - 1 && visibleHasMorePullRequests) {
 			loadMorePullRequests()
 			return
 		}
@@ -2112,6 +2153,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			mergeModalActive,
 			commentThreadModalActive,
 			changedFilesModalActive,
+			filterModalActive,
 			submitReviewModalActive,
 			labelModalActive,
 			themeModalActive,
@@ -2138,6 +2180,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		mergeModal: { mergeModal, cancelOrCloseMergeModal, confirmMergeAction, cycleMergeMethod, moveMergeSelection },
 		commentThreadModal: { halfPage, closeActiveModal, openDiffCommentModal, scrollCommentThread },
 		changedFilesModal: { hasResults: changedFileResults.length > 0, closeActiveModal, selectChangedFile, moveChangedFileSelection },
+		filterModal: { closeActiveModal, applySelected: applySelectedFilter, moveSelection: moveFilterSelection },
 		submitReviewModal: { submitReviewModal, closeActiveModal, setSubmitReviewModal, confirmSubmitReview, editSubmitReview, moveSubmitReviewActionSelection },
 		labelModal: { closeActiveModal, toggleLabelAtIndex, moveLabelSelection },
 		themeModal: { themeModal, closeThemeModal, updateThemeQuery, toggleThemeMode, toggleThemeTone, moveThemeSelection },
@@ -2198,6 +2241,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			openRepositoryPicker,
 			toggleFavoriteRepository,
 			removeSelectedRepository,
+			openFilterModal,
 			goUpWorkspace: () => {
 				goUpWorkspaceScope()
 			},
@@ -2273,16 +2317,15 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const narrowRepoDetailHeight = narrowDetailsPaneHeight
 	const narrowIssueListHeight = narrowPullRequestListHeight
 	const narrowIssueDetailHeight = narrowDetailsPaneHeight
-	const narrowDetailsContentHeight = getDetailsPaneHeight({
-		pullRequest: selectedPullRequest,
-		contentWidth: fullscreenContentWidth,
-		paneWidth: contentWidth,
-		comments: selectedComments,
-		commentsStatus: selectedCommentsStatus,
-	})
-	const narrowDetailsPaneNeedsScroll = narrowDetailsContentHeight > narrowDetailsPaneHeight
-	const widePullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > wideBodyHeight
-	const narrowPullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > narrowPullRequestListHeight
+	const narrowPreviewHeaderHeight = getDetailHeaderHeight(selectedPullRequest, contentWidth, false, selectedComments, selectedCommentsStatus)
+	const narrowPreviewBodyHeight = Math.max(1, narrowDetailsPaneHeight - narrowPreviewHeaderHeight)
+	const narrowPreviewBodyScrollable = getScrollableDetailBodyHeight(selectedPullRequest, fullscreenContentWidth) > narrowPreviewBodyHeight
+	const pullRequestFilterBarHeight = pullRequestActiveFilterLabel ? ACTIVE_FILTER_BAR_HEIGHT : 0
+	const widePullRequestListHeight = Math.max(1, wideBodyHeight - pullRequestFilterBarHeight)
+	const narrowPullRequestRowsHeight = Math.max(1, narrowPullRequestListHeight - pullRequestFilterBarHeight)
+	const pullRequestVisualLineCount = pullRequestListVisualLineCount(pullRequestListRows)
+	const widePullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestVisualLineCount > widePullRequestListHeight
+	const narrowPullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestVisualLineCount > narrowPullRequestRowsHeight
 	const detailJunctions = isSelectedPullRequestDetailLoading
 		? []
 		: getDetailJunctionRows({
@@ -2331,19 +2374,38 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
 		</box>
 	)
+	const widePullRequestFilterBar = pullRequestActiveFilterLabel ? (
+		<box height={ACTIVE_FILTER_BAR_HEIGHT} flexDirection="column">
+			<box paddingLeft={sectionPadding}>
+				<ActiveFilterBar label={pullRequestActiveFilterLabel} width={leftContentWidth} />
+			</box>
+			<Divider width={leftPaneWidth} />
+		</box>
+	) : null
 	const narrowPullRequestList = (
 		<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
 			<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
 		</box>
 	)
+	const narrowPullRequestFilterBar = pullRequestActiveFilterLabel ? (
+		<box height={ACTIVE_FILTER_BAR_HEIGHT} flexDirection="column">
+			<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+				<ActiveFilterBar label={pullRequestActiveFilterLabel} width={fullscreenContentWidth} />
+			</box>
+			<Divider width={contentWidth} />
+		</box>
+	) : null
 	const showWideSplit = activeWorkspaceSurface === "pullRequests" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 	const showRepoSplit = activeWorkspaceSurface === "repos" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 	const showIssueSplit = activeWorkspaceSurface === "issues" && isWideLayout && !detailFullView && !diffFullView && !commentsViewActive
 	const issueJunctions = showIssueSplit ? getIssueDetailJunctionRows(selectedIssue, rightPaneWidth) : []
 	const showPaneSplit = showWideSplit || showRepoSplit || showIssueSplit
+	const issueFilterBarHeight = issueActiveFilterLabel ? ACTIVE_FILTER_BAR_HEIGHT : 0
+	const wideIssueRowsHeight = Math.max(1, wideBodyHeight - issueFilterBarHeight)
+	const narrowIssueRowsHeight = Math.max(1, narrowIssueListHeight - issueFilterBarHeight)
 	const issueVisualLineCount = issueListVisualLineCount(issues, showIssueRepositoryGroups)
-	const issueListNeedsScroll = issuesStatus === "ready" && issueVisualLineCount > wideBodyHeight
-	const narrowIssueListNeedsScroll = issuesStatus === "ready" && issueVisualLineCount > narrowIssueListHeight
+	const issueListNeedsScroll = issuesStatus === "ready" && issueVisualLineCount > wideIssueRowsHeight
+	const narrowIssueListNeedsScroll = issuesStatus === "ready" && issueVisualLineCount > narrowIssueRowsHeight
 	const repoListNeedsScroll = repositoryItems.length > wideBodyHeight
 	const narrowRepoListNeedsScroll = repositoryItems.length > narrowRepoListHeight
 	const workspaceTabCounts = {
@@ -2380,6 +2442,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const pullRequestStateLayout = sizedModal(46, 68, 12, 9)
 	const commentLayout = sizedModal(46, 76, 8, 16)
 	const commentThreadLayout = sizedModal(50, 86, 8, 22)
+	const filterLayout = sizedModal(58, 76, 10, 12)
 	const submitReviewLayout = sizedModal(54, 84, 8, 18)
 	const mergeLayout = sizedModal(46, 68, 14, 20)
 	const themeLayout = sizedModal(38, 58, 12, 16)
@@ -2463,6 +2526,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					narrowRepoListNeedsScroll={narrowRepoListNeedsScroll}
 					repoListProps={repoListProps}
 					selectedRepositoryItem={selectedRepositoryItem}
+					selectedRepositoryDetails={selectedRepositoryDetails}
 					detailPreviewScrollRef={detailPreviewScrollRef}
 				/>
 			) : activeWorkspaceSurface === "issues" && !commentsViewActive && !diffFullView && !detailFullView ? (
@@ -2479,6 +2543,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					narrowIssueDetailHeight={narrowIssueDetailHeight}
 					issueListNeedsScroll={issueListNeedsScroll}
 					narrowIssueListNeedsScroll={narrowIssueListNeedsScroll}
+					activeFilterLabel={issueActiveFilterLabel}
 					issueJunctions={issueJunctions}
 					issueListProps={issueListProps}
 					selectedIssue={selectedIssue}
@@ -2592,15 +2657,18 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 					rightWidth={rightPaneWidth}
 					junctionRows={detailJunctions}
 					left={
-						widePullRequestListNeedsScroll ? (
-							<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
-								{widePullRequestList}
-							</scrollbox>
-						) : (
-							<box height={wideBodyHeight} flexDirection="column">
-								{widePullRequestList}
-							</box>
-						)
+						<box height={wideBodyHeight} flexDirection="column">
+							{widePullRequestFilterBar}
+							{widePullRequestListNeedsScroll ? (
+								<scrollbox ref={prListScrollRef} focusable={false} height={widePullRequestListHeight} flexGrow={0}>
+									{widePullRequestList}
+								</scrollbox>
+							) : (
+								<box height={widePullRequestListHeight} flexDirection="column">
+									{widePullRequestList}
+								</box>
+							)}
+						</box>
 					}
 					right={
 						isSelectedPullRequestDetailError && selectedPullRequest ? (
@@ -2710,23 +2778,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				</box>
 			) : (
 				<box key="narrow-main" height={wideBodyHeight} flexDirection="column">
-					{narrowPullRequestListNeedsScroll ? (
-						<scrollbox ref={prListScrollRef} focusable={false} height={narrowPullRequestListHeight} flexGrow={0}>
-							{narrowPullRequestList}
-						</scrollbox>
-					) : (
-						<box height={narrowPullRequestListHeight} flexDirection="column">
-							{narrowPullRequestList}
-						</box>
-					)}
+					<box height={narrowPullRequestListHeight} flexDirection="column">
+						{narrowPullRequestFilterBar}
+						{narrowPullRequestListNeedsScroll ? (
+							<scrollbox ref={prListScrollRef} focusable={false} height={narrowPullRequestRowsHeight} flexGrow={0}>
+								{narrowPullRequestList}
+							</scrollbox>
+						) : (
+							<box height={narrowPullRequestRowsHeight} flexDirection="column">
+								{narrowPullRequestList}
+							</box>
+						)}
+					</box>
 					<Divider width={contentWidth} />
-					<scrollbox
-						ref={detailPreviewScrollRef}
-						focusable={false}
-						height={narrowDetailsPaneHeight}
-						flexGrow={0}
-						verticalScrollbarOptions={{ visible: narrowDetailsPaneNeedsScroll }}
-					>
+					<box height={narrowDetailsPaneHeight} flexDirection="column">
 						{isSelectedPullRequestDetailError && selectedPullRequest ? (
 							<box flexDirection="column">
 								<DetailHeader
@@ -2740,13 +2805,39 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 								<PlainLine text="- Could not load pull request details." fg={colors.error} />
 								<PlainLine text={`- ${selectedPullRequestDetailError}`} fg={colors.muted} />
 							</box>
+						) : selectedPullRequest ? (
+							<>
+								<DetailHeader
+									pullRequest={selectedPullRequest}
+									contentWidth={fullscreenContentWidth}
+									paneWidth={contentWidth}
+									comments={selectedComments}
+									commentsStatus={selectedCommentsStatus}
+								/>
+								<scrollbox
+									ref={detailPreviewScrollRef}
+									focusable={false}
+									height={narrowPreviewBodyHeight}
+									flexGrow={0}
+									verticalScrollbarOptions={{ visible: narrowPreviewBodyScrollable }}
+								>
+									<DetailBody
+										pullRequest={selectedPullRequest}
+										contentWidth={fullscreenContentWidth}
+										bodyLines={narrowPreviewBodyHeight}
+										bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+										loadingIndicator={loadingIndicator}
+										themeId={themeId}
+										themeGeneration={systemThemeGeneration}
+										onLinkOpen={openLinkInBrowser}
+									/>
+								</scrollbox>
+							</>
 						) : (
 							<DetailsPane
-								pullRequest={selectedPullRequest}
+								pullRequest={null}
 								contentWidth={fullscreenContentWidth}
 								paneWidth={contentWidth}
-								comments={selectedComments}
-								commentsStatus={selectedCommentsStatus}
 								placeholderContent={detailPlaceholderContent}
 								loadingIndicator={loadingIndicator}
 								themeId={themeId}
@@ -2754,7 +2845,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 								onLinkOpen={openLinkInBrowser}
 							/>
 						)}
-					</scrollbox>
+					</box>
 				</box>
 			)}
 
@@ -2780,6 +2871,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 						canOpenRepository={activeWorkspaceSurface === "repos" && selectedRepositoryItem !== null}
 						canAddRepository={activeWorkspaceSurface === "repos"}
 						canRemoveRepository={activeWorkspaceSurface === "repos" && selectedRepositoryItem !== null}
+						canCycleScopeFilter={selectedRepository !== null && (activeWorkspaceSurface === "pullRequests" || activeWorkspaceSurface === "issues")}
 						canOpenDiff={activeWorkspaceSurface === "pullRequests" && selectedPullRequest !== null}
 						canOpenComments={selectedCommentSubject !== null}
 						hasComments={selectedCommentCount > 0}
@@ -2808,6 +2900,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				deleteCommentModalActive={deleteCommentModalActive}
 				commentThreadModalActive={commentThreadModalActive}
 				changedFilesModalActive={changedFilesModalActive}
+				filterModalActive={filterModalActive}
 				submitReviewModalActive={submitReviewModalActive}
 				mergeModalActive={mergeModalActive}
 				themeModalActive={themeModalActive}
@@ -2820,6 +2913,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				deleteCommentModal={deleteCommentModal}
 				commentThreadModal={commentThreadModal}
 				changedFilesModal={changedFilesModal}
+				filterModal={filterModal}
 				submitReviewModal={submitReviewModal}
 				mergeModal={mergeModal}
 				themeModal={themeModal}
@@ -2832,6 +2926,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				deleteCommentLayout={deleteCommentLayout}
 				commentThreadLayout={commentThreadLayout}
 				changedFilesLayout={changedFilesLayout}
+				filterLayout={filterLayout}
 				submitReviewLayout={submitReviewLayout}
 				mergeLayout={mergeLayout}
 				themeLayout={themeLayout}

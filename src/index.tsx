@@ -134,5 +134,9 @@ if (process.env.GHUI_FORCE_FULL_REPAINT_ON_START === "1") {
 	process.stdout.write(FULL_SCREEN_REPAINT)
 	renderer.requestRender()
 }
+globalThis.setTimeout(() => {
+	if (process.platform !== "win32") process.kill(process.pid, "SIGWINCH")
+	renderer.requestRender()
+}, 0)
 
 createRoot(renderer).render(<Bootstrap />)

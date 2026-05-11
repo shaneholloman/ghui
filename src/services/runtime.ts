@@ -1,7 +1,6 @@
 import { Layer } from "effect"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import { config } from "../config.js"
-import type { IssueItem } from "../domain.js"
 import { detectCurrentGitHubRepository } from "../gitRemotes.js"
 import { Observability } from "../observability.js"
 import { BrowserOpener } from "./BrowserOpener.js"
@@ -39,22 +38,6 @@ export const mockRepositoryCatalog =
 			]
 
 export const initialRecentRepositories = mockRepositoryCatalog.length > 0 ? mockRepositoryCatalog.map((repo) => repo.repository) : detectedRepository ? [detectedRepository] : []
-
-export const mockUserIssues = mockRepositoryCatalog.flatMap(
-	(repo, index) =>
-		Array.from({ length: Math.min(3, Math.max(0, repo.issueCount)) }, (_, issueIndex) => ({
-			repository: repo.repository,
-			number: 42 + index * 10 + issueIndex,
-			title: ["Workspace hub filters", "Release automation follow-up", "Improve issue detail rendering"][(index + issueIndex) % 3]!,
-			body: `Mock user issue for ${repo.repository}.`,
-			author: mockUsername ?? "kitlangton",
-			labels: issueIndex % 2 === 0 ? [{ name: "enhancement", color: "a2eeef" }] : [{ name: "bug", color: "d73a4a" }],
-			commentCount: issueIndex,
-			createdAt: new Date(Date.now() - (index * 3 + issueIndex) * 86_400_000),
-			updatedAt: new Date(Date.now() - (index + issueIndex) * 3_600_000),
-			url: `https://github.com/${repo.repository}/issues/${42 + index * 10 + issueIndex}`,
-		})) satisfies readonly IssueItem[],
-)
 
 export const pullRequestPageSize = Math.min(100, parseOptionalPositiveInt(process.env.GHUI_PR_PAGE_SIZE, config.prPageSize) ?? config.prPageSize)
 

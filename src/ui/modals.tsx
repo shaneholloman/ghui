@@ -7,6 +7,7 @@ export { CloseModal } from "./modals/CloseModal.js"
 export { CommentModal } from "./modals/CommentModal.js"
 export { CommentThreadModal } from "./modals/CommentThreadModal.js"
 export { DeleteCommentModal } from "./modals/DeleteCommentModal.js"
+export { FilterModal, filterOptions } from "./modals/FilterModal.js"
 export { LabelModal } from "./modals/LabelModal.js"
 export { MergeModal } from "./modals/MergeModal.js"
 export { OpenRepositoryModal } from "./modals/OpenRepositoryModal.js"
@@ -25,6 +26,7 @@ export type {
 	CommentModalTarget,
 	CommentThreadModalState,
 	DeleteCommentModalState,
+	FilterModalState,
 	LabelModalState,
 	MergeModalState,
 	ModalState,
@@ -41,6 +43,7 @@ export {
 	initialCommentModalState,
 	initialCommentThreadModalState,
 	initialDeleteCommentModalState,
+	initialFilterModalState,
 	initialLabelModalState,
 	initialMergeModalState,
 	initialModal,

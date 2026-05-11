@@ -1,24 +1,23 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Schema, Stream } from "effect"
+import * as Option from "effect/Option"
 import { config } from "../config.js"
 import {
 	DiffCommentSide,
 	type IssueItem,
-	pullRequestQueueSearchQualifier,
 	type CheckItem,
 	type CreatePullRequestCommentInput,
-	type ListPullRequestPageInput,
 	type Mergeable,
 	type PullRequestComment,
 	type PullRequestItem,
 	type PullRequestMergeAction,
 	type PullRequestMergeInfo,
-	type PullRequestPage,
-	type PullRequestQueueMode,
 	type PullRequestReviewComment,
+	type RepositoryDetails,
 	type RepositoryMergeMethods,
 	type ReviewStatus,
 	type SubmitPullRequestReviewInput,
 } from "../domain.js"
+import { type ItemListInput, type ItemPage, searchQualifier } from "../item.js"
 import { mergeActionCliArgs } from "../mergeActions.js"
 import { CommandError, CommandRunner, commandTelemetryAttributes, type JsonParseError } from "./CommandRunner.js"
 export { isGitHubRateLimitError } from "./githubRateLimit.js"
@@ -51,16 +50,26 @@ const RawLabelSchema = Schema.Struct({
 	color: OptionalNullableString,
 })
 
-const RawIssueSchema = Schema.Struct({
+// Fields every GraphQL search-node ("... on PullRequest", "... on Issue") shares.
+// PR-summary, PR-detail, and Issue-search all spread these.
+const RawItemSearchCommonFields = {
 	number: Schema.Number,
 	title: Schema.String,
-	body: Schema.String,
-	author: RawAuthorSchema,
-	labels: Schema.Array(RawLabelSchema),
-	comments: Schema.Union([Schema.Number, Schema.Array(Schema.Unknown)]),
+	state: Schema.String,
 	createdAt: Schema.String,
-	updatedAt: Schema.String,
+	closedAt: OptionalNullableString,
 	url: Schema.String,
+	author: RawAuthorSchema,
+	repository: RawRepositorySchema,
+} as const
+
+// GraphQL `search(type: ISSUE) { ... on Issue { ... } }` shape.
+const RawIssueSearchNodeSchema = Schema.Struct({
+	...RawItemSearchCommonFields,
+	updatedAt: Schema.String,
+	body: Schema.String,
+	labels: Schema.Struct({ nodes: Schema.Array(RawLabelSchema) }),
+	comments: Schema.Struct({ totalCount: Schema.Number }),
 })
 
 const RawStatusCheckRollupSchema = Schema.Struct({
@@ -68,21 +77,14 @@ const RawStatusCheckRollupSchema = Schema.Struct({
 })
 
 const RawPullRequestSummaryFields = {
-	number: Schema.Number,
-	title: Schema.String,
+	...RawItemSearchCommonFields,
 	isDraft: Schema.Boolean,
 	reviewDecision: NullableString,
 	autoMergeRequest: Schema.NullOr(Schema.Unknown),
-	state: Schema.String,
 	merged: Schema.Boolean,
-	createdAt: Schema.String,
-	closedAt: OptionalNullableString,
-	url: Schema.String,
-	author: RawAuthorSchema,
 	headRefOid: Schema.String,
 	headRefName: Schema.String,
 	baseRefName: Schema.String,
-	repository: RawRepositorySchema,
 } as const
 
 const RawPullRequestSummaryNodeSchema = Schema.Struct({
@@ -203,14 +205,12 @@ const RepoLabelsResponseSchema = Schema.Array(
 		color: Schema.String,
 	}),
 )
-const IssuesResponseSchema = Schema.Array(RawIssueSchema)
-
 type RawPullRequestSummaryNode = Schema.Schema.Type<typeof RawPullRequestSummaryNodeSchema>
 type RawPullRequestNode = Schema.Schema.Type<typeof RawPullRequestNodeSchema>
 type RawCheckContext = Schema.Schema.Type<typeof RawCheckContextSchema>
 type RawPullRequestComment = Schema.Schema.Type<typeof PullRequestCommentSchema>
 type RawPullRequestFile = Schema.Schema.Type<typeof PullRequestFileSchema>
-type RawIssue = Schema.Schema.Type<typeof RawIssueSchema>
+type RawIssueSearchNode = Schema.Schema.Type<typeof RawIssueSearchNodeSchema>
 
 type SearchResponse<Item> = {
 	readonly data: {
@@ -282,18 +282,6 @@ const DETAIL_FIELDS_FRAGMENT = `
 		repository { nameWithOwner defaultBranchRef { name } }
 		labels(first: 20) { nodes { name color } }${STATUS_CHECK_FRAGMENT}`
 
-const pullRequestSearchQuery = `
-query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
-  search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
-    nodes {
-      ... on PullRequest {${DETAIL_FIELDS_FRAGMENT}
-      }
-    }
-    pageInfo { hasNextPage endCursor }
-  }
-}
-`
-
 const pullRequestDetailQuery = `
 query PullRequest($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -315,6 +303,32 @@ query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
 }
 `
 
+const ISSUE_FIELDS_FRAGMENT = `
+        number
+        title
+        body
+        state
+        createdAt
+        updatedAt
+        closedAt
+        url
+        author { login }
+        repository { nameWithOwner defaultBranchRef { name } }
+        labels(first: 20) { nodes { name color } }
+        comments(first: 0) { totalCount }`
+
+const issueSearchQuery = `
+query Issues($searchQuery: String!, $first: Int!, $after: String) {
+  search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
+    nodes {
+      ... on Issue {${ISSUE_FIELDS_FRAGMENT}
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+`
+
 const repositoryPullRequestsQuery = `
 query RepositoryPullRequests($owner: String!, $name: String!, $first: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -326,6 +340,42 @@ query RepositoryPullRequests($owner: String!, $name: String!, $first: Int!, $aft
   }
 }
 `
+
+const repositoryDetailsQuery = `
+query RepositoryDetails($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    description
+    url
+    stargazerCount
+    forkCount
+    isArchived
+    isPrivate
+    pushedAt
+    defaultBranchRef { name }
+    openIssues: issues(states: OPEN) { totalCount }
+    openPRs: pullRequests(states: OPEN) { totalCount }
+  }
+}
+`
+
+const RepositoryDetailsResponseSchema = Schema.Struct({
+	data: Schema.Struct({
+		repository: Schema.NullOr(
+			Schema.Struct({
+				description: NullableString,
+				url: Schema.String,
+				stargazerCount: Schema.Number,
+				forkCount: Schema.Number,
+				isArchived: Schema.Boolean,
+				isPrivate: Schema.Boolean,
+				pushedAt: NullableString,
+				defaultBranchRef: Schema.NullOr(Schema.Struct({ name: Schema.String })),
+				openIssues: Schema.Struct({ totalCount: Schema.Number }),
+				openPRs: Schema.Struct({ totalCount: Schema.Number }),
+			}),
+		),
+	}),
+})
 
 const normalizeDate = (value: string | null | undefined) => {
 	if (!value || value.startsWith("0001-01-01")) return null
@@ -475,25 +525,23 @@ const parsePullRequest = (item: RawPullRequestNode): PullRequestItem => {
 	}
 }
 
-const parseIssue = (repository: string, item: RawIssue): IssueItem => ({
-	repository,
+const parseIssueSearchNode = (item: RawIssueSearchNode): IssueItem => ({
+	repository: item.repository.nameWithOwner,
 	number: item.number,
 	title: item.title,
 	body: item.body,
 	author: item.author.login,
-	labels: item.labels.map((label) => ({ name: label.name, color: label.color ? `#${label.color.replace(/^#/, "")}` : null })),
-	commentCount: typeof item.comments === "number" ? item.comments : item.comments.length,
+	labels: item.labels.nodes.map((label) => ({
+		name: label.name,
+		color: label.color ? `#${label.color.replace(/^#/, "")}` : null,
+	})),
+	commentCount: item.comments.totalCount,
 	createdAt: new Date(item.createdAt),
 	updatedAt: new Date(item.updatedAt),
 	url: item.url,
 })
 
-const searchQuery = (mode: PullRequestQueueMode, repository: string | null) => {
-	const sort = mode === "repository" ? "sort:updated-desc" : "sort:created-desc"
-	return `${pullRequestQueueSearchQualifier(mode, repository)} is:pr is:open ${sort}`
-}
-
-const pullRequestPage = <Item>(connection: PullRequestConnection<Item>, parse: (node: Item) => PullRequestItem): PullRequestPage => ({
+const itemPage = <Raw, Item>(connection: PullRequestConnection<Raw>, parse: (node: Raw) => Item): ItemPage<Item> => ({
 	items: connection.nodes.flatMap((node) => (node ? [parse(node)] : [])),
 	endCursor: connection.pageInfo.endCursor,
 	hasNextPage: connection.pageInfo.hasNextPage && connection.pageInfo.endCursor !== null,
@@ -618,16 +666,17 @@ const REVIEW_EVENT_CLI_FLAG = {
 export class GitHubService extends Context.Service<
 	GitHubService,
 	{
-		readonly listOpenPullRequests: (mode: PullRequestQueueMode, repository: string | null) => Effect.Effect<readonly PullRequestItem[], GitHubError>
-		readonly listOpenPullRequestPage: (input: ListPullRequestPageInput) => Effect.Effect<PullRequestPage, GitHubError>
-		readonly listOpenPullRequestDetails: (mode: PullRequestQueueMode, repository: string | null) => Effect.Effect<readonly PullRequestItem[], GitHubError>
+		readonly listPullRequestPage: (input: ItemListInput<"pullRequest">) => Effect.Effect<ItemPage<PullRequestItem>, GitHubError>
+		readonly listIssuePage: (input: ItemListInput<"issue">) => Effect.Effect<ItemPage<IssueItem>, GitHubError>
+		readonly listAllPullRequests: (input: Omit<ItemListInput<"pullRequest">, "cursor" | "pageSize">) => Effect.Effect<readonly PullRequestItem[], GitHubError>
+		readonly listAllIssues: (input: Omit<ItemListInput<"issue">, "cursor" | "pageSize">) => Effect.Effect<readonly IssueItem[], GitHubError>
 		readonly getPullRequestDetails: (repository: string, number: number) => Effect.Effect<PullRequestItem, GitHubError>
+		readonly getRepositoryDetails: (repository: string) => Effect.Effect<RepositoryDetails, GitHubError>
 		readonly getAuthenticatedUser: () => Effect.Effect<string, GitHubError>
 		readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
 		readonly listPullRequestReviewComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
 		readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestComment[], GitHubError>
 		readonly listIssueComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestComment[], GitHubError>
-		readonly listOpenIssues: (repository: string) => Effect.Effect<readonly IssueItem[], GitHubError>
 		readonly getPullRequestMergeInfo: (repository: string, number: number) => Effect.Effect<PullRequestMergeInfo, GitHubError>
 		readonly getRepositoryMergeMethods: (repository: string) => Effect.Effect<RepositoryMergeMethods, GitHubError>
 		readonly mergePullRequest: (repository: string, number: number, action: PullRequestMergeAction) => Effect.Effect<void, CommandError>
@@ -664,30 +713,39 @@ export class GitHubService extends Context.Service<
 			const ghVoid = (label: string, args: readonly string[]) =>
 				command.run("gh", args).pipe(Effect.withSpan(`GitHubService.${label}`, { attributes: githubApiAttributes(label, args) }), Effect.asVoid)
 
-			const searchPage = <Item extends Schema.Top>(label: string, query: string, schema: Item, parse: (node: Item["Type"]) => PullRequestItem) => {
+			// One search-page fetcher for items of any kind. Owns the GraphQL call,
+			// argument shaping, and decoder; the caller supplies the GraphQL query,
+			// the raw schema, and the parser.
+			const searchItemPage = <RawSchema extends Schema.Top, Item>(label: string, graphqlQuery: string, schema: RawSchema, parse: (node: RawSchema["Type"]) => Item) => {
 				const responseSchema = SearchResponseSchema(schema)
-				return Effect.fn(`GitHubService.${label}`)(function* (input: ListPullRequestPageInput) {
-					const args = [
-						"api",
-						"graphql",
-						"-f",
-						`query=${query}`,
-						"-F",
-						`searchQuery=${searchQuery(input.mode, input.repository)}`,
-						"-F",
-						`first=${input.pageSize}`,
-						...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
-					] as const
-					const response: SearchResponse<Item["Type"]> = yield* ghJson(label, responseSchema, args)
-					return pullRequestPage(response.data.search, parse)
-				})
+				return <K extends "pullRequest" | "issue">(input: ItemListInput<K>) =>
+					Effect.gen(function* () {
+						const args = [
+							"api",
+							"graphql",
+							"-f",
+							`query=${graphqlQuery}`,
+							"-F",
+							`searchQuery=${searchQualifier(input)}`,
+							"-F",
+							`first=${input.pageSize}`,
+							...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
+						] as const
+						const response: SearchResponse<RawSchema["Type"]> = yield* ghJson(label, responseSchema, args)
+						return itemPage(response.data.search, parse)
+					})
 			}
 
-			const listOpenPullRequestSearchPage = searchPage("listOpenPullRequestSearchPage", pullRequestSummarySearchQuery, RawPullRequestSummaryNodeSchema, parsePullRequestSummary)
-			const listOpenPullRequestDetailsPage = searchPage("listOpenPullRequestDetailsPage", pullRequestSearchQuery, RawPullRequestNodeSchema, parsePullRequest)
+			const listPullRequestSearchPage = searchItemPage("listPullRequestSearchPage", pullRequestSummarySearchQuery, RawPullRequestSummaryNodeSchema, parsePullRequestSummary)
+			const listIssueSearchPage = searchItemPage("listIssueSearchPage", issueSearchQuery, RawIssueSearchNodeSchema, parseIssueSearchNode)
 
-			const listRepositoryPullRequestPage = Effect.fn("GitHubService.listRepositoryPullRequestPage")(function* (input: ListPullRequestPageInput) {
-				if (!input.repository) return { items: [], endCursor: null, hasNextPage: false } satisfies PullRequestPage
+			// Repo-scoped PRs use GitHub's `repository.pullRequests` connection rather
+			// than `search`; it's faster and returns authoritative repo ordering.
+			const listRepositoryPullRequestPage = Effect.fn("GitHubService.listRepositoryPullRequestPage")(function* (input: {
+				repository: string
+				cursor: string | null
+				pageSize: number
+			}) {
 				const repo = repositoryParts(input.repository)
 				if (!repo) {
 					return yield* new CommandError({ command: "gh", args: [], detail: `Invalid repository: ${input.repository}`, cause: input.repository })
@@ -711,40 +769,53 @@ export class GitHubService extends Context.Service<
 				if (!connection) {
 					return yield* new CommandError({ command: "gh", args: [], detail: `Repository not found: ${input.repository}`, cause: input.repository })
 				}
-				return pullRequestPage(connection, parsePullRequestSummary)
+				return itemPage(connection, parsePullRequestSummary)
 			})
 
-			const listOpenPullRequestPage = Effect.fn("GitHubService.listOpenPullRequestPage")(function* (input: ListPullRequestPageInput) {
+			// One page-fetcher per kind, accepting the unified `ItemListInput`.
+			// Mode "all" with a repository uses GitHub's repository connection (faster
+			// and authoritative ordering); everything else uses the search endpoint.
+			const listPullRequestPage = Effect.fn("GitHubService.listPullRequestPage")(function* (input: ItemListInput<"pullRequest">) {
 				const pageSize = Math.max(1, Math.min(100, input.pageSize))
-				const pageInput = { ...input, pageSize }
-				if (pageInput.mode === "repository" && pageInput.repository) return yield* listRepositoryPullRequestPage(pageInput)
-				return yield* listOpenPullRequestSearchPage(pageInput)
-			})
-
-			const paginatePages = Effect.fn("GitHubService.paginatePages")(function* (
-				mode: PullRequestQueueMode,
-				repository: string | null,
-				loadPage: (input: ListPullRequestPageInput) => Effect.Effect<PullRequestPage, GitHubError>,
-			) {
-				const pullRequests: PullRequestItem[] = []
-				let cursor: string | null = null
-
-				while (pullRequests.length < config.prFetchLimit) {
-					const page: PullRequestPage = yield* loadPage({ mode, repository, cursor, pageSize: Math.min(100, config.prFetchLimit - pullRequests.length) })
-					pullRequests.push(...page.items)
-					if (!page.hasNextPage || !page.endCursor) break
-					cursor = page.endCursor
+				if (input.mode === "all" && input.repository !== null) {
+					return yield* listRepositoryPullRequestPage({ repository: input.repository, cursor: input.cursor, pageSize })
 				}
-
-				return pullRequests
+				return yield* listPullRequestSearchPage({ ...input, pageSize })
 			})
 
-			const listOpenPullRequests = Effect.fn("GitHubService.listOpenPullRequests")(function* (mode: PullRequestQueueMode, repository: string | null) {
-				return yield* paginatePages(mode, repository, listOpenPullRequestPage)
+			const listIssuePage = Effect.fn("GitHubService.listIssuePage")(function* (input: ItemListInput<"issue">) {
+				const pageSize = Math.max(1, Math.min(100, input.pageSize))
+				return yield* listIssueSearchPage({ ...input, pageSize })
 			})
-			const listOpenPullRequestDetails = Effect.fn("GitHubService.listOpenPullRequestDetails")(function* (mode: PullRequestQueueMode, repository: string | null) {
-				return yield* paginatePages(mode, repository, listOpenPullRequestDetailsPage)
-			})
+
+			// Drain every page for an item query into a single array, using
+			// `Stream.paginate`. Interrupting the surrounding fiber stops mid-flight.
+			const drainItemPages = <K extends "pullRequest" | "issue", Item>(
+				query: Omit<ItemListInput<K>, "cursor" | "pageSize">,
+				pageFetch: (input: ItemListInput<K>) => Effect.Effect<ItemPage<Item>, GitHubError>,
+				limit: number,
+			): Effect.Effect<readonly Item[], GitHubError> => {
+				type State = { readonly cursor: string | null; readonly fetched: number }
+				const stream = Stream.paginate<State, Item, GitHubError>({ cursor: null, fetched: 0 }, ({ cursor, fetched }) => {
+					const remaining = limit - fetched
+					if (remaining <= 0) return Effect.succeed([[], Option.none()] as const)
+					const pageSize = Math.min(100, remaining)
+					return pageFetch({ ...query, cursor, pageSize } as ItemListInput<K>).pipe(
+						Effect.map((page): readonly [readonly Item[], Option.Option<State>] => {
+							const items = page.items.slice(0, remaining)
+							const nextFetched = fetched + items.length
+							const next: Option.Option<State> =
+								page.hasNextPage && page.endCursor && nextFetched < limit ? Option.some({ cursor: page.endCursor, fetched: nextFetched }) : Option.none()
+							return [items, next]
+						}),
+					)
+				})
+				return Stream.runCollect(stream).pipe(Effect.map((chunk) => Array.from(chunk)))
+			}
+
+			const listAllPullRequests = (input: Omit<ItemListInput<"pullRequest">, "cursor" | "pageSize">) =>
+				drainItemPages<"pullRequest", PullRequestItem>(input, listPullRequestPage, config.prFetchLimit)
+			const listAllIssues = (input: Omit<ItemListInput<"issue">, "cursor" | "pageSize">) => drainItemPages<"issue", IssueItem>(input, listIssuePage, config.prFetchLimit)
 
 			const getPullRequestDetails = Effect.fn("GitHubService.getPullRequestDetails")(function* (repository: string, number: number) {
 				const repo = repositoryParts(repository)
@@ -772,19 +843,40 @@ export class GitHubService extends Context.Service<
 			})
 
 			const getAuthenticatedUser = () => ghJson("getAuthenticatedUser", ViewerSchema, ["api", "user"]).pipe(Effect.map((viewer) => viewer.login))
-			const listOpenIssues = (repository: string) =>
-				ghJson("listOpenIssues", IssuesResponseSchema, [
-					"issue",
-					"list",
-					"--repo",
+
+			const getRepositoryDetails = Effect.fn("GitHubService.getRepositoryDetails")(function* (repository: string) {
+				const repo = repositoryParts(repository)
+				if (!repo) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Invalid repository: ${repository}`, cause: repository })
+				}
+				const response = yield* ghJson("getRepositoryDetails", RepositoryDetailsResponseSchema, [
+					"api",
+					"graphql",
+					"-f",
+					`query=${repositoryDetailsQuery}`,
+					"-F",
+					`owner=${repo.owner}`,
+					"-F",
+					`name=${repo.name}`,
+				])
+				const node = response.data.repository
+				if (!node) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Repository not found: ${repository}`, cause: repository })
+				}
+				return {
 					repository,
-					"--state",
-					"open",
-					"--limit",
-					String(config.prFetchLimit),
-					"--json",
-					"number,title,body,author,labels,comments,createdAt,updatedAt,url",
-				]).pipe(Effect.map((issues) => issues.map((issue) => parseIssue(repository, issue))))
+					description: node.description,
+					url: node.url,
+					stargazerCount: node.stargazerCount,
+					forkCount: node.forkCount,
+					openIssueCount: node.openIssues.totalCount,
+					openPullRequestCount: node.openPRs.totalCount,
+					defaultBranch: node.defaultBranchRef?.name ?? null,
+					pushedAt: normalizeDate(node.pushedAt),
+					isArchived: node.isArchived,
+					isPrivate: node.isPrivate,
+				} satisfies RepositoryDetails
+			})
 
 			const getPullRequestDiff = (repository: string, number: number) =>
 				ghJson("getPullRequestDiff", PullRequestFilesResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/files`]).pipe(
@@ -1007,16 +1099,17 @@ export class GitHubService extends Context.Service<
 				ghVoid("removeIssueLabel", ["issue", "edit", String(number), "--repo", repository, "--remove-label", label])
 
 			return GitHubService.of({
-				listOpenPullRequests,
-				listOpenPullRequestPage,
-				listOpenPullRequestDetails,
+				listPullRequestPage,
+				listIssuePage,
+				listAllPullRequests,
+				listAllIssues,
 				getPullRequestDetails,
+				getRepositoryDetails,
 				getAuthenticatedUser,
 				getPullRequestDiff,
 				listPullRequestReviewComments,
 				listPullRequestComments,
 				listIssueComments,
-				listOpenIssues,
 				getPullRequestMergeInfo,
 				getRepositoryMergeMethods,
 				mergePullRequest,

@@ -84,7 +84,7 @@ const setupApp = async (cols = 100, rows = 20) => {
 const detailPaneNumber = (frame: string) => {
 	for (const line of frame.split("\n")) {
 		const trimmed = line.trim()
-		const match = trimmed.match(/│\s+#(\d{4,})\b/) ?? trimmed.match(/^#(\d{4,})\b/)
+		const match = trimmed.match(/[│├┤]\s+#(\d{4,})\b/) ?? trimmed.match(/^#(\d{4,})\b/)
 		if (match) return Number.parseInt(match[1]!, 10)
 	}
 	return null
@@ -143,16 +143,16 @@ describe("PR list scrolling", () => {
 	test("workspace tabs switch between pull requests and issues", async () => {
 		const { mockInput, renderOnce, captureCharFrame, renderer } = await setupApp(100, 20)
 
-		expect(captureCharFrame()).toContain("REPOS 4 │ PULL REQUESTS 80 │ ISSUES 0")
+		// Home now lists "issues authored by me" instead of returning empty when no repo is selected.
+		expect(captureCharFrame()).toContain("REPOS 4 │ PULL REQUESTS 80 │ ISSUES")
 		expect(captureCharFrame()).not.toContain("PULL REQUESTS    ISSUES")
 		await press(mockInput, renderOnce, { kind: "key", name: "3" }, 2)
 		expect(captureCharFrame()).toContain("ISSUES")
-		expect(captureCharFrame()).toContain("No issues in your repositories.")
 		expect(captureCharFrame()).not.toContain("1/2 surface")
 		expect(captureCharFrame()).not.toContain("tab surface")
 
 		await press(mockInput, renderOnce, { kind: "key", name: "2" }, 2)
-		expect(captureCharFrame()).toContain("REPOS 4 │ PULL REQUESTS 80 │ ISSUES 0")
+		expect(captureCharFrame()).toContain("REPOS 4 │ PULL REQUESTS 80")
 		renderer.destroy()
 	})
 

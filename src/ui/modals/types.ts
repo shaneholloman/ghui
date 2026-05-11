@@ -2,6 +2,7 @@ import { Data } from "effect"
 import type { PullRequestLabel, PullRequestMergeInfo, PullRequestMergeKind, PullRequestMergeMethod, RepositoryMergeMethods } from "../../domain.js"
 import type { ThemeConfig, ThemeMode } from "../../themeConfig.js"
 import type { ThemeId, ThemeTone } from "../colors.js"
+import type { WorkspaceSurface } from "../../workspaceSurfaces.js"
 
 export interface LabelModalState {
 	readonly repository: string | null
@@ -72,6 +73,11 @@ export interface CommentThreadModalState {
 
 export interface ChangedFilesModalState {
 	readonly query: string
+	readonly selectedIndex: number
+}
+
+export interface FilterModalState {
+	readonly surface: Extract<WorkspaceSurface, "pullRequests" | "issues">
 	readonly selectedIndex: number
 }
 
@@ -173,6 +179,11 @@ export const initialChangedFilesModalState: ChangedFilesModalState = {
 	selectedIndex: 0,
 }
 
+export const initialFilterModalState: FilterModalState = {
+	surface: "pullRequests",
+	selectedIndex: 0,
+}
+
 export const initialSubmitReviewModalState: SubmitReviewModalState = {
 	repository: null,
 	number: null,
@@ -215,6 +226,7 @@ export type Modal = Data.TaggedEnum<{
 	DeleteComment: DeleteCommentModalState
 	CommentThread: CommentThreadModalState
 	ChangedFiles: ChangedFilesModalState
+	Filter: FilterModalState
 	SubmitReview: SubmitReviewModalState
 	Theme: ThemeModalState
 	CommandPalette: CommandPaletteState
@@ -236,6 +248,7 @@ export const modalInitialStates = {
 	DeleteComment: initialDeleteCommentModalState,
 	CommentThread: initialCommentThreadModalState,
 	ChangedFiles: initialChangedFilesModalState,
+	Filter: initialFilterModalState,
 	SubmitReview: initialSubmitReviewModalState,
 	Theme: initialThemeModalState,
 	CommandPalette: initialCommandPaletteState,

@@ -15,8 +15,8 @@ describe("pullRequestQueueSearchQualifier", () => {
 		expect(pullRequestQueueSearchQualifier("authored", null)).toBe("author:@me archived:false")
 	})
 
-	test("review mode → review-requested:@me excluding archived repositories regardless of repository", () => {
-		expect(pullRequestQueueSearchQualifier("review", "owner/name")).toBe("review-requested:@me archived:false")
+	test("review mode with repository scopes the search to that repository", () => {
+		expect(pullRequestQueueSearchQualifier("review", "owner/name")).toBe("review-requested:@me repo:owner/name archived:false")
 	})
 
 	test("assigned mode → assignee:@me excluding archived repositories", () => {
@@ -29,12 +29,12 @@ describe("pullRequestQueueSearchQualifier", () => {
 })
 
 describe("viewCacheKey", () => {
-	test("repository view key includes repo path", () => {
-		expect(viewCacheKey({ _tag: "Repository", repository: "owner/name" })).toBe("repository:owner/name")
+	test("repository view key uses the unified item-query cache key", () => {
+		expect(viewCacheKey({ _tag: "Repository", repository: "owner/name" })).toBe("pullRequest:all:owner/name")
 	})
 
-	test("queue view key is the mode literal", () => {
-		expect(viewCacheKey({ _tag: "Queue", mode: "authored", repository: null })).toBe("authored")
-		expect(viewCacheKey({ _tag: "Queue", mode: "review", repository: "owner/name" })).toBe("review")
+	test("queue view key uses the unified item-query cache key", () => {
+		expect(viewCacheKey({ _tag: "Queue", mode: "authored", repository: null })).toBe("pullRequest:authored:_")
+		expect(viewCacheKey({ _tag: "Queue", mode: "review", repository: "owner/name" })).toBe("pullRequest:review:owner/name")
 	})
 })

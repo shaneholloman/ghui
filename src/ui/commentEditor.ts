@@ -18,6 +18,19 @@ export const commentEditorLines = (body: string): readonly CommentEditorLine[] =
 		return ranges
 	}, [])
 
+export const commentEditorSoftLines = (body: string, width: number): readonly CommentEditorLine[] => {
+	const lineWidth = Math.max(1, width)
+	return commentEditorLines(body).flatMap((line) => {
+		if (line.text.length === 0) return [line]
+		const lines: CommentEditorLine[] = []
+		for (let offset = 0; offset < line.text.length; offset += lineWidth) {
+			const text = line.text.slice(offset, offset + lineWidth)
+			lines.push({ text, start: line.start + offset, end: line.start + offset + text.length })
+		}
+		return lines
+	})
+}
+
 export const cursorLineIndexForLines = (lines: readonly CommentEditorLine[], cursor: number) =>
 	Math.max(
 		0,

@@ -30,7 +30,10 @@ const pullRequest = (overrides: Partial<PullRequestItem> = {}): PullRequestItem 
 })
 
 describe("mergeCachedDetails", () => {
-	test("preserves cached detail fields without overwriting fresh check status", () => {
+	test("preserves cached checks because the summary fragment never carries a real rollup", () => {
+		// The list query omits `statusCheckRollup` for cost; a fresh "summary" PR
+		// always lands with checkStatus = "none". Merging the cached detail's
+		// checks back in is what keeps the row's ✓/✗ icon stable across refreshes.
 		const cached = pullRequest({
 			body: "cached body",
 			additions: 10,
@@ -43,9 +46,9 @@ describe("mergeCachedDetails", () => {
 		})
 		const fresh = pullRequest({
 			title: "Updated title",
-			checkStatus: "passing",
-			checkSummary: "checks 9/9",
-			checks: [{ name: "ci", status: "completed", conclusion: "success" }],
+			checkStatus: "none",
+			checkSummary: null,
+			checks: [],
 			detailLoaded: false,
 		})
 
@@ -57,10 +60,25 @@ describe("mergeCachedDetails", () => {
 			additions: 10,
 			deletions: 2,
 			changedFiles: 3,
-			checkStatus: "passing",
-			checkSummary: "checks 9/9",
+			checkStatus: "pending",
+			checkSummary: "checks 8/9",
+			checks: [{ name: "ci", status: "in_progress", conclusion: null }],
 			detailLoaded: true,
 		})
+	})
+
+	test("preserves cached checks across many refreshes (regression: vanishing check icons)", () => {
+		const cached = pullRequest({
+			checkStatus: "passing",
+			checkSummary: "9/9",
+			checks: [{ name: "ci", status: "completed", conclusion: "success" }],
+			detailLoaded: true,
+		})
+		const fresh = pullRequest({ checkStatus: "none", checkSummary: null, checks: [], detailLoaded: false })
+		const [first] = mergeCachedDetails([fresh], [cached])
+		const [second] = mergeCachedDetails([fresh], [first!])
+		const [third] = mergeCachedDetails([fresh], [second!])
+		expect(third).toMatchObject({ checkStatus: "passing", checkSummary: "9/9", detailLoaded: true })
 	})
 
 	test("does not preserve cached details after the pull request head changes", () => {

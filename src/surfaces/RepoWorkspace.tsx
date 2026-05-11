@@ -1,5 +1,6 @@
 import type { ScrollBoxRenderable } from "@opentui/core"
 import type { ComponentProps, MutableRefObject } from "react"
+import type { RepositoryDetails } from "../domain.js"
 import { DETAIL_BODY_SCROLL_LIMIT } from "../ui/DetailsPane.js"
 import { SplitPane } from "../ui/paneLayout.js"
 import { Divider } from "../ui/primitives.js"
@@ -20,6 +21,7 @@ export interface RepoWorkspaceProps {
 	readonly narrowRepoListNeedsScroll: boolean
 	readonly repoListProps: Omit<ComponentProps<typeof RepoList>, "contentWidth">
 	readonly selectedRepositoryItem: RepositoryListItem | null
+	readonly selectedRepositoryDetails: RepositoryDetails | null
 	readonly detailPreviewScrollRef: MutableRefObject<ScrollBoxRenderable | null>
 }
 
@@ -38,6 +40,7 @@ export const RepoWorkspace = ({
 	narrowRepoListNeedsScroll,
 	repoListProps,
 	selectedRepositoryItem,
+	selectedRepositoryDetails,
 	detailPreviewScrollRef,
 }: RepoWorkspaceProps) => {
 	if (isWideLayout) {
@@ -61,7 +64,7 @@ export const RepoWorkspace = ({
 						</box>
 					)
 				}
-				right={<RepoDetailPane repository={selectedRepositoryItem} width={rightPaneWidth} height={wideBodyHeight} />}
+				right={<RepoDetailPane repository={selectedRepositoryItem} details={selectedRepositoryDetails} width={rightPaneWidth} height={wideBodyHeight} />}
 			/>
 		)
 	}
@@ -82,6 +85,7 @@ export const RepoWorkspace = ({
 			<Divider width={contentWidth} />
 			<RepoDetailPane
 				repository={selectedRepositoryItem}
+				details={selectedRepositoryDetails}
 				width={contentWidth}
 				height={narrowRepoDetailHeight}
 				descriptionLineLimit={DETAIL_BODY_SCROLL_LIMIT}

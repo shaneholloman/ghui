@@ -14,6 +14,8 @@ import {
 	type CommentThreadModalState,
 	DeleteCommentModal,
 	type DeleteCommentModalState,
+	FilterModal,
+	type FilterModalState,
 	LabelModal,
 	type LabelModalState,
 	MergeModal,
@@ -54,6 +56,7 @@ export interface WorkspaceModalsProps {
 	readonly deleteCommentModalActive: boolean
 	readonly commentThreadModalActive: boolean
 	readonly changedFilesModalActive: boolean
+	readonly filterModalActive: boolean
 	readonly submitReviewModalActive: boolean
 	readonly mergeModalActive: boolean
 	readonly themeModalActive: boolean
@@ -67,6 +70,7 @@ export interface WorkspaceModalsProps {
 	readonly deleteCommentModal: DeleteCommentModalState
 	readonly commentThreadModal: CommentThreadModalState
 	readonly changedFilesModal: ChangedFilesModalState
+	readonly filterModal: FilterModalState
 	readonly submitReviewModal: SubmitReviewModalState
 	readonly mergeModal: MergeModalState
 	readonly themeModal: ThemeModalState
@@ -80,6 +84,7 @@ export interface WorkspaceModalsProps {
 	readonly deleteCommentLayout: ModalLayout
 	readonly commentThreadLayout: ModalLayout
 	readonly changedFilesLayout: ModalLayout
+	readonly filterLayout: ModalLayout
 	readonly submitReviewLayout: ModalLayout
 	readonly mergeLayout: ModalLayout
 	readonly themeLayout: ModalLayout
@@ -160,6 +165,15 @@ export const WorkspaceModals = (props: WorkspaceModalsProps) => (
 				modalHeight={props.changedFilesLayout.height}
 				offsetLeft={props.changedFilesLayout.left}
 				offsetTop={props.changedFilesLayout.top}
+			/>
+		) : null}
+		{props.filterModalActive ? (
+			<FilterModal
+				state={props.filterModal}
+				modalWidth={props.filterLayout.width}
+				modalHeight={props.filterLayout.height}
+				offsetLeft={props.filterLayout.left}
+				offsetTop={props.filterLayout.top}
 			/>
 		) : null}
 		{props.submitReviewModalActive ? (

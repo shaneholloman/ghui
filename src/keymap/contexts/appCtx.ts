@@ -8,6 +8,7 @@ import { buildCommentThreadModalCtx, type BuildCommentThreadModalCtxInput } from
 import { buildDeleteCommentModalCtx, type BuildDeleteCommentModalCtxInput } from "./deleteCommentModalCtx.ts"
 import { buildDetailViewCtx, type BuildDetailViewCtxInput } from "./detailViewCtx.ts"
 import { buildDiffViewCtx, type BuildDiffViewCtxInput } from "./diffViewCtx.ts"
+import { buildFilterModalCtx, type BuildFilterModalCtxInput } from "./filterModalCtx.ts"
 import { buildFilterModeCtx, type BuildFilterModeCtxInput } from "./filterModeCtx.ts"
 import { buildLabelModalCtx, type BuildLabelModalCtxInput } from "./labelModalCtx.ts"
 import { buildListNavCtx, type BuildListNavCtxInput } from "./listNavCtx.ts"
@@ -23,6 +24,7 @@ export interface BuildAppCtxFlags {
 	readonly mergeModalActive: boolean
 	readonly commentThreadModalActive: boolean
 	readonly changedFilesModalActive: boolean
+	readonly filterModalActive: boolean
 	readonly submitReviewModalActive: boolean
 	readonly labelModalActive: boolean
 	readonly themeModalActive: boolean
@@ -44,6 +46,7 @@ export interface BuildAppCtxInput {
 	readonly mergeModal: BuildMergeModalCtxInput
 	readonly commentThreadModal: BuildCommentThreadModalCtxInput
 	readonly changedFilesModal: BuildChangedFilesModalCtxInput
+	readonly filterModal: BuildFilterModalCtxInput
 	readonly submitReviewModal: BuildSubmitReviewModalCtxInput
 	readonly labelModal: BuildLabelModalCtxInput
 	readonly themeModal: BuildThemeModalCtxInput
@@ -67,6 +70,7 @@ export const buildAppCtx = (input: BuildAppCtxInput): AppCtx => ({
 	mergeModal: buildMergeModalCtx(input.mergeModal),
 	commentThreadModal: buildCommentThreadModalCtx(input.commentThreadModal),
 	changedFilesModal: buildChangedFilesModalCtx(input.changedFilesModal),
+	filterModal: buildFilterModalCtx(input.filterModal),
 	submitReviewModal: buildSubmitReviewModalCtx(input.submitReviewModal),
 	labelModal: buildLabelModalCtx(input.labelModal),
 	themeModal: buildThemeModalCtx(input.themeModal),

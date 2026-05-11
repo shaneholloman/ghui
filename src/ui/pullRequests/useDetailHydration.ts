@@ -26,6 +26,9 @@ export interface UseDetailHydrationInput {
 	readonly selectedIndex: number
 	readonly currentQueueCacheKey: string
 	readonly refreshGenerationRef: MutableRefObject<number>
+	/** Timestamp of the latest queue fetch. When this advances we force-rehydrate
+	 * the selected PR so its checks/labels reflect the latest server state. */
+	readonly queueFetchedAtMs: number | null
 	readonly flashNotice: (message: string) => void
 	readonly setQueueLoadCache: (next: (prev: Partial<Record<string, PullRequestLoad>>) => Partial<Record<string, PullRequestLoad>>) => void
 }
@@ -57,6 +60,7 @@ export const useDetailHydration = ({
 	selectedIndex,
 	currentQueueCacheKey,
 	refreshGenerationRef,
+	queueFetchedAtMs,
 	flashNotice,
 	setQueueLoadCache,
 }: UseDetailHydrationInput): UseDetailHydrationResult => {
@@ -93,10 +97,11 @@ export const useDetailHydration = ({
 		})
 	}
 
-	const hydratePullRequestDetails = (pullRequest: PullRequestItem, notifyError: boolean): boolean => {
+	const hydratePullRequestDetails = (pullRequest: PullRequestItem, notifyError: boolean, options?: { readonly force?: boolean }): boolean => {
 		if (pullRequest.state !== "open") return false
 		const detailKey = pullRequestDetailKey(pullRequest)
-		const forceRefresh = notifyError && pullRequest.detailLoaded && cachedDetailKeysRef.current.has(detailKey)
+		const force = options?.force === true
+		const forceRefresh = force || (notifyError && pullRequest.detailLoaded && cachedDetailKeysRef.current.has(detailKey))
 		if (pullRequest.detailLoaded && !forceRefresh) return false
 		const existing = detailHydrationRef.current.get(detailKey)
 		if (existing) {
@@ -156,12 +161,26 @@ export const useDetailHydration = ({
 	}
 
 	// Hydrate the selected PR with notifyError=true so user sees loading + flash on error.
+	// When the queue's `fetchedAt` advances (i.e. the list itself just refreshed),
+	// force a re-fetch even if `detailLoaded` is still true — checks may have moved
+	// even though the SHA hasn't.
+	//
+	// Track only the currently-selected (detailKey, fetchedAt) in a single slot
+	// rather than a growing Map: we only need to detect "did the queue refresh
+	// since we last hydrated *this* PR?" — comparing against a Map keyed by every
+	// PR ever selected would slowly leak.
+	const lastSelectedRefreshRef = useRef<{ detailKey: string; fetchedAt: number } | null>(null)
 	useEffect(() => {
 		if (pullRequestStatus !== "ready" || !selectedPullRequest) return
-		hydratePullRequestDetails(selectedPullRequest, true)
+		const detailKey = pullRequestDetailKey(selectedPullRequest)
+		const previous = lastSelectedRefreshRef.current
+		const queueAdvanced = queueFetchedAtMs !== null && previous !== null && previous.detailKey === detailKey && queueFetchedAtMs > previous.fetchedAt
+		if (queueFetchedAtMs !== null) lastSelectedRefreshRef.current = { detailKey, fetchedAt: queueFetchedAtMs }
+		hydratePullRequestDetails(selectedPullRequest, true, queueAdvanced ? { force: true } : undefined)
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		pullRequestStatus,
+		queueFetchedAtMs,
 		selectedPullRequest?.url,
 		selectedPullRequest?.headRefOid,
 		selectedPullRequest?.state,

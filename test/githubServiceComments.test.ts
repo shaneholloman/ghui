@@ -91,7 +91,7 @@ describe("GitHubService list queries", () => {
 		const recorder: RecordedCall[] = []
 		const layer = GitHubService.layerNoDeps.pipe(Layer.provide(fakeCommandRunner(repositoryPullRequestListResponse, recorder)))
 		const page = await runWith(
-			GitHubService.use((github) => github.listOpenPullRequestPage({ mode: "repository", repository: "owner/repo", cursor: null, pageSize: 1 })),
+			GitHubService.use((github) => github.listPullRequestPage({ kind: "pullRequest", mode: "all", repository: "owner/repo", cursor: null, pageSize: 1 })),
 			layer,
 		)
 
@@ -108,30 +108,6 @@ describe("GitHubService list queries", () => {
 		expect(classifyGitHubRateLimit("You have exceeded a secondary rate limit")).toBe("secondary")
 		expect(isGitHubRateLimitError({ detail: "API rate limit already exceeded for user ID 1." })).toBe(true)
 		expect(isGitHubRateLimitError({ detail: "Repository not found" })).toBe(false)
-	})
-
-	test("accepts issue comment arrays from gh issue list", async () => {
-		const recorder: RecordedCall[] = []
-		const response = JSON.stringify([
-			{
-				number: 7,
-				title: "Issue with comment array",
-				body: "Issue body",
-				author: { login: "kit" },
-				labels: [],
-				comments: [{ id: 1 }, { id: 2 }],
-				createdAt: "2026-01-01T00:00:00Z",
-				updatedAt: "2026-01-02T00:00:00Z",
-				url: "https://github.com/owner/repo/issues/7",
-			},
-		])
-		const layer = GitHubService.layerNoDeps.pipe(Layer.provide(fakeCommandRunner(response, recorder)))
-		const issues = await runWith(
-			GitHubService.use((github) => github.listOpenIssues("owner/repo")),
-			layer,
-		)
-
-		expect(issues[0]!.commentCount).toBe(2)
 	})
 })
 

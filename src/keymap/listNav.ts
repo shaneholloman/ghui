@@ -15,6 +15,7 @@ export interface ListNavCtx {
 	readonly openRepositoryPicker: () => void
 	readonly toggleFavoriteRepository: () => void
 	readonly removeSelectedRepository: () => void
+	readonly openFilterModal: () => void
 	readonly goUpWorkspace: () => void
 	readonly switchQueueMode: (delta: 1 | -1) => void
 	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
@@ -34,8 +35,9 @@ export interface ListNavCtx {
 
 const List = context<ListNavCtx>()
 const itemSelected = (s: ListNavCtx) => (s.visibleCount > 0 ? true : "No item selected.")
-const reposActive = (s: ListNavCtx) => (s.activeSurface === "repos" ? true : "Repository surface not active.")
-const pullRequestsActive = (s: ListNavCtx) => (s.activeSurface === "pullRequests" ? true : "Pull request surface not active.")
+const reposActive = (s: ListNavCtx) => s.activeSurface === "repos"
+const filterableSurfaceActive = (s: ListNavCtx) => s.canGoUpWorkspace && (s.activeSurface === "pullRequests" || s.activeSurface === "issues")
+const pullRequestsActive = (s: ListNavCtx) => s.activeSurface === "pullRequests"
 const surfaceAt = (s: ListNavCtx, index: number) => s.surfaces[index] ?? null
 const goHome = (s: ListNavCtx) => {
 	if (s.canGoUpWorkspace) s.goUpWorkspace()
@@ -54,20 +56,21 @@ export const listNavKeymap = List(
 	{ id: "workspace.go-pulls", title: "Go to pull requests", keys: ["g p"], run: (s) => s.switchWorkspaceSurface("pullRequests") },
 	{ id: "workspace.go-issues", title: "Go to issues", keys: ["g i"], run: (s) => s.switchWorkspaceSurface("issues") },
 	{ id: "list.filter", title: "Filter", keys: ["/"], run: (s) => s.runCommandById("filter.open") },
-	{ id: "list.add-repo", title: "Add repository", keys: ["a"], enabled: reposActive, run: (s) => s.openRepositoryPicker() },
-	{ id: "list.favorite-repo", title: "Favorite repository", keys: ["f"], enabled: reposActive, run: (s) => s.toggleFavoriteRepository() },
-	{ id: "list.remove-repo", title: "Remove repository", keys: ["x"], enabled: reposActive, run: (s) => s.removeSelectedRepository() },
-	{ id: "list.refresh", title: "Refresh", keys: ["r"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.refresh") },
+	{ id: "list.add-repo", title: "Add repository", keys: ["a"], when: reposActive, run: (s) => s.openRepositoryPicker() },
+	{ id: "list.favorite-repo", title: "Favorite repository", keys: ["f"], when: reposActive, run: (s) => s.toggleFavoriteRepository() },
+	{ id: "list.scope-filter", title: "Filter items", keys: ["f"], when: filterableSurfaceActive, run: (s) => s.openFilterModal() },
+	{ id: "list.remove-repo", title: "Remove repository", keys: ["x"], when: reposActive, run: (s) => s.removeSelectedRepository() },
+	{ id: "list.refresh", title: "Refresh", keys: ["r"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.refresh") },
 	{ id: "list.theme", title: "Theme", keys: ["t"], run: (s) => s.runCommandById("theme.open") },
-	{ id: "list.diff", title: "Open diff", keys: ["d"], enabled: pullRequestsActive, run: (s) => s.runCommandById("diff.open") },
+	{ id: "list.diff", title: "Open diff", keys: ["d"], when: pullRequestsActive, run: (s) => s.runCommandById("diff.open") },
 	{ id: "list.comments", title: "Open comments", keys: ["c"], enabled: itemSelected, run: (s) => s.runCommandById("comments.open") },
-	{ id: "list.review", title: "Review pull request", keys: ["shift+r"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.submit-review") },
+	{ id: "list.review", title: "Review pull request", keys: ["shift+r"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.submit-review") },
 	{ id: "list.labels", title: "Labels", keys: ["l"], enabled: itemSelected, run: (s) => s.runCommandById("pull.labels") },
-	{ id: "list.merge", title: "Merge", keys: ["m", "shift+m"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.merge") },
-	{ id: "list.close-pr", title: "Close PR", keys: ["x"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.close") },
-	{ id: "list.open-browser", title: "Open in browser", keys: ["o"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.open-browser") },
-	{ id: "list.toggle-draft", title: "Toggle draft", keys: ["s", "shift+s"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.toggle-draft") },
-	{ id: "list.copy", title: "Copy metadata", keys: ["y"], enabled: pullRequestsActive, run: (s) => s.runCommandById("pull.copy-metadata") },
+	{ id: "list.merge", title: "Merge", keys: ["m", "shift+m"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.merge") },
+	{ id: "list.close-pr", title: "Close PR", keys: ["x"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.close") },
+	{ id: "list.open-browser", title: "Open in browser", keys: ["o"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.open-browser") },
+	{ id: "list.toggle-draft", title: "Toggle draft", keys: ["s", "shift+s"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.toggle-draft") },
+	{ id: "list.copy", title: "Copy metadata", keys: ["y"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.copy-metadata") },
 	{ id: "list.detail.open", title: "Open selected", keys: ["return"], enabled: itemSelected, run: (s) => s.openSelection() },
 
 	// Escape goes one level up: clear local filter first, otherwise leave repo scope.

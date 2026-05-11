@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
 	backspace,
+	commentEditorSoftLines,
 	deleteForward,
 	deleteToLineEnd,
 	deleteToLineStart,
@@ -47,6 +48,14 @@ describe("comment editor", () => {
 		expect(moveVertically(state(body, 5), 1).cursor).toBe(11)
 		expect(moveVertically(state(body, 11), -1).cursor).toBe(5)
 		expect(moveVertically(state(body, 8), 1).cursor).toBe(12)
+	})
+
+	test("soft-wraps editor lines for display", () => {
+		expect(commentEditorSoftLines("abcdef\ngh", 3)).toEqual([
+			{ text: "abc", start: 0, end: 3 },
+			{ text: "def", start: 3, end: 6 },
+			{ text: "gh", start: 7, end: 9 },
+		])
 	})
 
 	test("deletes backward and forward", () => {

@@ -1,10 +1,11 @@
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useState, type RefObject } from "react"
 import { daysOpen } from "../date.js"
+import type { RepositoryDetails } from "../domain.js"
 import { colors, rowHoverBackground } from "./colors.js"
 import { wrapText } from "./DetailsPane.js"
 import { PaneDivider, PaneInsetLine, paneContentWidth } from "./paneLayout.js"
-import { Filler, fitCell, MatchedCell, PlainLine, TextLine } from "./primitives.js"
+import { Filler, fitCell, MatchedCell, PlainLine, TextLine, trimCell } from "./primitives.js"
 
 export interface RepositoryListItem {
 	readonly repository: string
@@ -17,9 +18,27 @@ export interface RepositoryListItem {
 	readonly description: string | null
 }
 
-export const getRepoDetailJunctionRows = (repository: RepositoryListItem | null): readonly number[] => (repository ? [2, 4] : [])
+export const getRepoDetailJunctionRows = (repository: RepositoryListItem | null): readonly number[] => (repository ? [2] : [])
 
 const activityText = (date: Date | null) => (date ? `${daysOpen(date)}d` : "-")
+
+const RepoNameCell = ({ repository, width, current }: { readonly repository: string; readonly width: number; readonly current: boolean }) => {
+	const currentText = current ? " current" : ""
+	const nameWidth = Math.max(1, width - currentText.length)
+	const fitted = trimCell(repository, nameWidth)
+	const slash = fitted.indexOf("/")
+	const owner = slash >= 0 ? fitted.slice(0, slash + 1) : ""
+	const repoName = slash >= 0 ? fitted.slice(slash + 1) : fitted
+	const padding = Math.max(0, nameWidth - fitted.length)
+	return (
+		<>
+			{owner ? <span fg={colors.separator}>{owner}</span> : null}
+			<span>{repoName}</span>
+			{current ? <span fg={colors.accent}>{currentText}</span> : null}
+			{padding > 0 ? <span>{" ".repeat(padding)}</span> : null}
+		</>
+	)
+}
 
 export const RepoList = ({
 	repositories,
@@ -56,7 +75,8 @@ export const RepoList = ({
 	}
 
 	const ageWidth = Math.max(4, ...repositories.map((repo) => activityText(repo.lastActivityAt).length))
-	const repoWidth = Math.max(12, contentWidth - 3 - ageWidth)
+	const markerWidth = 1
+	const repoWidth = Math.max(12, contentWidth - markerWidth - 1 - 1 - ageWidth)
 
 	return (
 		<box width={contentWidth} flexDirection="column">
@@ -71,8 +91,8 @@ export const RepoList = ({
 				const selected = index === selectedIndex
 				const hovered = index === hoveredIndex
 				const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
-				const marker = repo.current ? "›" : repo.favorite ? "★" : "·"
-				const markerFg = repo.current ? colors.count : repo.favorite ? colors.accent : colors.muted
+				const marker = repo.favorite ? "★" : "·"
+				const markerFg = repo.favorite ? colors.accent : colors.muted
 				const nameFg = repo.current ? colors.count : colors.text
 				const age = activityText(repo.lastActivityAt)
 				return (
@@ -95,7 +115,11 @@ export const RepoList = ({
 							<span fg={markerFg}>{marker}</span>
 							<span> </span>
 							<span fg={nameFg}>
-								<MatchedCell text={repo.repository} width={repoWidth} query={filterText} />
+								{filterText.length > 0 ? (
+									<MatchedCell text={repo.repository} width={repoWidth} query={filterText} />
+								) : (
+									<RepoNameCell repository={repo.repository} width={repoWidth} current={repo.current} />
+								)}
 							</span>
 							<span fg={colors.muted}> </span>
 							<span fg={colors.muted}>{fitCell(age, ageWidth, "right")}</span>
@@ -107,14 +131,33 @@ export const RepoList = ({
 	)
 }
 
+const formatCount = (count: number) => (count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count))
+
+const relativeTime = (date: Date | null) => {
+	if (!date) return null
+	const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000))
+	if (seconds < 60) return "just now"
+	const minutes = Math.floor(seconds / 60)
+	if (minutes < 60) return `${minutes}m ago`
+	const hours = Math.floor(minutes / 60)
+	if (hours < 24) return `${hours}h ago`
+	const days = Math.floor(hours / 24)
+	if (days < 30) return `${days}d ago`
+	const months = Math.floor(days / 30)
+	if (months < 12) return `${months}mo ago`
+	return `${Math.floor(months / 12)}y ago`
+}
+
 export const RepoDetailPane = ({
 	repository,
+	details,
 	width,
 	height,
 	descriptionLineLimit = 1,
 	descriptionScrollRef,
 }: {
 	repository: RepositoryListItem | null
+	details: RepositoryDetails | null
 	width: number
 	height: number
 	descriptionLineLimit?: number
@@ -132,13 +175,29 @@ export const RepoDetailPane = ({
 		)
 	}
 
-	const description = repository.description ?? "Open this repository to view pull requests and issues."
+	const description = details?.description ?? repository.description ?? (details === null ? "Loading…" : "No description.")
 	const wrappedDescriptionLines = wrapText(description, contentWidth)
 	const descriptionLines = descriptionScrollRef ? wrappedDescriptionLines : wrappedDescriptionLines.slice(0, descriptionLineLimit)
-	const status = repository.current ? "current" : repository.favorite ? "favorite" : repository.recent ? "recent" : "repository"
-	const activity = repository.lastActivityAt ? `${daysOpen(repository.lastActivityAt)}d ago` : "unknown"
-	const fixedRows = 6
+
+	const statusParts = [
+		repository.current ? "current" : null,
+		repository.favorite ? "starred" : null,
+		!repository.current && !repository.favorite && repository.recent ? "recent" : null,
+		details?.isPrivate ? "private" : null,
+		details?.isArchived ? "archived" : null,
+	].filter((part): part is string => part !== null)
+	const status = statusParts.length > 0 ? statusParts.join(" · ") : "repository"
+
+	const pushedAt = details?.pushedAt ? relativeTime(details.pushedAt) : repository.lastActivityAt ? `${daysOpen(repository.lastActivityAt)}d ago` : "unknown"
+
+	const statsRow = details
+		? `★ ${formatCount(details.stargazerCount)}  ⑂ ${formatCount(details.forkCount)}  ${details.openPullRequestCount} PRs  ${details.openIssueCount} issues`
+		: null
+	const branchRow = details?.defaultBranch ? `branch ${details.defaultBranch}` : null
+
+	const fixedRows = 4 + (statsRow ? 1 : 0) + (branchRow ? 1 : 0)
 	const descriptionHeight = Math.max(1, height - fixedRows)
+
 	return (
 		<box width={width} height={height} flexDirection="column">
 			<PaneInsetLine width={width}>
@@ -148,16 +207,18 @@ export const RepoDetailPane = ({
 			</PaneInsetLine>
 			<PaneInsetLine width={width}>
 				<span fg={repository.current || repository.favorite ? colors.accent : colors.count}>{status}</span>
-				<span fg={colors.muted}> updated {activity}</span>
+				<span fg={colors.muted}> · pushed {pushedAt}</span>
 			</PaneInsetLine>
-			<PaneDivider width={width} />
-			<PaneInsetLine width={width}>
-				<span fg={colors.muted}>known </span>
-				<span fg={colors.count}>{repository.pullRequestCount}</span>
-				<span fg={colors.muted}> PRs </span>
-				<span fg={colors.count}>{repository.issueCount}</span>
-				<span fg={colors.muted}> issues</span>
-			</PaneInsetLine>
+			{statsRow ? (
+				<PaneInsetLine width={width}>
+					<span fg={colors.count}>{fitCell(statsRow, contentWidth)}</span>
+				</PaneInsetLine>
+			) : null}
+			{branchRow ? (
+				<PaneInsetLine width={width}>
+					<span fg={colors.muted}>{fitCell(branchRow, contentWidth)}</span>
+				</PaneInsetLine>
+			) : null}
 			<PaneDivider width={width} />
 			<PaneInsetLine width={width}>
 				<span fg={colors.count} attributes={TextAttributes.BOLD}>

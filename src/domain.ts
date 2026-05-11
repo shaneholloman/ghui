@@ -26,7 +26,8 @@ export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, repo
 		mentioned: "mentions:@me",
 	} as const satisfies Record<PullRequestQueueMode, string>
 	const qualifier = qualifiers[mode]
-	return mode === "repository" && repository ? qualifier : `${qualifier} archived:false`
+	const repositoryQualifier = mode === "repository" || !repository ? "" : ` repo:${repository}`
+	return mode === "repository" && repository ? qualifier : `${qualifier}${repositoryQualifier} archived:false`
 }
 
 export const checkConclusions = ["success", "failure", "neutral", "skipped", "cancelled", "timed_out"] as const
@@ -157,10 +158,18 @@ export interface PullRequestItem {
 	readonly url: string
 }
 
-export interface PullRequestPage {
-	readonly items: readonly PullRequestItem[]
-	readonly endCursor: string | null
-	readonly hasNextPage: boolean
+export interface RepositoryDetails {
+	readonly repository: string
+	readonly description: string | null
+	readonly url: string
+	readonly stargazerCount: number
+	readonly forkCount: number
+	readonly openIssueCount: number
+	readonly openPullRequestCount: number
+	readonly defaultBranch: string | null
+	readonly pushedAt: Date | null
+	readonly isArchived: boolean
+	readonly isPrivate: boolean
 }
 
 export interface IssueItem {
@@ -174,13 +183,6 @@ export interface IssueItem {
 	readonly createdAt: Date
 	readonly updatedAt: Date
 	readonly url: string
-}
-
-export interface ListPullRequestPageInput {
-	readonly mode: PullRequestQueueMode
-	readonly repository: string | null
-	readonly cursor: string | null
-	readonly pageSize: number
 }
 
 export interface PullRequestMergeInfo {

@@ -240,6 +240,14 @@ const cacheMigrations = {
 			updated_at TEXT NOT NULL
 		)`
 	}),
+	// Drop queue snapshots stored under the legacy `view_key` format
+	// (e.g. `authored`, `repository:owner/name`). Rows are rebuilt from the live
+	// service on next fetch; without this they'd just sit orphaned until the
+	// age-based prune ran in ~30 days.
+	"003_unified_queue_view_key": Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient
+		yield* sql`DELETE FROM queue_snapshots WHERE view_key NOT LIKE 'pullRequest:%' AND view_key NOT LIKE 'issue:%'`
+	}),
 } satisfies Record<string, Effect.Effect<void, unknown, SqlClient.SqlClient>>
 
 const pullRequestRow = (pullRequest: PullRequestItem, updatedAt = new Date().toISOString()) => ({

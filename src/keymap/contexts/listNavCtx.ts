@@ -14,6 +14,7 @@ export interface BuildListNavCtxInput {
 	readonly openRepositoryPicker: () => void
 	readonly toggleFavoriteRepository: () => void
 	readonly removeSelectedRepository: () => void
+	readonly openFilterModal: () => void
 	readonly goUpWorkspace: () => void
 	readonly switchQueueMode: (delta: 1 | -1) => void
 	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
@@ -43,6 +44,7 @@ export const buildListNavCtx = (input: BuildListNavCtxInput): ListNavCtx => ({
 	openRepositoryPicker: input.openRepositoryPicker,
 	toggleFavoriteRepository: input.toggleFavoriteRepository,
 	removeSelectedRepository: input.removeSelectedRepository,
+	openFilterModal: input.openFilterModal,
 	goUpWorkspace: input.goUpWorkspace,
 	switchQueueMode: input.switchQueueMode,
 	switchWorkspaceSurface: input.switchWorkspaceSurface,

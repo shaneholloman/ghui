@@ -139,17 +139,26 @@ describe("CacheService", () => {
 		expect(cached?.createdAt).toBeInstanceOf(Date)
 	})
 
-	test("queue summaries do not clobber hydrated details", async () => {
+	test("queue summaries do not clobber hydrated details, including checks", async () => {
 		const filename = await tempCachePath()
-		const detail = pullRequest(4, { body: "Hydrated body", additions: 42, detailLoaded: true })
+		const detail = pullRequest(4, {
+			body: "Hydrated body",
+			additions: 42,
+			checkStatus: "passing",
+			checkSummary: "9/9",
+			checks: [{ name: "ci", status: "completed", conclusion: "success" }],
+			detailLoaded: true,
+		})
+		// A real list-fetch summary never carries a real rollup; checkStatus="none" is what lands.
 		const summary = pullRequest(4, {
 			body: "",
 			labels: [],
 			additions: 0,
 			deletions: 0,
 			changedFiles: 0,
-			checkStatus: "failing",
-			checkSummary: "0/1",
+			checkStatus: "none",
+			checkSummary: null,
+			checks: [],
 			detailLoaded: false,
 		})
 
@@ -165,8 +174,8 @@ describe("CacheService", () => {
 			expect(cached).toMatchObject({
 				body: "Hydrated body",
 				additions: 42,
-				checkStatus: "failing",
-				checkSummary: "0/1",
+				checkStatus: "passing",
+				checkSummary: "9/9",
 				detailLoaded: true,
 			})
 		})

@@ -99,6 +99,8 @@ export const pullRequestListRowIndex = (rows: readonly PullRequestListRow[], url
 	return null
 }
 
+export const pullRequestListVisualLineCount = (rows: readonly PullRequestListRow[]) => rows.reduce((count, row) => count + pullRequestListRowHeight(row), 0)
+
 const PullRequestRow = ({
 	pullRequest,
 	selected,

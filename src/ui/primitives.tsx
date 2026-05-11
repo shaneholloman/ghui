@@ -163,12 +163,21 @@ export const Divider = ({
 	return <PlainLine text={Array.from({ length: Math.max(1, width) }, (_, index) => visibleJunctions.get(index) ?? "─").join("")} fg={colors.separator} />
 }
 
-export const SeparatorColumn = ({ height, junctionRows }: { height: number; junctionRows?: readonly number[] }) => {
-	const junctions = new Set(junctionRows)
+export const SeparatorColumn = ({
+	height,
+	junctionRows,
+	junctions = [],
+}: {
+	height: number
+	junctionRows?: readonly number[]
+	junctions?: readonly { readonly row: number; readonly char: string }[]
+}) => {
+	const junctionChars = new Map(junctions.map((junction) => [junction.row, junction.char]))
+	for (const row of junctionRows ?? []) junctionChars.set(row, "├")
 	return (
 		<box width={1} height={height} flexDirection="column">
 			{Array.from({ length: height }, (_, index) => (
-				<PlainLine key={index} text={junctions.has(index) ? "├" : "│"} fg={colors.separator} />
+				<PlainLine key={index} text={junctionChars.get(index) ?? "│"} fg={colors.separator} />
 			))}
 		</box>
 	)

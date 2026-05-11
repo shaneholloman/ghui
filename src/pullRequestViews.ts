@@ -1,4 +1,5 @@
 import { pullRequestQueueLabels, pullRequestQueueModes, type PullRequestQueueMode, type PullRequestUserQueueMode } from "./domain.js"
+import { type ItemListInput, itemQueryCacheKey, pullRequestQueryToListInput, type PullRequestQuery } from "./item.js"
 
 export type PullRequestView =
 	| { readonly _tag: "Repository"; readonly repository: string }
@@ -11,7 +12,17 @@ export const viewMode = (view: PullRequestView): PullRequestQueueMode => (view._
 
 export const viewRepository = (view: PullRequestView) => view.repository
 
-export const viewCacheKey = (view: PullRequestView) => (view._tag === "Repository" ? `repository:${view.repository}` : view.mode)
+// Convert a view into the new unified service input. `_tag: "Repository"` is
+// the user-facing "all PRs in this repo" view → server-side `mode: "all"`.
+export const viewToPullRequestQuery = (view: PullRequestView): PullRequestQuery =>
+	view._tag === "Repository" ? { mode: "all", repository: view.repository, textFilter: "" } : { mode: view.mode, repository: view.repository, textFilter: "" }
+
+export const viewToListInput = (view: PullRequestView, cursor: string | null, pageSize: number): ItemListInput<"pullRequest"> =>
+	pullRequestQueryToListInput(viewToPullRequestQuery(view), cursor, pageSize)
+
+// Cache key is the only thing the rest of the app needs from a view; it's
+// derived through the same `itemQueryCacheKey` the service seam uses.
+export const viewCacheKey = (view: PullRequestView) => itemQueryCacheKey("pullRequest", viewToPullRequestQuery(view))
 
 export const viewEquals = (left: PullRequestView, right: PullRequestView) => left._tag === right._tag && viewMode(left) === viewMode(right) && left.repository === right.repository
 

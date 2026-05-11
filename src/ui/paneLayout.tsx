@@ -19,6 +19,7 @@ export const SplitPane = ({
 	left,
 	right,
 	junctionRows,
+	junctions,
 }: {
 	height: number
 	leftWidth: number
@@ -26,12 +27,13 @@ export const SplitPane = ({
 	left: React.ReactNode
 	right: React.ReactNode
 	junctionRows?: readonly number[]
+	junctions?: readonly { readonly row: number; readonly char: string }[]
 }) => (
 	<box flexGrow={1} flexDirection="row">
 		<box width={leftWidth} height={height} flexDirection="column">
 			{left}
 		</box>
-		<SeparatorColumn height={height} junctionRows={normalizeJunctionRows(height, junctionRows)} />
+		<SeparatorColumn height={height} junctionRows={normalizeJunctionRows(height, junctionRows)} {...(junctions === undefined ? {} : { junctions })} />
 		<box width={rightWidth} height={height} flexDirection="column">
 			{right}
 		</box>

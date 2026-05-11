@@ -49,12 +49,6 @@ export const LabelModal = ({
 					<span fg={colors.muted}> move </span>
 					<span fg={colors.count}>esc</span>
 					<span fg={colors.muted}> close</span>
-					{filtered.length > maxVisible ? (
-						<span fg={colors.muted}>
-							{" "}
-							{selectedIndex + 1}/{filtered.length}
-						</span>
-					) : null}
 				</TextLine>
 			}
 		>
