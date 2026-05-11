@@ -3,10 +3,12 @@
 import { addDefaultParsers, createCliRenderer } from "@opentui/core"
 import { createRoot, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Effect } from "effect"
+import { appendFile } from "node:fs/promises"
 import { useEffect, useState } from "react"
 import { errorMessage } from "./errors.js"
+import { createSystemThemeReloader, type SystemThemeReloadEvent } from "./systemThemeReload.js"
 import { loadStoredSystemThemeAutoReload } from "./themeStore.js"
-import { colors, isHexColor, setSystemThemeColors } from "./ui/colors.js"
+import { colors, setSystemThemeColors } from "./ui/colors.js"
 import { LoadingLogoPane } from "./ui/LoadingLogo.js"
 import { SPINNER_INTERVAL_MS } from "./ui/spinner.js"
 
@@ -34,23 +36,15 @@ type AppBundle = {
 }
 
 let notifySystemThemeReload = () => {}
-let signalTimer: ReturnType<typeof globalThis.setTimeout> | null = null
-let reloadToken = 0
 
-const SYSTEM_THEME_SIGNAL_DELAY_MS = 150
-const SYSTEM_THEME_RETRY_DELAYS_MS = [150, 300] as const
+const SYSTEM_THEME_READ_TIMEOUT_MS = 500
+const SYSTEM_THEME_DEBUG_LOG_PATH = process.env.GHUI_DEBUG_THEME_RELOAD_LOG ?? null
 
-const hasCompleteTerminalPalette = (terminalColors: {
-	readonly palette: readonly (string | null)[]
-	readonly defaultForeground: string | null
-	readonly defaultBackground: string | null
-}) =>
-	isHexColor(terminalColors.defaultForeground) &&
-	isHexColor(terminalColors.defaultBackground) &&
-	terminalColors.palette.length >= 16 &&
-	terminalColors.palette.slice(0, 16).every(isHexColor)
-
-const sleep = (delayMs: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs))
+const logReloadEvent = (event: SystemThemeReloadEvent) => {
+	if (SYSTEM_THEME_DEBUG_LOG_PATH === null) return
+	const line = `${new Date().toISOString()} ${JSON.stringify(event)}\n`
+	void appendFile(SYSTEM_THEME_DEBUG_LOG_PATH, line).catch(() => {})
+}
 
 const StartupLogo = ({ hint }: { readonly hint: string }) => {
 	const startupRenderer = useRenderer()
@@ -83,55 +77,28 @@ const renderer = await createCliRenderer({
 	},
 })
 
-const readSystemThemeColors = () => {
-	renderer.clearPaletteCache()
-	return renderer.getPalette({ timeout: 150, size: 16 })
-}
+const systemThemeReloader = createSystemThemeReloader({
+	readPalette: (timeoutMs) => {
+		renderer.clearPaletteCache()
+		return renderer.getPalette({ timeout: timeoutMs, size: 16 })
+	},
+	applyColors: (terminalColors) => {
+		setSystemThemeColors(terminalColors)
+		renderer.setBackgroundColor(colors.background)
+	},
+	notify: () => notifySystemThemeReload(),
+	isAutoReloadEnabled: () => Effect.runPromise(loadStoredSystemThemeAutoReload),
+	setTimer: (fn, ms) => globalThis.setTimeout(fn, ms),
+	clearTimer: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
+	delay: (ms) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, ms)),
+	config: { readTimeoutMs: SYSTEM_THEME_READ_TIMEOUT_MS },
+	onEvent: logReloadEvent,
+})
 
-const readThemeColorsAfterRetries = async () => {
-	let palette: Awaited<ReturnType<typeof readSystemThemeColors>> | null = null
-
-	const readNext = async () => {
-		const terminalColors = await readSystemThemeColors()
-		if (hasCompleteTerminalPalette(terminalColors)) palette = terminalColors
-	}
-
-	await readNext()
-	for (const delayMs of SYSTEM_THEME_RETRY_DELAYS_MS) {
-		await sleep(delayMs)
-		await readNext()
-	}
-
-	return palette
-}
-
-const reloadSystemThemeColors = async () => {
-	const terminalColors = await readSystemThemeColors()
-	setSystemThemeColors(terminalColors)
-	renderer.setBackgroundColor(colors.background)
-	notifySystemThemeReload()
-}
-
-const reloadSystemThemeColorsFromSignal = async (token: number) => {
-	const systemThemeAutoReload = await Effect.runPromise(loadStoredSystemThemeAutoReload)
-	if (token !== reloadToken) return
-	if (!systemThemeAutoReload) return
-	const terminalColors = await readThemeColorsAfterRetries()
-	if (token !== reloadToken) return
-	if (terminalColors === null) return
-	setSystemThemeColors(terminalColors)
-	renderer.setBackgroundColor(colors.background)
-	notifySystemThemeReload()
-}
+void systemThemeReloader.primeBaseline().catch(() => {})
 
 process.on("SIGUSR2", () => {
-	reloadToken += 1
-	const token = reloadToken
-	if (signalTimer !== null) globalThis.clearTimeout(signalTimer)
-	signalTimer = globalThis.setTimeout(() => {
-		signalTimer = null
-		void reloadSystemThemeColorsFromSignal(token).catch(() => {})
-	}, SYSTEM_THEME_SIGNAL_DELAY_MS)
+	systemThemeReloader.requestReload()
 })
 
 const Bootstrap = () => {
