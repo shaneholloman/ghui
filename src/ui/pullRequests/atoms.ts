@@ -248,7 +248,11 @@ export const displayedPullRequestsAtom = Atom.make((get) => {
 		seenUrls.add(pullRequest.url)
 		return recentlyCompleted[pullRequest.url] ?? overrides[pullRequest.url] ?? pullRequest
 	})
-	return [...open, ...Object.values(recentlyCompleted).filter((pullRequest) => !seenUrls.has(pullRequest.url))]
+	const orphans = Object.values(recentlyCompleted).filter((pullRequest) => !seenUrls.has(pullRequest.url))
+	// Defensive sort by updatedAt DESC: the server already sorts this way, but
+	// pagination drift across pages and stale cache reads can scramble the
+	// merged list. Sorting client-side guarantees a stable, predictable order.
+	return [...open, ...orphans].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
 })
 
 export const filteredPullRequestsAtom = Atom.make((get) => {
@@ -262,7 +266,7 @@ export const filteredPullRequestsAtom = Atom.make((get) => {
 			const score = pullRequestFilterScore(pullRequest, query)
 			return score === null ? [] : [{ pullRequest, score }]
 		})
-		.sort((left, right) => left.score - right.score || right.pullRequest.createdAt.getTime() - left.pullRequest.createdAt.getTime())
+		.sort((left, right) => left.score - right.score || right.pullRequest.updatedAt.getTime() - left.pullRequest.updatedAt.getTime())
 		.map(({ pullRequest }) => pullRequest)
 })
 

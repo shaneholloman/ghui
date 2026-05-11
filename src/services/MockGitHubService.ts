@@ -52,6 +52,7 @@ const buildPullRequest = (index: number, options: Required<MockOptions>): PullRe
 	const passed = total - (index % 3 === 0 ? 1 : 0)
 	const review = REVIEW_CYCLE[index % REVIEW_CYCLE.length]!
 	const createdAt = new Date(Date.now() - index * 86_400_000)
+	const updatedAt = new Date(Date.now() - index * 3_600_000)
 
 	return {
 		repository,
@@ -73,6 +74,7 @@ const buildPullRequest = (index: number, options: Required<MockOptions>): PullRe
 		autoMergeEnabled: index % 11 === 0,
 		detailLoaded: true,
 		createdAt,
+		updatedAt,
 		closedAt: null,
 		url: `https://github.com/${repository}/pull/${number}`,
 	}

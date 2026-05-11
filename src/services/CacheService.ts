@@ -69,6 +69,7 @@ const CachedPullRequestItemSchema = Schema.Struct({
 	autoMergeEnabled: Schema.Boolean,
 	detailLoaded: Schema.Boolean,
 	createdAt: Schema.String,
+	updatedAt: Schema.optional(Schema.String),
 	closedAt: Schema.NullOr(Schema.String),
 	url: Schema.String,
 })
@@ -137,6 +138,8 @@ const toCacheError = (operation: string, cause: unknown) => (cause instanceof Ca
 const cachedPullRequestToDomain = (cached: CachedPullRequestItem): PullRequestItem | null => {
 	const createdAt = parseDate(cached.createdAt)
 	if (!createdAt) return null
+	const updatedAt = cached.updatedAt !== undefined ? parseDate(cached.updatedAt) : createdAt
+	if (!updatedAt) return null
 	const closedAt = cached.closedAt === null ? null : parseDate(cached.closedAt)
 	if (cached.closedAt !== null && !closedAt) return null
 	return {
@@ -161,6 +164,7 @@ const cachedPullRequestToDomain = (cached: CachedPullRequestItem): PullRequestIt
 		autoMergeEnabled: cached.autoMergeEnabled,
 		detailLoaded: cached.detailLoaded,
 		createdAt,
+		updatedAt,
 		closedAt,
 		url: cached.url,
 	}
@@ -188,6 +192,7 @@ const encodePullRequest = (pullRequest: PullRequestItem): CachedPullRequestItem 
 	autoMergeEnabled: pullRequest.autoMergeEnabled,
 	detailLoaded: pullRequest.detailLoaded,
 	createdAt: pullRequest.createdAt.toISOString(),
+	updatedAt: pullRequest.updatedAt.toISOString(),
 	closedAt: pullRequest.closedAt?.toISOString() ?? null,
 	url: pullRequest.url,
 })

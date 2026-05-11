@@ -583,7 +583,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 		}
 		for (const pullRequest of pullRequests) {
-			touch(pullRequest.repository, pullRequest.createdAt, { pullRequestCount: 1, issueCount: 0 })
+			touch(pullRequest.repository, pullRequest.updatedAt, { pullRequestCount: 1, issueCount: 0 })
 		}
 		for (const issue of allIssues) {
 			touch(issue.repository, issue.updatedAt, { pullRequestCount: 0, issueCount: 1 })

@@ -65,6 +65,7 @@ const RawStatusCheckRollupSchema = Schema.Struct({
 
 const RawPullRequestSummaryFields = {
 	...RawItemSearchCommonFields,
+	updatedAt: Schema.String,
 	isDraft: Schema.Boolean,
 	reviewDecision: NullableString,
 	autoMergeRequest: Schema.NullOr(Schema.Unknown),
@@ -275,6 +276,7 @@ const SUMMARY_FIELDS_FRAGMENT = `
         state
         merged
         createdAt
+        updatedAt
         closedAt
         url
         author { login }

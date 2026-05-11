@@ -175,6 +175,7 @@ const parsePullRequestSummary = (item: RawPullRequestSummaryNode): PullRequestIt
 		autoMergeEnabled: item.autoMergeRequest !== null,
 		detailLoaded: false,
 		createdAt: new Date(item.createdAt),
+		updatedAt: new Date(item.updatedAt),
 		closedAt: normalizeDate(item.closedAt),
 		url: item.url,
 	}

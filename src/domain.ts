@@ -154,6 +154,7 @@ export interface PullRequestItem {
 	readonly autoMergeEnabled: boolean
 	readonly detailLoaded: boolean
 	readonly createdAt: Date
+	readonly updatedAt: Date
 	readonly closedAt: Date | null
 	readonly url: string
 }

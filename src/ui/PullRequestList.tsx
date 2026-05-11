@@ -35,7 +35,7 @@ const groupNumberWidth = (pullRequests: readonly PullRequestItem[]) => {
 
 const groupAgeWidth = (pullRequests: readonly PullRequestItem[]) => {
 	if (pullRequests.length === 0) return 4
-	const maxLen = Math.max(...pullRequests.map((pr) => `${daysOpen(pr.createdAt)}d`.length))
+	const maxLen = Math.max(...pullRequests.map((pr) => `${daysOpen(pr.updatedAt)}d`.length))
 	return Math.max(4, maxLen + 1)
 }
 
@@ -122,7 +122,7 @@ const PullRequestRow = ({
 	onSelect: () => void
 	onHoverChange: (hovered: boolean) => void
 }) => {
-	const ageText = `${daysOpen(pullRequest.createdAt)}d`
+	const ageText = `${daysOpen(pullRequest.updatedAt)}d`
 	const title = pullRequest.title.trim()
 	const { reviewWidth, checkWidth, ageWidth, numberWidth, titleWidth } = getRowLayout(contentWidth, numWidth, ageColWidth)
 	const rowWidth = reviewWidth + 1 + numberWidth + 1 + titleWidth + checkWidth + ageWidth

@@ -46,6 +46,7 @@ const pullRequest = (number: number, overrides: Partial<PullRequestItem> = {}): 
 	autoMergeEnabled: false,
 	detailLoaded: true,
 	createdAt: new Date(`2026-01-${String(number).padStart(2, "0")}T00:00:00Z`),
+	updatedAt: new Date(`2026-01-${String(number).padStart(2, "0")}T00:00:00Z`),
 	closedAt: null,
 	url: `https://github.com/owner/repo/pull/${number}`,
 	...overrides,

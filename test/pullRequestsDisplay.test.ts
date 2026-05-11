@@ -25,6 +25,7 @@ const open: PullRequestItem = {
 	autoMergeEnabled: false,
 	detailLoaded: true,
 	createdAt: new Date("2026-01-01"),
+	updatedAt: new Date("2026-01-01"),
 	closedAt: null,
 	url: "https://github.com/owner/repo/pull/42",
 }

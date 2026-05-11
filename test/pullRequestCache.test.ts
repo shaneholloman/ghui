@@ -24,6 +24,7 @@ const pullRequest = (overrides: Partial<PullRequestItem> = {}): PullRequestItem 
 	autoMergeEnabled: false,
 	detailLoaded: false,
 	createdAt: new Date("2026-01-01T00:00:00Z"),
+	updatedAt: new Date("2026-01-01T00:00:00Z"),
 	closedAt: null,
 	url: "https://github.com/owner/repo/pull/1",
 	...overrides,

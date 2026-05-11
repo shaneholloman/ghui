@@ -67,11 +67,12 @@ export const useLoadMore = ({
 				const currentLoad = registry.get(queueLoadCacheAtom)[cacheKey]
 				if (!currentLoad) return
 				const data = appendPullRequestPage(currentLoad.data, page.items)
+				const addedItems = data.length - currentLoad.data.length
 				const persistedLoad: PullRequestLoad = {
 					...currentLoad,
 					data,
 					endCursor: page.endCursor,
-					hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+					hasNextPage: addedItems > 0 && page.hasNextPage && data.length < config.prFetchLimit,
 				}
 				setQueueLoadCache((current) => {
 					if (!current[cacheKey]) return current
