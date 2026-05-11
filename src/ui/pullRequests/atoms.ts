@@ -37,6 +37,7 @@ export const lastUsedMergeMethodAtom = Atom.make<Record<string, PullRequestMerge
 export const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
 export const issueOverridesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
 export const recentlyCompletedPullRequestsAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
+export const repositoryDetailsCacheAtom = Atom.make<Record<string, RepositoryDetails>>({}).pipe(Atom.keepAlive)
 
 // === Atom-key helpers (shared with diff atoms) ===
 export const pullRequestRevisionAtomKey = (pullRequest: PullRequestItem) => `${pullRequest.repository}\u0000${pullRequest.number}\u0000${pullRequest.headRefOid}`
@@ -144,11 +145,21 @@ export const listOpenPullRequestPageAtom = githubRuntime.fn<ItemListInput<"pullR
 // No `keepAlive`: family-created atoms self-clean via WeakRef +
 // FinalizationRegistry. Keeping them alive defeats GC and accumulates one
 // entry per repository the user has ever viewed.
+export const readCachedRepositoryDetailsAtom = githubRuntime.fn<string>()((repository) => CacheService.use((cache) => cache.readRepositoryDetails(repository)))
+export const writeRepositoryDetailsAtom = githubRuntime.fn<RepositoryDetails>()((details) => CacheService.use((cache) => cache.writeRepositoryDetails(details)))
+export const fetchRepositoryDetailsAtom = githubRuntime.fn<string>()((repository) => GitHubService.use((github) => github.getRepositoryDetails(repository)))
+
 export const repositoryDetailsAtom = Atom.family((repository: string) =>
 	githubRuntime.atom(
-		GitHubService.use((github) =>
-			repository === "" ? Effect.succeed(null) : github.getRepositoryDetails(repository).pipe(Effect.map((details) => details as RepositoryDetails | null)),
-		),
+		Effect.gen(function* () {
+			if (repository === "") return null
+			const cache = yield* CacheService
+			const cached = yield* cache.readRepositoryDetails(repository).pipe(Effect.catch(() => Effect.succeed(null)))
+			return yield* GitHubService.use((github) => github.getRepositoryDetails(repository)).pipe(
+				Effect.tap((details) => cache.writeRepositoryDetails(details).pipe(Effect.catch(() => Effect.void))),
+				Effect.catch((error) => (cached ? Effect.succeed(cached) : Effect.fail(error))),
+			)
+		}),
 	),
 )
 

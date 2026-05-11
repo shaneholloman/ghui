@@ -363,7 +363,20 @@ const checkColor = (check: CheckItem) => CHECK_DISPLAY[checkKind(check)].color
 
 const ChecksSection = ({ checks, contentWidth }: { checks: readonly CheckItem[]; contentWidth: number }) => {
 	const unique = deduplicateChecks(checks)
-	if (unique.length === 0) return null
+	if (unique.length === 0) {
+		return (
+			<box flexDirection="column">
+				<TextLine>
+					<span fg={colors.count} attributes={TextAttributes.BOLD}>
+						Checks
+					</span>
+				</TextLine>
+				<TextLine>
+					<span fg={colors.muted}>{fitCell("No checks reported", contentWidth)}</span>
+				</TextLine>
+			</box>
+		)
+	}
 
 	const columns = 2
 	const colWidth = Math.floor((contentWidth - 1) / columns)
@@ -420,8 +433,8 @@ const computeDetailHeaderLayout = (pullRequest: PullRequestItem, paneWidth: numb
 	const titleLines = wrapText(pullRequest.title, Math.max(1, paneWidth - 2)).length
 	const labelRows = pullRequest.detailLoaded ? labelChipRows(pullRequest.labels, Math.max(1, paneWidth - 2)) : []
 	const uniqueChecks = deduplicateChecks(pullRequest.checks)
-	const hasChecks = showChecks && uniqueChecks.length > 0
-	const checkRowsCount = Math.ceil(uniqueChecks.length / 2)
+	const hasChecks = showChecks && (uniqueChecks.length > 0 || pullRequest.detailLoaded)
+	const checkRowsCount = uniqueChecks.length > 0 ? Math.ceil(uniqueChecks.length / 2) : 1
 	const checksHeight = hasChecks ? checkRowsCount + 1 : 0
 	const bottomDividerHeight = hasChecks ? 1 : 0
 	const headerDividerRow = titleLines + 2 + labelRows.length

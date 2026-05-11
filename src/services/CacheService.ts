@@ -5,7 +5,16 @@ import { Context, Effect, Layer, Schema } from "effect"
 import * as Migrator from "effect/unstable/sql/Migrator"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import type { SqlError } from "effect/unstable/sql/SqlError"
-import { checkConclusions, checkRollupStatuses, checkRunStatuses, pullRequestQueueModes, pullRequestStates, reviewStatuses, type PullRequestItem } from "../domain.js"
+import {
+	checkConclusions,
+	checkRollupStatuses,
+	checkRunStatuses,
+	pullRequestQueueModes,
+	pullRequestStates,
+	reviewStatuses,
+	type PullRequestItem,
+	type RepositoryDetails,
+} from "../domain.js"
 import { mergeCachedDetails } from "../pullRequestCache.js"
 import type { PullRequestLoad } from "../pullRequestLoad.js"
 import { type PullRequestView, viewCacheKey } from "../pullRequestViews.js"
@@ -69,7 +78,22 @@ const CachedPullRequestViewSchema = Schema.Union([
 	Schema.Struct({ _tag: Schema.tag("Repository"), repository: Schema.String }),
 ])
 
+const CachedRepositoryDetailsSchema = Schema.Struct({
+	repository: Schema.String,
+	description: Schema.NullOr(Schema.String),
+	url: Schema.String,
+	stargazerCount: Schema.Number,
+	forkCount: Schema.Number,
+	openIssueCount: Schema.Number,
+	openPullRequestCount: Schema.Number,
+	defaultBranch: Schema.NullOr(Schema.String),
+	pushedAt: Schema.NullOr(Schema.String),
+	isArchived: Schema.Boolean,
+	isPrivate: Schema.Boolean,
+})
+
 type CachedPullRequestItem = Schema.Schema.Type<typeof CachedPullRequestItemSchema>
+type CachedRepositoryDetails = Schema.Schema.Type<typeof CachedRepositoryDetailsSchema>
 
 interface PullRequestRow {
 	readonly pr_key: string
@@ -86,6 +110,10 @@ interface QueueSnapshotRow {
 
 interface WorkspacePreferencesRow {
 	readonly preferences_json: string
+}
+
+interface RepositoryDetailsRow {
+	readonly data_json: string
 }
 
 export const pullRequestCacheKey = ({ repository, number }: PullRequestCacheKey) => `${repository}#${number}`
@@ -164,6 +192,17 @@ const encodePullRequest = (pullRequest: PullRequestItem): CachedPullRequestItem 
 	url: pullRequest.url,
 })
 
+const repositoryDetailsToDomain = (cached: CachedRepositoryDetails): RepositoryDetails | null => {
+	const pushedAt = cached.pushedAt === null ? null : parseDate(cached.pushedAt)
+	if (cached.pushedAt !== null && !pushedAt) return null
+	return { ...cached, pushedAt }
+}
+
+const encodeRepositoryDetails = (details: RepositoryDetails): CachedRepositoryDetails => ({
+	...details,
+	pushedAt: details.pushedAt?.toISOString() ?? null,
+})
+
 const decodePullRequestJson = (json: string): Effect.Effect<PullRequestItem, CacheError> =>
 	Effect.gen(function* () {
 		const value = yield* parseJson("decodePullRequest", json)
@@ -190,6 +229,15 @@ const decodeWorkspacePreferencesJson = (json: string): Effect.Effect<WorkspacePr
 	Effect.gen(function* () {
 		const value = yield* parseJson("decodeWorkspacePreferences", json)
 		return yield* decodeCached("decodeWorkspacePreferences", WorkspacePreferences, value)
+	})
+
+const decodeRepositoryDetailsJson = (json: string): Effect.Effect<RepositoryDetails, CacheError> =>
+	Effect.gen(function* () {
+		const value = yield* parseJson("decodeRepositoryDetails", json)
+		const cached = yield* decodeCached("decodeRepositoryDetails", CachedRepositoryDetailsSchema, value)
+		const details = repositoryDetailsToDomain(cached)
+		if (!details) return yield* new CacheError({ operation: "decodeRepositoryDetails", cause: "invalid cached date" })
+		return details
 	})
 
 const dateFromCache = (operation: string, value: string) => {
@@ -237,6 +285,14 @@ const cacheMigrations = {
 		yield* sql`CREATE TABLE IF NOT EXISTS workspace_preferences (
 			viewer TEXT PRIMARY KEY,
 			preferences_json TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`
+	}),
+	"004_repository_details": Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient
+		yield* sql`CREATE TABLE IF NOT EXISTS repository_details (
+			repository TEXT PRIMARY KEY,
+			data_json TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`
 	}),
@@ -409,11 +465,31 @@ const liveCacheService = (sql: SqlClient.SqlClient) => {
 		yield* upsertPullRequestSql(sql, pullRequest).pipe(Effect.catch(() => Effect.void))
 	})
 
+	const readRepositoryDetails = (repository: string): Effect.Effect<RepositoryDetails | null, CacheError> =>
+		Effect.gen(function* () {
+			const rows = yield* sql<RepositoryDetailsRow>`SELECT data_json FROM repository_details WHERE repository = ${repository} LIMIT 1`
+			const row = rows[0]
+			if (!row) return null
+			return yield* decodeRepositoryDetailsJson(row.data_json)
+		}).pipe(Effect.mapError((cause) => toCacheError("readRepositoryDetails", cause)))
+
+	const writeRepositoryDetails = Effect.fn("CacheService.writeRepositoryDetails")(function* (details: RepositoryDetails) {
+		const row = {
+			repository: details.repository,
+			data_json: JSON.stringify(encodeRepositoryDetails(details)),
+			updated_at: new Date().toISOString(),
+		}
+		yield* sql`INSERT INTO repository_details ${sql.insert(row)}
+			ON CONFLICT(repository) DO UPDATE SET
+				data_json = excluded.data_json,
+				updated_at = excluded.updated_at`.pipe(Effect.catch(() => Effect.void))
+	})
+
 	const prune = Effect.fn("CacheService.prune")(function* () {
 		yield* pruneSql(sql)
 	})
 
-	return { readQueue, writeQueue, readPullRequest, upsertPullRequest, readWorkspacePreferences, writeWorkspacePreferences, prune }
+	return { readQueue, writeQueue, readPullRequest, upsertPullRequest, readRepositoryDetails, writeRepositoryDetails, readWorkspacePreferences, writeWorkspacePreferences, prune }
 }
 
 export class CacheService extends Context.Service<
@@ -423,6 +499,8 @@ export class CacheService extends Context.Service<
 		readonly writeQueue: (viewer: string, load: PullRequestLoad) => Effect.Effect<void>
 		readonly readPullRequest: (key: PullRequestCacheKey) => Effect.Effect<PullRequestItem | null, CacheError>
 		readonly upsertPullRequest: (pullRequest: PullRequestItem) => Effect.Effect<void>
+		readonly readRepositoryDetails: (repository: string) => Effect.Effect<RepositoryDetails | null, CacheError>
+		readonly writeRepositoryDetails: (details: RepositoryDetails) => Effect.Effect<void>
 		readonly readWorkspacePreferences: (viewer: ViewerId) => Effect.Effect<WorkspacePreferences | null, CacheError>
 		readonly writeWorkspacePreferences: (preferences: WorkspacePreferencesInput | WorkspacePreferences) => Effect.Effect<void>
 		readonly prune: () => Effect.Effect<void>
@@ -435,6 +513,8 @@ export class CacheService extends Context.Service<
 			writeQueue: () => Effect.void,
 			readPullRequest: () => Effect.succeed(null),
 			upsertPullRequest: () => Effect.void,
+			readRepositoryDetails: () => Effect.succeed(null),
+			writeRepositoryDetails: () => Effect.void,
 			readWorkspacePreferences: () => Effect.succeed(null),
 			writeWorkspacePreferences: () => Effect.void,
 			prune: () => Effect.void,

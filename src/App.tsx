@@ -70,7 +70,6 @@ import {
 	pullRequestRevisionAtomKey,
 	pullRequestsAtom,
 	pullRequestStatusAtom,
-	repositoryDetailsAtom,
 	queueLoadCacheAtom,
 	queueSelectionAtom,
 	recentlyCompletedPullRequestsAtom,
@@ -87,6 +86,7 @@ import { useIdleRefresh } from "./ui/pullRequests/useIdleRefresh.js"
 import { useLoadMore } from "./ui/pullRequests/useLoadMore.js"
 import { useFilterModal } from "./ui/filter/useFilterModal.js"
 import { useRefreshCompletionToast } from "./ui/pullRequests/useRefreshCompletionToast.js"
+import { useRepositoryDetails } from "./ui/pullRequests/useRepositoryDetails.js"
 import { copyToClipboardAtom, openInBrowserAtom, openUrlAtom, submitPullRequestReviewAtom } from "./services/systemAtoms.js"
 import {
 	diffCommentAnchorIndexAtom,
@@ -601,8 +601,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		[activeWorkspaceSurface, allRepositoryItems, visibleFilterText],
 	)
 	const selectedRepositoryItem = repositoryItems[Math.max(0, Math.min(selectedRepositoryIndex, repositoryItems.length - 1))] ?? null
-	const selectedRepositoryDetailsResult = useAtomValue(repositoryDetailsAtom(selectedRepositoryItem?.repository ?? ""))
-	const selectedRepositoryDetails = selectedRepositoryItem && AsyncResult.isSuccess(selectedRepositoryDetailsResult) ? (selectedRepositoryDetailsResult.value ?? null) : null
+	const selectedRepositoryDetails = useRepositoryDetails(selectedRepositoryItem?.repository ?? null)
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
 	const activeViews = activePullRequestViews(activeView)
