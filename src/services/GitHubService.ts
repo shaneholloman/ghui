@@ -2,7 +2,6 @@ import { Context, Effect, Layer, Schema, Stream } from "effect"
 import * as Option from "effect/Option"
 import { config } from "../config.js"
 import {
-	DiffCommentSide,
 	type IssueItem,
 	type CheckItem,
 	type CreatePullRequestCommentInput,
@@ -20,349 +19,37 @@ import {
 import { type ItemListInput, type ItemPage, searchQualifier } from "../item.js"
 import { mergeActionCliArgs } from "../mergeActions.js"
 import { CommandError, CommandRunner, commandTelemetryAttributes, type JsonParseError } from "./CommandRunner.js"
+import {
+	CommentsResponseSchema,
+	issueSearchQuery,
+	MergeInfoResponseSchema,
+	type PullRequestConnection,
+	PullRequestAdminMergeResponseSchema,
+	PullRequestCommentSchema,
+	type RawCheckContext,
+	RawCheckContextSchema,
+	type RawIssueSearchNode,
+	type RawPullRequestComment,
+	type RawPullRequestFile,
+	type RawPullRequestNode,
+	type RawPullRequestSummaryNode,
+	pullRequestDetailQuery,
+	PullRequestDetailResponseSchema,
+	PullRequestFilesResponseSchema,
+	pullRequestSummarySearchQuery,
+	RawIssueSearchNodeSchema,
+	RawPullRequestSummaryNodeSchema,
+	RepoLabelsResponseSchema,
+	RepositoryDetailsResponseSchema,
+	RepositoryMergeMethodsResponseSchema,
+	RepositoryPullRequestsResponseSchema,
+	repositoryDetailsQuery,
+	repositoryPullRequestsQuery,
+	SearchResponseSchema,
+	type SearchResponse,
+	ViewerSchema,
+} from "./githubSchemas.js"
 export { isGitHubRateLimitError } from "./githubRateLimit.js"
-
-const NullableString = Schema.NullOr(Schema.String)
-const OptionalNullableString = Schema.optionalKey(NullableString)
-const OptionalNullableNumber = Schema.optionalKey(Schema.NullOr(Schema.Number))
-
-const RawCheckContextSchema = Schema.Union([
-	Schema.Struct({
-		__typename: Schema.tag("CheckRun"),
-		name: OptionalNullableString,
-		status: OptionalNullableString,
-		conclusion: OptionalNullableString,
-	}),
-	Schema.Struct({
-		__typename: Schema.tag("StatusContext"),
-		context: OptionalNullableString,
-		state: OptionalNullableString,
-	}),
-]).pipe(Schema.toTaggedUnion("__typename"))
-
-const RawAuthorSchema = Schema.Struct({ login: Schema.String })
-const RawRepositorySchema = Schema.Struct({
-	nameWithOwner: Schema.String,
-	defaultBranchRef: Schema.optionalKey(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
-})
-const RawLabelSchema = Schema.Struct({
-	name: Schema.String,
-	color: OptionalNullableString,
-})
-
-// Fields every GraphQL search-node ("... on PullRequest", "... on Issue") shares.
-// PR-summary, PR-detail, and Issue-search all spread these.
-const RawItemSearchCommonFields = {
-	number: Schema.Number,
-	title: Schema.String,
-	state: Schema.String,
-	createdAt: Schema.String,
-	closedAt: OptionalNullableString,
-	url: Schema.String,
-	author: RawAuthorSchema,
-	repository: RawRepositorySchema,
-} as const
-
-// GraphQL `search(type: ISSUE) { ... on Issue { ... } }` shape.
-const RawIssueSearchNodeSchema = Schema.Struct({
-	...RawItemSearchCommonFields,
-	updatedAt: Schema.String,
-	body: Schema.String,
-	labels: Schema.Struct({ nodes: Schema.Array(RawLabelSchema) }),
-	comments: Schema.Struct({ totalCount: Schema.Number }),
-})
-
-const RawStatusCheckRollupSchema = Schema.Struct({
-	contexts: Schema.Struct({ nodes: Schema.Array(RawCheckContextSchema) }),
-})
-
-const RawPullRequestSummaryFields = {
-	...RawItemSearchCommonFields,
-	isDraft: Schema.Boolean,
-	reviewDecision: NullableString,
-	autoMergeRequest: Schema.NullOr(Schema.Unknown),
-	merged: Schema.Boolean,
-	headRefOid: Schema.String,
-	headRefName: Schema.String,
-	baseRefName: Schema.String,
-} as const
-
-const RawPullRequestSummaryNodeSchema = Schema.Struct({
-	...RawPullRequestSummaryFields,
-	statusCheckRollup: Schema.optionalKey(Schema.NullOr(RawStatusCheckRollupSchema)),
-})
-
-const RawPullRequestNodeSchema = Schema.Struct({
-	...RawPullRequestSummaryFields,
-	body: Schema.String,
-	labels: Schema.Struct({ nodes: Schema.Array(RawLabelSchema) }),
-	additions: Schema.Number,
-	deletions: Schema.Number,
-	changedFiles: Schema.Number,
-	statusCheckRollup: Schema.optionalKey(Schema.NullOr(RawStatusCheckRollupSchema)),
-})
-
-const PullRequestDetailResponseSchema = Schema.Struct({
-	data: Schema.Struct({
-		repository: Schema.NullOr(
-			Schema.Struct({
-				pullRequest: Schema.NullOr(RawPullRequestNodeSchema),
-			}),
-		),
-	}),
-})
-
-const PageInfoSchema = Schema.Struct({
-	hasNextPage: Schema.Boolean,
-	endCursor: NullableString,
-})
-
-const SearchResponseSchema = <Item extends Schema.Top>(item: Item) =>
-	Schema.Struct({
-		data: Schema.Struct({
-			search: Schema.Struct({
-				nodes: Schema.Array(Schema.NullOr(item)),
-				pageInfo: PageInfoSchema,
-			}),
-		}),
-	})
-
-const RepositoryPullRequestsResponseSchema = Schema.Struct({
-	data: Schema.Struct({
-		repository: Schema.NullOr(
-			Schema.Struct({
-				pullRequests: Schema.Struct({
-					nodes: Schema.Array(Schema.NullOr(RawPullRequestSummaryNodeSchema)),
-					pageInfo: PageInfoSchema,
-				}),
-			}),
-		),
-	}),
-})
-
-const ViewerSchema = Schema.Struct({ login: Schema.String })
-
-const RepositoryMergeMethodsResponseSchema = Schema.Struct({
-	squashMergeAllowed: Schema.Boolean,
-	mergeCommitAllowed: Schema.Boolean,
-	rebaseMergeAllowed: Schema.Boolean,
-})
-
-const MergeInfoResponseSchema = Schema.Struct({
-	number: Schema.Number,
-	title: Schema.String,
-	state: Schema.String,
-	isDraft: Schema.Boolean,
-	mergeable: Schema.String,
-	reviewDecision: NullableString,
-	autoMergeRequest: Schema.NullOr(Schema.Unknown),
-	statusCheckRollup: Schema.Array(RawCheckContextSchema),
-})
-
-const PullRequestAdminMergeResponseSchema = Schema.Struct({
-	data: Schema.Struct({
-		repository: Schema.Struct({
-			pullRequest: Schema.NullOr(Schema.Struct({ viewerCanMergeAsAdmin: Schema.Boolean })),
-		}),
-	}),
-})
-
-const PullRequestCommentSchema = Schema.Struct({
-	id: Schema.optionalKey(Schema.NullOr(Schema.Union([Schema.Number, Schema.String]))),
-	node_id: OptionalNullableString,
-	body: OptionalNullableString,
-	html_url: OptionalNullableString,
-	url: OptionalNullableString,
-	created_at: OptionalNullableString,
-	user: Schema.optionalKey(
-		Schema.NullOr(
-			Schema.Struct({
-				login: OptionalNullableString,
-			}),
-		),
-	),
-	path: OptionalNullableString,
-	line: OptionalNullableNumber,
-	original_line: OptionalNullableNumber,
-	side: Schema.optionalKey(Schema.NullOr(DiffCommentSide)),
-	in_reply_to_id: Schema.optionalKey(Schema.NullOr(Schema.Union([Schema.Number, Schema.String]))),
-})
-
-const PullRequestFileSchema = Schema.Struct({
-	filename: Schema.String,
-	previous_filename: OptionalNullableString,
-	status: OptionalNullableString,
-	patch: OptionalNullableString,
-})
-
-const CommentsResponseSchema = Schema.Union([Schema.Array(PullRequestCommentSchema), Schema.Array(Schema.Array(PullRequestCommentSchema))])
-
-const PullRequestFilesResponseSchema = Schema.Union([Schema.Array(PullRequestFileSchema), Schema.Array(Schema.Array(PullRequestFileSchema))])
-
-const RepoLabelsResponseSchema = Schema.Array(
-	Schema.Struct({
-		name: Schema.String,
-		color: Schema.String,
-	}),
-)
-type RawPullRequestSummaryNode = Schema.Schema.Type<typeof RawPullRequestSummaryNodeSchema>
-type RawPullRequestNode = Schema.Schema.Type<typeof RawPullRequestNodeSchema>
-type RawCheckContext = Schema.Schema.Type<typeof RawCheckContextSchema>
-type RawPullRequestComment = Schema.Schema.Type<typeof PullRequestCommentSchema>
-type RawPullRequestFile = Schema.Schema.Type<typeof PullRequestFileSchema>
-type RawIssueSearchNode = Schema.Schema.Type<typeof RawIssueSearchNodeSchema>
-
-type SearchResponse<Item> = {
-	readonly data: {
-		readonly search: {
-			readonly nodes: readonly (Item | null)[]
-			readonly pageInfo: {
-				readonly hasNextPage: boolean
-				readonly endCursor: string | null
-			}
-		}
-	}
-}
-
-type PullRequestConnection<Item> = {
-	readonly nodes: readonly (Item | null)[]
-	readonly pageInfo: {
-		readonly hasNextPage: boolean
-		readonly endCursor: string | null
-	}
-}
-
-const STATUS_CHECK_FRAGMENT = `
-        statusCheckRollup {
-          contexts(first: 100) {
-            nodes {
-              __typename
-              ... on CheckRun { name status conclusion }
-              ... on StatusContext { context state }
-            }
-          }
-        }`
-
-const SUMMARY_FIELDS_FRAGMENT = `
-        number
-        title
-        isDraft
-        reviewDecision
-        autoMergeRequest { enabledAt }
-        state
-        merged
-        createdAt
-        closedAt
-        url
-        author { login }
-        headRefOid
-        headRefName
-        baseRefName
-		repository { nameWithOwner defaultBranchRef { name } }`
-
-// Compose detail from summary instead of duplicating — keeps the two fragments
-// in lock-step when fields are renamed.
-const DETAIL_FIELDS_FRAGMENT = `${SUMMARY_FIELDS_FRAGMENT}
-		body
-		additions
-		deletions
-		changedFiles
-		labels(first: 20) { nodes { name color } }${STATUS_CHECK_FRAGMENT}`
-
-const pullRequestDetailQuery = `
-query PullRequest($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {${DETAIL_FIELDS_FRAGMENT}
-    }
-  }
-}
-`
-
-const pullRequestSummarySearchQuery = `
-query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
-  search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
-    nodes {
-      ... on PullRequest {${SUMMARY_FIELDS_FRAGMENT}
-      }
-    }
-    pageInfo { hasNextPage endCursor }
-  }
-}
-`
-
-const ISSUE_FIELDS_FRAGMENT = `
-        number
-        title
-        body
-        state
-        createdAt
-        updatedAt
-        closedAt
-        url
-        author { login }
-        repository { nameWithOwner defaultBranchRef { name } }
-        labels(first: 20) { nodes { name color } }
-        comments(first: 0) { totalCount }`
-
-const issueSearchQuery = `
-query Issues($searchQuery: String!, $first: Int!, $after: String) {
-  search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
-    nodes {
-      ... on Issue {${ISSUE_FIELDS_FRAGMENT}
-      }
-    }
-    pageInfo { hasNextPage endCursor }
-  }
-}
-`
-
-const repositoryPullRequestsQuery = `
-query RepositoryPullRequests($owner: String!, $name: String!, $first: Int!, $after: String) {
-  repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
-      nodes {${SUMMARY_FIELDS_FRAGMENT}
-      }
-      pageInfo { hasNextPage endCursor }
-    }
-  }
-}
-`
-
-const repositoryDetailsQuery = `
-query RepositoryDetails($owner: String!, $name: String!) {
-  repository(owner: $owner, name: $name) {
-    description
-    url
-    stargazerCount
-    forkCount
-    isArchived
-    isPrivate
-    pushedAt
-    defaultBranchRef { name }
-    openIssues: issues(states: OPEN) { totalCount }
-    openPRs: pullRequests(states: OPEN) { totalCount }
-  }
-}
-`
-
-const RepositoryDetailsResponseSchema = Schema.Struct({
-	data: Schema.Struct({
-		repository: Schema.NullOr(
-			Schema.Struct({
-				description: NullableString,
-				url: Schema.String,
-				stargazerCount: Schema.Number,
-				forkCount: Schema.Number,
-				isArchived: Schema.Boolean,
-				isPrivate: Schema.Boolean,
-				pushedAt: NullableString,
-				defaultBranchRef: Schema.NullOr(Schema.Struct({ name: Schema.String })),
-				openIssues: Schema.Struct({ totalCount: Schema.Number }),
-				openPRs: Schema.Struct({ totalCount: Schema.Number }),
-			}),
-		),
-	}),
-})
 
 const normalizeDate = (value: string | null | undefined) => {
 	if (!value || value.startsWith("0001-01-01")) return null

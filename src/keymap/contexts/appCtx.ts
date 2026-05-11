@@ -1,22 +1,49 @@
 import type { AppCtx } from "../all.ts"
 import { buildChangedFilesModalCtx, type BuildChangedFilesModalCtxInput } from "./changedFilesModalCtx.ts"
-import { buildCloseModalCtx, type BuildCloseModalCtxInput } from "./closeModalCtx.ts"
 import { buildCommandPaletteCtx, type BuildCommandPaletteCtxInput } from "./commandPaletteCtx.ts"
 import { buildCommentModalCtx, type BuildCommentModalCtxInput } from "./commentModalCtx.ts"
 import { buildCommentsViewCtx, type BuildCommentsViewCtxInput } from "./commentsViewCtx.ts"
 import { buildCommentThreadModalCtx, type BuildCommentThreadModalCtxInput } from "./commentThreadModalCtx.ts"
-import { buildDeleteCommentModalCtx, type BuildDeleteCommentModalCtxInput } from "./deleteCommentModalCtx.ts"
 import { buildDetailViewCtx, type BuildDetailViewCtxInput } from "./detailViewCtx.ts"
 import { buildDiffViewCtx, type BuildDiffViewCtxInput } from "./diffViewCtx.ts"
-import { buildFilterModalCtx, type BuildFilterModalCtxInput } from "./filterModalCtx.ts"
 import { buildFilterModeCtx, type BuildFilterModeCtxInput } from "./filterModeCtx.ts"
-import { buildLabelModalCtx, type BuildLabelModalCtxInput } from "./labelModalCtx.ts"
 import { buildListNavCtx, type BuildListNavCtxInput } from "./listNavCtx.ts"
 import { buildMergeModalCtx, type BuildMergeModalCtxInput } from "./mergeModalCtx.ts"
-import { buildOpenRepositoryModalCtx, type BuildOpenRepositoryModalCtxInput } from "./openRepositoryModalCtx.ts"
 import { buildPullRequestStateModalCtx, type BuildPullRequestStateModalCtxInput } from "./pullRequestStateModalCtx.ts"
 import { buildSubmitReviewModalCtx, type BuildSubmitReviewModalCtxInput } from "./submitReviewModalCtx.ts"
 import { buildThemeModalCtx, type BuildThemeModalCtxInput } from "./themeModalCtx.ts"
+
+// Five modal contexts are pure rename adapters from App's local handler names
+// to the keymap's expected method names. They live inline here rather than in
+// their own files because the mapping is one line each and putting them in
+// dedicated modules just added imports without adding clarity.
+
+export interface BuildCloseModalCtxInput {
+	readonly closeActiveModal: () => void
+	readonly confirmClosePullRequest: () => void
+}
+
+export interface BuildDeleteCommentModalCtxInput {
+	readonly closeActiveModal: () => void
+	readonly confirmDeleteComment: () => void
+}
+
+export interface BuildFilterModalCtxInput {
+	readonly closeActiveModal: () => void
+	readonly applySelected: () => void
+	readonly moveSelection: (delta: -1 | 1) => void
+}
+
+export interface BuildLabelModalCtxInput {
+	readonly closeActiveModal: () => void
+	readonly toggleLabelAtIndex: () => void
+	readonly moveLabelSelection: (delta: -1 | 1) => void
+}
+
+export interface BuildOpenRepositoryModalCtxInput {
+	readonly closeActiveModal: () => void
+	readonly openRepositoryFromInput: () => void
+}
 
 export interface BuildAppCtxFlags {
 	readonly closeModalActive: boolean
@@ -65,18 +92,26 @@ export interface BuildAppCtxInput {
 
 export const buildAppCtx = (input: BuildAppCtxInput): AppCtx => ({
 	...input.flags,
-	closeModal: buildCloseModalCtx(input.closeModal),
+	closeModal: { closeModal: input.closeModal.closeActiveModal, confirmClose: input.closeModal.confirmClosePullRequest },
 	pullRequestStateModal: buildPullRequestStateModalCtx(input.pullRequestStateModal),
 	mergeModal: buildMergeModalCtx(input.mergeModal),
 	commentThreadModal: buildCommentThreadModalCtx(input.commentThreadModal),
 	changedFilesModal: buildChangedFilesModalCtx(input.changedFilesModal),
-	filterModal: buildFilterModalCtx(input.filterModal),
+	filterModal: {
+		closeModal: input.filterModal.closeActiveModal,
+		applySelected: input.filterModal.applySelected,
+		moveSelection: input.filterModal.moveSelection,
+	},
 	submitReviewModal: buildSubmitReviewModalCtx(input.submitReviewModal),
-	labelModal: buildLabelModalCtx(input.labelModal),
+	labelModal: {
+		closeModal: input.labelModal.closeActiveModal,
+		toggleSelected: input.labelModal.toggleLabelAtIndex,
+		moveSelection: input.labelModal.moveLabelSelection,
+	},
 	themeModal: buildThemeModalCtx(input.themeModal),
-	openRepositoryModal: buildOpenRepositoryModalCtx(input.openRepositoryModal),
+	openRepositoryModal: { closeModal: input.openRepositoryModal.closeActiveModal, openFromInput: input.openRepositoryModal.openRepositoryFromInput },
 	commentModal: buildCommentModalCtx(input.commentModal),
-	deleteCommentModal: buildDeleteCommentModalCtx(input.deleteCommentModal),
+	deleteCommentModal: { closeModal: input.deleteCommentModal.closeActiveModal, confirmDelete: input.deleteCommentModal.confirmDeleteComment },
 	commandPalette: buildCommandPaletteCtx(input.commandPalette),
 	filterModeCtx: buildFilterModeCtx(input.filterModeCtx),
 	diff: buildDiffViewCtx(input.diff),
