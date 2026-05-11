@@ -46,11 +46,12 @@ const CHECK_ICON: Record<PullRequestItem["checkStatus"], string> = {
 	passing: "✓",
 	failing: "×",
 	pending: "◐",
-	none: "",
+	none: "−",
 }
 
-// Distinct icon while detail hydration is still in flight. Blank would
-// conflate "we haven't fetched checks yet" with "this PR has no CI configured."
+// Distinct icon while detail hydration is still in flight. We use a dot for
+// "checks unknown" and a dash for "no checks configured" so the column never
+// looks like layout breakage — every state has a glyph.
 const CHECK_UNHYDRATED_ICON = "·"
 
 export const reviewIcon = (pullRequest: PullRequestItem) => {

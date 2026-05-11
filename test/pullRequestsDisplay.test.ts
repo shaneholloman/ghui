@@ -67,10 +67,21 @@ describe("pullRequestRowDisplay", () => {
 		["passing", "✓"],
 		["failing", "×"],
 		["pending", "◐"],
-		["none", ""],
-	] as const)("check status %s → %s", (checkStatus, icon) => {
+		["none", "−"],
+	] as const)("check status %s → %s once detail loaded", (checkStatus, icon) => {
 		const display = pullRequestRowDisplay({ ...open, checkStatus }, false)
 		expect(display.checkText).toBe(icon)
+	})
+
+	test("open PR without detail hydrated shows the unknown-state dot", () => {
+		const display = pullRequestRowDisplay({ ...open, detailLoaded: false, checkStatus: "none" }, false)
+		expect(display.checkText).toBe("·")
+		expect(display.checkFg).toBe(colors.muted)
+	})
+
+	test("merged PR ignores detailLoaded — always passing icon", () => {
+		const display = pullRequestRowDisplay({ ...open, state: "merged", detailLoaded: false }, false)
+		expect(display.checkText).toBe("✓")
 	})
 })
 
