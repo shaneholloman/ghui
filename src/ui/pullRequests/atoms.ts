@@ -15,7 +15,7 @@ import type {
 import type { ItemListInput } from "../../item.js"
 import { mergeCachedDetails } from "../../pullRequestCache.js"
 import type { PullRequestLoad } from "../../pullRequestLoad.js"
-import { initialPullRequestView, type PullRequestView, viewCacheKey, viewToListInput } from "../../pullRequestViews.js"
+import { activePullRequestViews, initialPullRequestView, type PullRequestView, viewCacheKey, viewRepository, viewToListInput } from "../../pullRequestViews.js"
 import { CacheService, type PullRequestCacheKey } from "../../services/CacheService.js"
 import { isCommandTimeoutError } from "../../services/CommandRunner.js"
 import { GitHubService, isGitHubRateLimitError } from "../../services/GitHubService.js"
@@ -266,6 +266,14 @@ export const pullRequestStatusAtom = Atom.make((get): LoadStatus => {
 	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
 	if (AsyncResult.isFailure(result) && load === null) return "error"
 	return "ready"
+})
+
+export const selectedRepositoryAtom = Atom.make((get) => viewRepository(get(activeViewAtom)))
+export const activeViewsAtom = Atom.make((get) => activePullRequestViews(get(activeViewAtom)))
+export const loadedPullRequestCountAtom = Atom.make((get) => get(pullRequestLoadAtom)?.data.length ?? 0)
+export const hasMorePullRequestsAtom = Atom.make((get) => {
+	const load = get(pullRequestLoadAtom)
+	return Boolean(load?.hasNextPage && load.data.length < config.prFetchLimit)
 })
 
 export const displayedPullRequestsAtom = Atom.make((get) => {

@@ -44,3 +44,5 @@ export const selectedDiffStateAtom = Atom.make((get) => {
 	if (!key) return undefined
 	return get(pullRequestDiffCacheAtom)[key]
 })
+
+export const diffReadyAtom = Atom.make((get) => get(selectedDiffStateAtom)?._tag === "Ready")
