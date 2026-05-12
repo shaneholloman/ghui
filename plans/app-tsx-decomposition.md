@@ -135,4 +135,10 @@ Exit criteria: each capability is one file ≤200 LOC with a focused test file.
 
 ## Status
 
-Not started — plan written 2026-05-12. Begin with phase 0 audit; phase 1 should land before any surface extraction.
+In progress — plan written 2026-05-12.
+
+- Phase 0a/b/c shipped 2026-05-12:
+  - 0a: derived atoms `selectedRepositoryAtom`, `activeViewsAtom`, `loadedPullRequestCountAtom`, `hasMorePullRequestsAtom`, `diffReadyAtom`. App.tsx wires through `useAtomValue` (602b883, 22a8884).
+  - 0b: `loadingMoreKeyAtom` + derived `isLoadingMorePullRequestsAtom`; `useLoadMore` now reads/writes through atoms instead of `useState` (523c4df).
+  - 0c: filter scoring → `src/ui/filter/scoring.ts`; diff-comment thread/range helpers → `src/ui/diff/comments.ts`. App.tsx drops ~90 LOC of inline helpers (56be4ef).
+- Phase 1 (command registry) next.
