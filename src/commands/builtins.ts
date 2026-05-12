@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import * as Atom from "effect/unstable/reactivity/Atom"
 import { BrowserOpener } from "../services/BrowserOpener.js"
 import { Clipboard } from "../services/Clipboard.js"
+import { GitHubService } from "../services/GitHubService.js"
 import { commentsViewActiveAtom } from "../ui/comments/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "../ui/detail/atoms.js"
 import { diffCommentRangeStartIndexAtom, diffFullViewAtom } from "../ui/diff/atoms.js"
@@ -9,9 +10,10 @@ import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "../ui/filter/a
 import { selectedIssueAtom } from "../ui/issues/atoms.js"
 import { selectedIssueIndexAtom } from "../ui/listSelection/atoms.js"
 import { activeModalAtom } from "../ui/modals/atoms.js"
-import { initialCommandPaletteState, initialOpenRepositoryModalState, Modal } from "../ui/modals/types.js"
+import { submitReviewOptions } from "../ui/modals/shared.js"
+import { initialCommandPaletteState, initialCommentModalState, initialOpenRepositoryModalState, Modal } from "../ui/modals/types.js"
 import { noticeAtom } from "../ui/notice/atoms.js"
-import { selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
+import { labelCacheAtom, selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
 import { workspaceSurfaceAtom, workspaceTabSurfacesAtom } from "../workspace/atoms.js"
 import { type WorkspaceSurface, workspaceSurfaceLabels, workspaceSurfaces } from "../workspaceSurfaces.js"
 import {
@@ -24,6 +26,7 @@ import {
 	noPullRequestReasonAtom,
 	noSelectedItemReasonAtom,
 	repositoryOpenSubtitleAtom,
+	selectedCommentSubjectAtom,
 	selectedIssueLabelAtom,
 	selectedItemLabelAtom,
 	selectedPullRequestLabelAtom,
@@ -216,6 +219,118 @@ export const globalCommands: readonly CommandDefinition[] = [
 					running: false,
 					error: null,
 				}),
+			)
+		}),
+	}),
+
+	// === Pull request state / review modals ===
+	defineCommand({
+		id: "pull.toggle-draft",
+		title: Atom.make((get) => (get(selectedPullRequestAtom)?.reviewStatus === "draft" ? "Mark ready for review" : "Convert to draft")),
+		scope: "Pull request",
+		subtitle: selectedPullRequestLabelAtom,
+		shortcut: "s",
+		disabledReason: noOpenPullRequestReasonAtom,
+		keywords: ["state", "ready"],
+		run: Effect.gen(function* () {
+			const pr = yield* Atom.get(selectedPullRequestAtom)
+			if (!pr || pr.state !== "open") return
+			const isDraft = pr.reviewStatus === "draft"
+			yield* Atom.set(
+				activeModalAtom,
+				Modal.PullRequestState({
+					repository: pr.repository,
+					number: pr.number,
+					title: pr.title,
+					url: pr.url,
+					isDraft,
+					selectedIsDraft: !isDraft,
+					running: false,
+					error: null,
+				}),
+			)
+		}),
+	}),
+	defineCommand({
+		id: "pull.submit-review",
+		title: "Review pull request",
+		scope: "Pull request",
+		subtitle: selectedPullRequestLabelAtom,
+		shortcut: "shift-r",
+		disabledReason: noOpenPullRequestReasonAtom,
+		keywords: ["review", "approve", "request changes", "comment"],
+		run: Effect.gen(function* () {
+			const pr = yield* Atom.get(selectedPullRequestAtom)
+			if (!pr || pr.state !== "open") return
+			const selectedIndex = Math.max(
+				0,
+				submitReviewOptions.findIndex((option) => option.event === "APPROVE"),
+			)
+			yield* Atom.set(
+				activeModalAtom,
+				Modal.SubmitReview({
+					repository: pr.repository,
+					number: pr.number,
+					focus: "action",
+					selectedIndex,
+					body: "",
+					cursor: 0,
+					running: false,
+					error: null,
+				}),
+			)
+		}),
+	}),
+	defineCommand({
+		id: "comments.new",
+		title: "New comment",
+		scope: "Comments",
+		subtitle: selectedItemLabelAtom,
+		shortcut: "a",
+		keywords: ["add", "post", "issue comment"],
+		disabledReason: noSelectedItemReasonAtom,
+		run: Effect.gen(function* () {
+			const subject = yield* Atom.get(selectedCommentSubjectAtom)
+			if (!subject) return
+			yield* Atom.set(activeModalAtom, Modal.Comment({ ...initialCommentModalState, target: { kind: "issue" } }))
+		}),
+	}),
+	defineCommand({
+		id: "pull.labels",
+		title: "Manage labels",
+		scope: "Labels",
+		subtitle: selectedItemLabelAtom,
+		shortcut: "l",
+		disabledReason: noSelectedItemReasonAtom,
+		run: Effect.gen(function* () {
+			const subject = yield* Atom.get(selectedCommentSubjectAtom)
+			if (!subject) return
+			const repository = subject.repository
+			const cache = yield* Atom.get(labelCacheAtom)
+			const cached = cache[repository]
+			if (cached) {
+				yield* Atom.set(activeModalAtom, Modal.Label({ repository, query: "", selectedIndex: 0, availableLabels: cached, loading: false }))
+				return
+			}
+			yield* Atom.set(activeModalAtom, Modal.Label({ repository, query: "", selectedIndex: 0, availableLabels: [], loading: true }))
+			yield* GitHubService.use((github) => github.listRepoLabels(repository)).pipe(
+				Effect.flatMap((labels) =>
+					Effect.gen(function* () {
+						const normalized = labels.map((label) => ({ name: label.name, color: label.color ?? null }))
+						yield* Atom.update(labelCacheAtom, (current) => ({ ...current, [repository]: normalized }))
+						yield* Atom.update(activeModalAtom, (current) =>
+							Modal.$is("Label")(current) && current.repository === repository ? Modal.Label({ ...current, availableLabels: normalized, loading: false }) : current,
+						)
+					}),
+				),
+				Effect.catch((error) =>
+					Effect.gen(function* () {
+						yield* Atom.update(activeModalAtom, (current) =>
+							Modal.$is("Label")(current) && current.repository === repository ? Modal.Label({ ...current, loading: false }) : current,
+						)
+						yield* flashErrorEffect(error)
+					}),
+				),
 			)
 		}),
 	}),

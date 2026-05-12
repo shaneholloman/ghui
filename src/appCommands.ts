@@ -1,6 +1,6 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
-import type { IssueItem, LoadStatus, PullRequestItem, PullRequestReviewEvent } from "./domain.js"
+import type { IssueItem, LoadStatus, PullRequestItem } from "./domain.js"
 import type { DiffView, DiffWhitespaceMode, DiffWrapMode } from "./ui/diff.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
 import type { WorkspaceSurface } from "./workspaceSurfaces.js"
@@ -13,7 +13,6 @@ interface AppCommandActions {
 	readonly openDiffView: () => void
 	readonly openCommentsView: () => void
 	readonly closeCommentsView: () => void
-	readonly openNewIssueCommentModal: () => void
 	readonly openReplyToSelectedComment: () => void
 	readonly openEditSelectedComment: () => void
 	readonly openDeleteSelectedComment: () => void
@@ -27,9 +26,6 @@ interface AppCommandActions {
 	readonly toggleDiffCommentRange: () => void
 	readonly moveDiffCommentThread: (delta: 1 | -1) => void
 	readonly openDiffCommentModal: () => void
-	readonly openSubmitReviewModal: (initialEvent?: PullRequestReviewEvent) => void
-	readonly openPullRequestStateModal: () => void
-	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
 	readonly quit: () => void
 }
@@ -169,16 +165,6 @@ export const buildAppCommands = ({
 			keywords: ["conversation", "discussion", "review"],
 			disabledReason: noSelectedItemReason,
 			run: actions.openCommentsView,
-		}),
-		defineCommand({
-			id: "comments.new",
-			title: "New comment",
-			scope: "Comments",
-			subtitle: selectedItemLabel,
-			shortcut: "a",
-			keywords: ["add", "post", "issue comment"],
-			disabledReason: noSelectedItemReason,
-			run: actions.openNewIssueCommentModal,
 		}),
 		defineCommand({
 			id: "comments.reply",
@@ -323,33 +309,6 @@ export const buildAppCommands = ({
 			disabledReason: selectedDiffLineReason,
 			keywords: ["review", "reply"],
 			run: actions.openDiffCommentModal,
-		}),
-		forSelected({
-			id: "pull.submit-review",
-			title: "Review pull request",
-			scope: "Pull request",
-			shortcut: "shift-r",
-			requireOpen: true,
-			keywords: ["review", "approve", "request changes", "comment"],
-			run: () => actions.openSubmitReviewModal("APPROVE"),
-		}),
-		forSelected({
-			id: "pull.toggle-draft",
-			title: selectedPullRequest?.reviewStatus === "draft" ? "Mark ready for review" : "Convert to draft",
-			scope: "Pull request",
-			shortcut: "s",
-			requireOpen: true,
-			keywords: ["state", "ready"],
-			run: actions.openPullRequestStateModal,
-		}),
-		defineCommand({
-			id: "pull.labels",
-			title: "Manage labels",
-			scope: "Labels",
-			subtitle: selectedItemLabel,
-			shortcut: "l",
-			disabledReason: noSelectedItemReason,
-			run: actions.openLabelModal,
 		}),
 		forSelected({
 			id: "pull.merge",

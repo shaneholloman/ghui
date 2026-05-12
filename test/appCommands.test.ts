@@ -123,28 +123,10 @@ describe("review UX commands", () => {
 		expect(commandById("diff.changed-files", { readyDiffFileCount: 0 }).disabledReason).toBe("No changed files loaded.")
 	})
 
-	test("submit-review command is available from an open pull request", () => {
-		const command = commandById("pull.submit-review", { diffFullView: false, diffReady: false })
-
-		expect(command.shortcut).toBe("shift-r")
-		expect(command.disabledReason).toBeFalsy()
-	})
-
-	test("submit-review command requires an open pull request", () => {
-		expect(
-			commandById("pull.submit-review", {
-				selectedPullRequest: { ...selectedPullRequest, state: "closed" },
-			}).disabledReason,
-		).toBe("Pull request is not open.")
-	})
-
-	test("state command requires an open pull request", () => {
-		expect(
-			commandById("pull.toggle-draft", {
-				selectedPullRequest: { ...selectedPullRequest, state: "closed" },
-			}).disabledReason,
-		).toBe("Pull request is not open.")
-	})
+	// `pull.submit-review` and `pull.toggle-draft` migrated to
+	// `src/commands/builtins.ts`. Their disabledReason chain now lives in
+	// `noOpenPullRequestReasonAtom`; phase 1.6 will cover them with a
+	// registry-level test.
 
 	test("reply command requires the comments view", () => {
 		expect(commandById("comments.reply", { hasSelectedComment: true }).disabledReason).toBe("Open comments first.")
@@ -206,16 +188,15 @@ describe("review UX commands", () => {
 		).toBe("Only your own (synced) comments can be edited or deleted.")
 	})
 
-	test("comments and labels commands are available for selected issues", () => {
+	test("comments.open is available for selected issues", () => {
 		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
-		expect(commandById("pull.labels", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
 	})
 
 	test("issue comments require an issue selection", () => {
 		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue: null }).disabledReason).toBe("Select an issue first.")
 	})
 
-	// `detail.open` migrated to `src/commands/builtins.ts`. Its disabledReason
-	// logic now lives in `noSelectedItemReasonAtom` (see
-	// `src/commands/derivations.ts`); a registry-level test follows in 1.6.
+	// `detail.open` and `pull.labels` migrated to `src/commands/builtins.ts`.
+	// Their disabledReason logic now lives in `noSelectedItemReasonAtom`
+	// (see `src/commands/derivations.ts`); a registry-level test follows in 1.6.
 })

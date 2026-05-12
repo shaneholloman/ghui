@@ -82,3 +82,13 @@ export const workspaceSurfaceSubtitleAtom = (surface: WorkspaceSurface): Atom.At
 // Issue-only commands need a slightly different gating: only enabled when the
 // issues surface is active *and* there's a selected issue.
 export const issueSelectedReasonAtom = Atom.make((get) => (get(workspaceSurfaceAtom) === "issues" && get(selectedIssueAtom) ? null : "Select an issue first."))
+
+// Whichever item is currently focused for comment-style operations: issue on
+// the issues surface, PR on the PR surface, null otherwise. Used as a target
+// for modal seeding (labels, new comment) without re-deriving in every command.
+export const selectedCommentSubjectAtom = Atom.make((get) => {
+	const surface = get(workspaceSurfaceAtom)
+	if (surface === "issues") return get(selectedIssueAtom)
+	if (surface === "pullRequests") return get(selectedPullRequestAtom)
+	return null
+})

@@ -67,8 +67,6 @@ import {
 	groupStartsAtom,
 	hasMorePullRequestsAtom,
 	issueOverridesAtom,
-	labelCacheAtom,
-	listRepoLabelsAtom,
 	loadedPullRequestCountAtom,
 	prewarmRepositoryDetailsAtom,
 	pruneCacheAtom,
@@ -371,7 +369,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const setThemeModal = makeModalSetter("Theme")
 	const setCommandPalette = makeModalSetter("CommandPalette")
 	const setOpenRepositoryModal = makeModalSetter("OpenRepository")
-	const setLabelCache = useAtomSet(labelCacheAtom)
 	const setPullRequestOverrides = useAtomSet(pullRequestOverridesAtom)
 	const setIssueOverrides = useAtomSet(issueOverridesAtom)
 	const setRecentlyCompletedPullRequests = useAtomSet(recentlyCompletedPullRequestsAtom)
@@ -379,7 +376,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [startupLoadComplete, setStartupLoadComplete] = useState(false)
 	const [homeCrumbHovered, setHomeCrumbHovered] = useState(false)
 	const usernameResult = useAtomValue(usernameAtom)
-	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
 	const addPullRequestLabel = useAtomSet(addPullRequestLabelAtom, { mode: "promise" })
 	const removePullRequestLabel = useAtomSet(removePullRequestLabelAtom, { mode: "promise" })
 	const addIssueLabel = useAtomSet(addIssueLabelAtom, { mode: "promise" })
@@ -1444,24 +1440,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	}
 
-	const openSubmitReviewModal = (initialEvent: SubmitPullRequestReviewInput["event"] = "APPROVE") => {
-		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
-		const selectedIndex = Math.max(
-			0,
-			submitReviewOptions.findIndex((option) => option.event === initialEvent),
-		)
-		setSubmitReviewModal({
-			repository: selectedPullRequest.repository,
-			number: selectedPullRequest.number,
-			focus: "action",
-			selectedIndex,
-			body: "",
-			cursor: 0,
-			running: false,
-			error: null,
-		})
-	}
-
 	const openDiffCommentModal = () => {
 		if (!selectedDiffCommentAnchor || !selectedPullRequest) return
 		setCommentModal(initialCommentModalState)
@@ -1611,20 +1589,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
-	const openPullRequestStateModal = () => {
-		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
-		setPullRequestStateModal({
-			repository: selectedPullRequest.repository,
-			number: selectedPullRequest.number,
-			title: selectedPullRequest.title,
-			url: selectedPullRequest.url,
-			isDraft: selectedPullRequest.reviewStatus === "draft",
-			selectedIsDraft: selectedPullRequest.reviewStatus !== "draft",
-			running: false,
-			error: null,
-		})
-	}
-
 	const movePullRequestStateSelection = () => {
 		setPullRequestStateModal((current) => ({ ...current, selectedIsDraft: !current.selectedIsDraft }))
 	}
@@ -1699,33 +1663,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		preserveCurrentDiffLocation()
 		setDiffWhitespaceMode(next)
 		void Effect.runPromise(saveStoredDiffWhitespaceMode(next)).catch((error) => flashNotice(errorMessage(error)))
-	}
-
-	const openLabelModal = () => {
-		if (!selectedCommentSubject) return
-		const repository = selectedCommentSubject.repository
-		const cachedLabels = registry.get(labelCacheAtom)[repository]
-		if (cachedLabels) {
-			setLabelModal({
-				repository,
-				query: "",
-				selectedIndex: 0,
-				availableLabels: cachedLabels,
-				loading: false,
-			})
-			return
-		}
-
-		setLabelModal({ repository, query: "", selectedIndex: 0, availableLabels: [], loading: true })
-		void loadRepoLabels(repository)
-			.then((labels) => {
-				setLabelCache((current) => ({ ...current, [repository]: labels }))
-				setLabelModal((current) => (current.repository === repository ? { ...current, availableLabels: labels, loading: false } : current))
-			})
-			.catch((error) => {
-				setLabelModal((current) => (current.repository === repository ? { ...current, loading: false } : current))
-				flashNotice(errorMessage(error))
-			})
 	}
 
 	const { openMergeModal, cancelOrCloseMergeModal, confirmMergeAction, cycleMergeMethod, moveMergeSelection } = useMergeFlow({
@@ -1888,7 +1825,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			openDiffView,
 			openCommentsView,
 			closeCommentsView,
-			openNewIssueCommentModal,
 			openReplyToSelectedComment,
 			openEditSelectedComment,
 			openDeleteSelectedComment,
@@ -1906,9 +1842,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			toggleDiffCommentRange,
 			moveDiffCommentThread,
 			openDiffCommentModal,
-			openSubmitReviewModal,
-			openPullRequestStateModal,
-			openLabelModal,
 			openMergeModal,
 			quit: () => renderer.destroy(),
 		},
