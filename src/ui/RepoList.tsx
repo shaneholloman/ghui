@@ -19,7 +19,13 @@ export interface RepositoryListItem {
 	readonly description: string | null
 }
 
-export const getRepoDetailJunctionRows = (repository: RepositoryListItem | null): readonly number[] => (repository ? [2] : [])
+export const getRepoDetailJunctionRows = (repository: RepositoryListItem | null, details: RepositoryDetails | null): readonly number[] => {
+	if (!repository) return []
+	// Header rows above the divider: title + status. Stats and branch only
+	// render when full details are loaded.
+	const extraRows = (details ? 1 : 0) + (details?.defaultBranch ? 1 : 0)
+	return [2 + extraRows]
+}
 
 const activityText = (date: Date | null) => (date ? `${daysOpen(date)}d` : "-")
 
@@ -211,15 +217,7 @@ export const RepoDetailPane = ({
 			</PaneInsetLine>
 			{stats ? (
 				<PaneInsetLine width={width}>
-					{stats.flatMap((item, index) => [
-						...(index === 0 ? [] : [<span key={`${item.icon}-gap`}> </span>]),
-						<span key={`${item.icon}-icon`} fg={colors.muted} attributes={TextAttributes.BOLD}>
-							{item.icon}
-						</span>,
-						<span key={`${item.icon}-value`} fg={colors.count}>
-							{` ${item.value}`}
-						</span>,
-					])}
+					<span fg={colors.muted}>{stats.map((item) => `${item.icon} ${item.value}`).join("  ")}</span>
 				</PaneInsetLine>
 			) : null}
 			{branchRow ? (

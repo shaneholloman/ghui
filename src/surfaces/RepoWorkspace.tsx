@@ -50,7 +50,7 @@ export const RepoWorkspace = ({
 				height={wideBodyHeight}
 				leftWidth={leftPaneWidth}
 				rightWidth={rightPaneWidth}
-				junctionRows={getRepoDetailJunctionRows(selectedRepositoryItem)}
+				junctionRows={getRepoDetailJunctionRows(selectedRepositoryItem, selectedRepositoryDetails)}
 				left={
 					repoListNeedsScroll ? (
 						<scrollbox focusable={false} height={wideBodyHeight} flexGrow={0}>

@@ -19,7 +19,7 @@ import { initialPullRequestView, type PullRequestView, viewCacheKey, viewToListI
 import { CacheService, type PullRequestCacheKey } from "../../services/CacheService.js"
 import { isCommandTimeoutError } from "../../services/CommandRunner.js"
 import { GitHubService, isGitHubRateLimitError } from "../../services/GitHubService.js"
-import { detectedRepository, githubRuntime, pullRequestPageSize } from "../../services/runtime.js"
+import { githubRuntime, pullRequestPageSize } from "../../services/runtime.js"
 import { effectiveFilterQueryAtom } from "../filter/atoms.js"
 import { initialRetryProgress, RetryProgress } from "../FooterHints.js"
 import { selectedIndexAtom } from "../listSelection/atoms.js"
@@ -67,7 +67,7 @@ const trimQueueLoadCache = (cache: Partial<Record<string, PullRequestLoad>>) => 
 
 // === View / queue state atoms ===
 export const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
-export const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(detectedRepository)).pipe(Atom.keepAlive)
+export const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(null)).pipe(Atom.keepAlive)
 export const queueLoadCacheAtom = Atom.make<Partial<Record<string, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
 export const queueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
 
@@ -148,6 +148,36 @@ export const listOpenPullRequestPageAtom = githubRuntime.fn<ItemListInput<"pullR
 export const readCachedRepositoryDetailsAtom = githubRuntime.fn<string>()((repository) => CacheService.use((cache) => cache.readRepositoryDetails(repository)))
 export const writeRepositoryDetailsAtom = githubRuntime.fn<RepositoryDetails>()((details) => CacheService.use((cache) => cache.writeRepositoryDetails(details)))
 export const fetchRepositoryDetailsAtom = githubRuntime.fn<string>()((repository) => GitHubService.use((github) => github.getRepositoryDetails(repository)))
+
+// Background hydration of `repository_details` for the user's set of repos
+// (favorites + recents + cwd). Skips fetches for repos whose cached row is
+// younger than `REPO_DETAILS_PREWARM_TTL_MS`. Errors are swallowed — this is
+// an opportunistic warm-up, not a critical path.
+const REPO_DETAILS_PREWARM_TTL_MS = 6 * 60 * 60 * 1000
+const REPO_DETAILS_PREWARM_CONCURRENCY = 4
+
+export const prewarmRepositoryDetailsAtom = githubRuntime.fn<readonly string[]>()((repositories) =>
+	Effect.forEach(
+		repositories,
+		(repository) =>
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				// Seed the in-memory atom from SQLite first so RepoDetailPane can
+				// render stats on the first frame — without this, useRepositoryDetails
+				// has to wait one async hop before it can fill the cache itself.
+				const cached = yield* cache.readRepositoryDetails(repository).pipe(Effect.catch(() => Effect.succeed(null)))
+				if (cached) {
+					yield* Atom.update(repositoryDetailsCacheAtom, (current) => (current[repository] ? current : { ...current, [repository]: cached }))
+				}
+				const fetchedAt = yield* cache.readRepositoryDetailsFetchedAt(repository).pipe(Effect.catch(() => Effect.succeed(null)))
+				if (fetchedAt && Date.now() - fetchedAt.getTime() < REPO_DETAILS_PREWARM_TTL_MS) return
+				const fresh = yield* GitHubService.use((github) => github.getRepositoryDetails(repository))
+				yield* cache.writeRepositoryDetails(fresh)
+				yield* Atom.update(repositoryDetailsCacheAtom, (current) => ({ ...current, [repository]: fresh }))
+			}).pipe(Effect.catch(() => Effect.void)),
+		{ concurrency: REPO_DETAILS_PREWARM_CONCURRENCY, discard: true },
+	),
+)
 
 export const repositoryDetailsAtom = Atom.family((repository: string) =>
 	githubRuntime.atom(
@@ -271,9 +301,21 @@ export const filteredPullRequestsAtom = Atom.make((get) => {
 })
 
 export const visibleRepoOrderAtom = Atom.make((get) => {
+	const pullRequests = get(filteredPullRequestsAtom)
 	const query = get(effectiveFilterQueryAtom)
-	if (query.length === 0) return [] as readonly string[]
-	return [...new Set(get(filteredPullRequestsAtom).map((pullRequest) => pullRequest.repository))]
+	// While the user is filtering, the ranked filter score drives the order so
+	// the best-matching repo stays at the top. Without a query, sort projects
+	// by their newest-opened PR so freshly-active repos surface first.
+	if (query.length > 0) return [...new Set(pullRequests.map((pullRequest) => pullRequest.repository))]
+	const newestByRepository = new Map<string, number>()
+	for (const pullRequest of pullRequests) {
+		const created = pullRequest.createdAt.getTime()
+		const previous = newestByRepository.get(pullRequest.repository)
+		if (previous === undefined || created > previous) newestByRepository.set(pullRequest.repository, created)
+	}
+	return [...newestByRepository.entries()]
+		.sort(([leftRepo, leftCreated], [rightRepo, rightCreated]) => rightCreated - leftCreated || leftRepo.localeCompare(rightRepo))
+		.map(([repo]) => repo)
 })
 
 export const visibleGroupsAtom = Atom.make((get) => groupBy(get(filteredPullRequestsAtom), (pullRequest) => pullRequest.repository, get(visibleRepoOrderAtom)))
