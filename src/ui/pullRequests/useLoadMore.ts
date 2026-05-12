@@ -5,7 +5,7 @@ import { errorMessage } from "../../errors.js"
 import type { PullRequestLoad } from "../../pullRequestLoad.js"
 import { type PullRequestView, viewToListInput } from "../../pullRequestViews.js"
 import { pullRequestPageSize } from "../../services/runtime.js"
-import { appendPullRequestPage, cacheViewerFor, listOpenPullRequestPageAtom, queueLoadCacheAtom, writeQueueCacheAtom } from "./atoms.js"
+import { cacheViewerFor, listOpenPullRequestPageAtom, nextLoadAfterPage, queueLoadCacheAtom, writeQueueCacheAtom } from "./atoms.js"
 
 export interface UseLoadMoreInput {
 	readonly activeView: PullRequestView
@@ -72,14 +72,7 @@ export const useLoadMore = ({
 				if (generation !== refreshGenerationRef.current) return
 				const currentLoad = registry.get(queueLoadCacheAtom)[cacheKey]
 				if (!currentLoad) return
-				const data = appendPullRequestPage(currentLoad.data, page.items)
-				const addedItems = data.length - currentLoad.data.length
-				const persistedLoad: PullRequestLoad = {
-					...currentLoad,
-					data,
-					endCursor: page.endCursor,
-					hasNextPage: addedItems > 0 && page.hasNextPage && data.length < config.prFetchLimit,
-				}
+				const persistedLoad = nextLoadAfterPage(currentLoad, page, config.prFetchLimit)
 				setQueueLoadCache((current) => {
 					if (!current[cacheKey]) return current
 					return { ...current, [cacheKey]: persistedLoad }

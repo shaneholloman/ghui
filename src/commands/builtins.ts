@@ -9,11 +9,13 @@ import { diffCommentRangeStartIndexAtom, diffFullViewAtom } from "../ui/diff/ato
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "../ui/filter/atoms.js"
 import { selectedIssueAtom } from "../ui/issues/atoms.js"
 import { selectedIssueIndexAtom } from "../ui/listSelection/atoms.js"
+import { activeIssueViewAtom } from "../ui/issues/atoms.js"
 import { activeModalAtom } from "../ui/modals/atoms.js"
 import { submitReviewOptions } from "../ui/modals/shared.js"
 import { initialCommandPaletteState, initialCommentModalState, initialOpenRepositoryModalState, Modal } from "../ui/modals/types.js"
 import { noticeAtom } from "../ui/notice/atoms.js"
-import { labelCacheAtom, selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
+import { activeViewAtom, labelCacheAtom, selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
+import { issueViewForPullRequestView } from "../viewSync.js"
 import { workspaceSurfaceAtom, workspaceTabSurfacesAtom } from "../workspace/atoms.js"
 import { type WorkspaceSurface, workspaceSurfaceLabels, workspaceSurfaces } from "../workspaceSurfaces.js"
 import {
@@ -75,6 +77,10 @@ function switchWorkspaceSurfaceEffect(surface: WorkspaceSurface) {
 		const query = yield* Atom.get(filterQueryAtom)
 		yield* Atom.set(filterDraftAtom, query)
 		yield* Atom.set(noticeAtom, null)
+		// Sync the issue view's scope to the PR view's — otherwise pressing
+		// the Issues tab from within a repo can surface a stale repo's issues.
+		const pullRequestView = yield* Atom.get(activeViewAtom)
+		yield* Atom.set(activeIssueViewAtom, issueViewForPullRequestView(pullRequestView))
 	})
 }
 

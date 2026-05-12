@@ -1,4 +1,6 @@
 import type { PullRequestItem } from "./domain.js"
+import type { ItemPage } from "./item.js"
+import type { PullRequestLoad } from "./pullRequestLoad.js"
 
 // When a fresh summary page arrives, fold in fields that only the detail
 // query carries (body, labels, line counts, status checks) from a cached
@@ -26,4 +28,39 @@ export const mergeCachedDetails = (fresh: readonly PullRequestItem[], cached: re
 			detailLoaded: true,
 		} satisfies PullRequestItem
 	})
+}
+
+// Append a fresh page to an existing PR queue, deduping by URL and folding
+// in any cached detail fields the fresh summaries omit. The merged result
+// preserves the relative order of `existing` followed by *new* items only.
+export const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: readonly PullRequestItem[]): readonly PullRequestItem[] => {
+	const seen = new Set(existing.map((pullRequest) => pullRequest.url))
+	const mergedIncoming = mergeCachedDetails(incoming, existing)
+	return [...existing, ...mergedIncoming.filter((pullRequest) => !seen.has(pullRequest.url))]
+}
+
+// Compute the next PullRequestLoad after a load-more page lands.
+//
+// Bug history: an earlier version gated hasNextPage on
+// `addedItems > 0 && page.hasNextPage && data.length < limit`. The
+// `addedItems > 0` term was intended as a defence against infinite
+// pagination loops, but it permanently killed hasNextPage whenever
+// GitHub returned a page of duplicates — even though the cursor had
+// advanced and the next page would be fresh. After that flip, no
+// trigger fires another load-more and the list dead-ends.
+//
+// New invariant: keep pagination alive whenever the cursor advances
+// (real forward progress) AND the server claims more pages exist AND
+// we haven't blown past prFetchLimit. Duplicate-only pages are fine —
+// the cursor moves on and the next request grabs new items.
+export const nextLoadAfterPage = (current: PullRequestLoad, page: ItemPage<PullRequestItem>, prFetchLimit: number, fetchedAt: Date = new Date()): PullRequestLoad => {
+	const data = appendPullRequestPage(current.data, page.items)
+	const cursorAdvanced = page.endCursor !== null && page.endCursor !== current.endCursor
+	return {
+		...current,
+		data,
+		fetchedAt,
+		endCursor: page.endCursor,
+		hasNextPage: page.hasNextPage && cursorAdvanced && data.length < prFetchLimit,
+	}
 }

@@ -214,6 +214,7 @@ import { useScrollPersistence } from "./ui/useScrollPersistence.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
+import { issueViewForPullRequestView } from "./viewSync.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath } from "./services/runtime.js"
 
@@ -783,16 +784,17 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setNotice(null)
 		cancelRefreshToast()
 		// Keep the issue view's repository scope mirrored to the PR view so the
-		// two surfaces share workspace context until issues get a dedicated picker.
+		// two surfaces share workspace context until issues get a dedicated
+		// picker. `issueViewForPullRequestView` is a total projection — call
+		// it unconditionally to avoid edge cases where view.repository equals
+		// selectedRepository (e.g. Repository(opencode) → Queue(authored, opencode))
+		// would skip the sync and leave activeIssueView stale.
+		setActiveIssueView(issueViewForPullRequestView(view))
 		if (view._tag === "Repository") {
-			setActiveIssueView({ _tag: "Repository", repository: view.repository })
 			setRecentRepositories((current) => [view.repository, ...current.filter((repository) => repository !== view.repository)].slice(0, 12))
 			if (activeWorkspaceSurface === "repos") setActiveWorkspaceSurface("pullRequests")
 		} else if (view.repository === null && selectedRepository !== null) {
-			setActiveIssueView({ _tag: "Queue", mode: "authored", repository: null })
 			setActiveWorkspaceSurface("repos")
-		} else if (view.repository !== null && view.repository !== selectedRepository) {
-			setActiveIssueView({ _tag: "Repository", repository: view.repository })
 		}
 	}
 	const switchQueueMode = (delta: 1 | -1) => {
@@ -810,6 +812,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setFilterMode(false)
 		setFilterDraft(filterQuery)
 		setNotice(null)
+		// Sync the issue view's scope to whatever the PR view is on, so
+		// pressing 2/clicking the Issues tab doesn't surface a stale repo's
+		// issues under the current breadcrumb.
+		setActiveIssueView(issueViewForPullRequestView(activeView))
 	}
 	const cycleWorkspaceSurface = (delta: 1 | -1) => {
 		switchWorkspaceSurface(nextWorkspaceSurface(activeWorkspaceSurface, delta, workspaceTabSurfaces))

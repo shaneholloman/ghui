@@ -14,6 +14,7 @@ import type {
 } from "../../domain.js"
 import type { ItemListInput } from "../../item.js"
 import { mergeCachedDetails } from "../../pullRequestCache.js"
+export { appendPullRequestPage, nextLoadAfterPage } from "../../pullRequestCache.js"
 import type { PullRequestLoad } from "../../pullRequestLoad.js"
 import { activePullRequestViews, initialPullRequestView, type PullRequestView, viewCacheKey, viewRepository, viewToListInput } from "../../pullRequestViews.js"
 import { CacheService, type PullRequestCacheKey } from "../../services/CacheService.js"
@@ -49,11 +50,8 @@ export const parsePullRequestRevisionAtomKey = (key: string, label: string): { r
 export const pullRequestDetailKey = (pullRequest: PullRequestItem) => `${pullRequest.url}:${pullRequest.headRefOid}`
 
 // === Helpers used by atom bodies and by load-more handlers ===
-export const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: readonly PullRequestItem[]): readonly PullRequestItem[] => {
-	const seen = new Set(existing.map((pullRequest) => pullRequest.url))
-	const mergedIncoming = mergeCachedDetails(incoming, existing)
-	return [...existing, ...mergedIncoming.filter((pullRequest) => !seen.has(pullRequest.url))]
-}
+// `appendPullRequestPage` and `nextLoadAfterPage` are re-exported from
+// pullRequestCache.js above so callers don't need to know where they live.
 
 export const cacheViewerFor = (view: PullRequestView, username: string | null): string | null => (view._tag === "Repository" ? "anonymous" : username)
 
