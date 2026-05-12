@@ -15,7 +15,7 @@ const resolveCachePath = () => {
 }
 
 const appConfig = Config.all({
-	prFetchLimit: Config.int("GHUI_PR_FETCH_LIMIT").pipe(Config.withDefault(200), Config.map(positiveIntOr(200))),
+	prFetchLimit: Config.int("GHUI_PR_FETCH_LIMIT").pipe(Config.withDefault(500), Config.map(positiveIntOr(500))),
 	prPageSize: Config.int("GHUI_PR_PAGE_SIZE").pipe(Config.withDefault(50), Config.map(pageSizeOr(50))),
 	commandTimeoutMs: Config.int("GHUI_COMMAND_TIMEOUT_MS").pipe(Config.withDefault(15_000), Config.map(positiveIntOr(15_000))),
 	cachePath: Config.succeed(resolveCachePath()),
