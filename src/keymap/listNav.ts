@@ -69,6 +69,7 @@ export const listNavKeymap = List(
 	{ id: "list.labels", title: "Labels", keys: ["l"], enabled: itemSelected, run: (s) => s.runCommandById("pull.labels") },
 	{ id: "list.merge", title: "Merge", keys: ["m", "shift+m"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.merge") },
 	{ id: "list.close-pr", title: "Close PR", keys: ["x"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.close") },
+	{ id: "list.close-issue", title: "Close issue", keys: ["x"], when: issuesActive, run: (s) => s.runCommandById("issue.close") },
 	{ id: "list.open-browser", title: "Open in browser", keys: ["o"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.open-browser") },
 	{ id: "list.toggle-draft", title: "Toggle draft", keys: ["s", "shift+s"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.toggle-draft") },
 	{ id: "list.copy", title: "Copy metadata", keys: ["y"], when: pullRequestsActive, run: (s) => s.runCommandById("pull.copy-metadata") },

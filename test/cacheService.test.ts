@@ -4,7 +4,9 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import type { PullRequestItem } from "../src/domain.ts"
+import type { IssueItem, PullRequestItem, RepositoryDetails } from "../src/domain.ts"
+import type { IssueLoad } from "../src/issueLoad.ts"
+import type { IssueView } from "../src/issueViews.ts"
 import type { PullRequestLoad } from "../src/pullRequestLoad.ts"
 import type { PullRequestView } from "../src/pullRequestViews.ts"
 import { CacheService, pullRequestCacheKey } from "../src/services/CacheService.ts"
@@ -245,6 +247,189 @@ describe("CacheService", () => {
 
 		expect(cached?.favoriteRepositories).toEqual(["kitlangton/ghui", "anomalyco/opencode"])
 		expect(cached?.recentRepositories).toEqual(["anomalyco/opencode", "Effect-TS/effect"])
+	})
+
+	test("persists issue queue order and revives dates", async () => {
+		const filename = await tempCachePath()
+		const issueView: IssueView = { _tag: "Queue", mode: "authored", repository: null }
+		const issue = (number: number, overrides: Partial<IssueItem> = {}): IssueItem => ({
+			repository: "owner/repo",
+			number,
+			state: "open",
+			title: `Issue ${number}`,
+			body: "Body",
+			author: "alice",
+			labels: [{ name: "bug", color: "#d73a4a" }],
+			commentCount: 0,
+			createdAt: new Date(`2026-02-${String(number).padStart(2, "0")}T00:00:00Z`),
+			updatedAt: new Date(`2026-02-${String(number).padStart(2, "0")}T00:00:00Z`),
+			url: `https://github.com/owner/repo/issues/${number}`,
+			...overrides,
+		})
+		const issueLoad = (data: readonly IssueItem[]): IssueLoad => ({
+			view: issueView,
+			data,
+			fetchedAt: new Date(),
+			endCursor: "issue-cursor",
+			hasNextPage: false,
+		})
+
+		await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				yield* cache.writeIssueQueue("alice", issueLoad([issue(2, { title: "Second" }), issue(1)]))
+			}),
+		)
+
+		const cached = await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				return yield* cache.readIssueQueue("alice", issueView)
+			}),
+		)
+
+		expect(cached?.data.map((item) => item.number)).toEqual([2, 1])
+		expect(cached?.data[0]?.title).toBe("Second")
+		expect(cached?.data[0]?.createdAt).toBeInstanceOf(Date)
+		expect(cached?.data[0]?.labels).toEqual([{ name: "bug", color: "#d73a4a" }])
+		expect(cached?.endCursor).toBe("issue-cursor")
+		expect(cached?.hasNextPage).toBe(false)
+	})
+
+	test("issue queue cache is independent of pull request cache", async () => {
+		const filename = await tempCachePath()
+		const prView: PullRequestView = { _tag: "Queue", mode: "authored", repository: null }
+		const issueView: IssueView = { _tag: "Queue", mode: "authored", repository: null }
+		const issue: IssueItem = {
+			repository: "owner/repo",
+			number: 99,
+			state: "open",
+			title: "Issue 99",
+			body: "",
+			author: "alice",
+			labels: [],
+			commentCount: 0,
+			createdAt: new Date("2026-03-01T00:00:00Z"),
+			updatedAt: new Date("2026-03-01T00:00:00Z"),
+			url: "https://github.com/owner/repo/issues/99",
+		}
+
+		await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				yield* cache.writeQueue("alice", load([pullRequest(1)]))
+				yield* cache.writeIssueQueue("alice", {
+					view: issueView,
+					data: [issue],
+					fetchedAt: new Date(),
+					endCursor: null,
+					hasNextPage: false,
+				})
+			}),
+		)
+
+		const [prLoad, issueLoadResult] = await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				return yield* Effect.all([cache.readQueue("alice", prView), cache.readIssueQueue("alice", issueView)])
+			}),
+		)
+
+		expect(prLoad?.data.map((item) => item.number)).toEqual([1])
+		expect(issueLoadResult?.data.map((item) => item.number)).toEqual([99])
+	})
+
+	test("readRepoRollup aggregates pull requests and issues per viewer", async () => {
+		const filename = await tempCachePath()
+		const prView: PullRequestView = { _tag: "Queue", mode: "authored", repository: null }
+		const issueView: IssueView = { _tag: "Queue", mode: "authored", repository: null }
+		const otherViewerView: PullRequestView = { _tag: "Queue", mode: "review", repository: null }
+
+		const prAlice = pullRequest(1, { repository: "owner/alpha", updatedAt: new Date("2026-04-10T00:00:00Z") })
+		const prAlice2 = pullRequest(2, { repository: "owner/alpha", updatedAt: new Date("2026-04-12T00:00:00Z") })
+		const prAliceOther = pullRequest(3, { repository: "owner/beta", updatedAt: new Date("2026-04-09T00:00:00Z") })
+		const issueAlice: IssueItem = {
+			repository: "owner/alpha",
+			number: 11,
+			state: "open",
+			title: "I",
+			body: "",
+			author: "alice",
+			labels: [],
+			commentCount: 0,
+			createdAt: new Date("2026-04-15T00:00:00Z"),
+			updatedAt: new Date("2026-04-15T00:00:00Z"),
+			url: "https://github.com/owner/alpha/issues/11",
+		}
+		const prBob = pullRequest(4, { repository: "owner/gamma" })
+
+		await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				yield* cache.writeQueue("alice", { view: prView, data: [prAlice, prAlice2, prAliceOther], fetchedAt: new Date(), endCursor: null, hasNextPage: false })
+				yield* cache.writeIssueQueue("alice", { view: issueView, data: [issueAlice], fetchedAt: new Date(), endCursor: null, hasNextPage: false })
+				yield* cache.writeQueue("bob", { view: otherViewerView, data: [prBob], fetchedAt: new Date(), endCursor: null, hasNextPage: false })
+			}),
+		)
+
+		const rows = await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				return yield* cache.readRepoRollup("alice")
+			}),
+		)
+
+		const byRepo = new Map(rows.map((row) => [row.repository, row]))
+		expect(byRepo.get("owner/alpha")?.pullRequestCount).toBe(2)
+		expect(byRepo.get("owner/alpha")?.issueCount).toBe(1)
+		expect(byRepo.get("owner/alpha")?.lastActivityAt?.toISOString()).toBe("2026-04-15T00:00:00.000Z")
+		expect(byRepo.get("owner/beta")?.pullRequestCount).toBe(1)
+		expect(byRepo.get("owner/beta")?.issueCount).toBe(0)
+		// Bob's PR must not leak into Alice's rollup.
+		expect(byRepo.has("owner/gamma")).toBe(false)
+	})
+
+	test("readRepositoryDetailsFetchedAt reflects the latest write", async () => {
+		const filename = await tempCachePath()
+		const details: RepositoryDetails = {
+			repository: "owner/repo",
+			description: "Hi",
+			url: "https://github.com/owner/repo",
+			stargazerCount: 1,
+			forkCount: 0,
+			openIssueCount: 0,
+			openPullRequestCount: 0,
+			defaultBranch: "main",
+			pushedAt: null,
+			isArchived: false,
+			isPrivate: false,
+		}
+		const before = new Date()
+
+		await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				yield* cache.writeRepositoryDetails(details)
+			}),
+		)
+
+		const fetchedAt = await runCache(
+			filename,
+			Effect.gen(function* () {
+				const cache = yield* CacheService
+				return yield* cache.readRepositoryDetailsFetchedAt("owner/repo")
+			}),
+		)
+
+		expect(fetchedAt).toBeInstanceOf(Date)
+		expect(fetchedAt!.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000)
 	})
 
 	test("layerFromPath falls back to disabled cache when startup fails", async () => {

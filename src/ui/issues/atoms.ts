@@ -1,27 +1,34 @@
 import { Effect } from "effect"
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
-import type { IssueItem } from "../../domain.js"
-import { type IssueListMode, type IssueQuery, issueQueryToListInput } from "../../item.js"
+import { issueQueryToListInput } from "../../item.js"
+import type { IssueLoad } from "../../issueLoad.js"
+import { type IssueView, initialIssueView, issueViewCacheKey, issueViewMode, issueViewRepository, issueViewToQuery } from "../../issueViews.js"
+import { CacheService } from "../../services/CacheService.js"
 import { GitHubService } from "../../services/GitHubService.js"
 import { detectedRepository, githubRuntime, pullRequestPageSize } from "../../services/runtime.js"
 
-// User-facing issue view. Mirrors `PullRequestView` but with issue-only modes.
-//
-// `Repository` is "all issues in this repo" — same semantics as PR's
-// repository view. `Queue` carries the people qualifier (authored/assigned/
-// mentioned). Globally we default to `authored`.
-export type IssueView =
-	| { readonly _tag: "Repository"; readonly repository: string }
-	| { readonly _tag: "Queue"; readonly mode: Exclude<IssueListMode, "all">; readonly repository: string | null }
-
-export const initialIssueView = (repository: string | null = null): IssueView =>
-	repository ? { _tag: "Repository", repository } : { _tag: "Queue", mode: "authored", repository: null }
-
-export const issueViewMode = (view: IssueView): IssueListMode => (view._tag === "Repository" ? "all" : view.mode)
-export const issueViewRepository = (view: IssueView) => view.repository
-export const issueViewToQuery = (view: IssueView): IssueQuery => ({ mode: issueViewMode(view), repository: issueViewRepository(view), textFilter: "" })
+// Re-export the view type and helpers for back-compat with existing call sites
+// that import from this module. New code should import directly from
+// `src/issueViews.ts`.
+export { initialIssueView, issueViewMode, issueViewRepository, issueViewToQuery, type IssueView }
 
 export const activeIssueViewAtom = Atom.make<IssueView>(initialIssueView(detectedRepository)).pipe(Atom.keepAlive)
+
+const emptyIssueLoad = (view: IssueView): IssueLoad => ({
+	view,
+	data: [],
+	fetchedAt: null,
+	endCursor: null,
+	hasNextPage: false,
+})
+
+// In-memory mirror of `queue_snapshots` for issues, keyed by `issueViewCacheKey`.
+// Mirrors `queueLoadCacheAtom` for PRs. Lets us paint the cached list before
+// the network request resolves.
+export const issueQueueLoadCacheAtom = Atom.make<Partial<Record<string, IssueLoad>>>({}).pipe(Atom.keepAlive)
+
+const issueCacheViewerFor = (view: IssueView, username: string | null): string | null => (view._tag === "Repository" ? "anonymous" : username)
 
 // The `(get)` parameter makes this atom reactive on the active issue view.
 // Using `get(activeIssueViewAtom)` (rather than `Atom.get(...)` as an Effect
@@ -31,16 +38,56 @@ export const issuesAtom = githubRuntime
 	.atom(
 		Effect.fnUntraced(function* (get) {
 			const github = yield* GitHubService
+			const cacheService = yield* CacheService
 			const view = get(activeIssueViewAtom)
+			const cacheKey = issueViewCacheKey(view)
 			const mode = issueViewMode(view)
 			const repository = issueViewRepository(view)
 			// "all" needs a repository; without one we have nothing to show until the user picks one.
-			if (mode === "all" && !repository) return [] as readonly IssueItem[]
+			if (mode === "all" && !repository) return emptyIssueLoad(view)
+			const cacheUsername = view._tag === "Repository" ? null : yield* github.getAuthenticatedUser().pipe(Effect.catch(() => Effect.succeed(null)))
+			const cacheViewer = issueCacheViewerFor(view, cacheUsername)
+			if (cacheViewer) {
+				const cachedLoad = yield* cacheService.readIssueQueue(cacheViewer, view).pipe(Effect.catch(() => Effect.succeed(null)))
+				if (cachedLoad) {
+					yield* Atom.update(issueQueueLoadCacheAtom, (cache) => (cache[cacheKey] ? cache : { ...cache, [cacheKey]: cachedLoad }))
+				}
+			}
 			const page = yield* github.listIssuePage(issueQueryToListInput(issueViewToQuery(view), null, pullRequestPageSize))
-			return page.items
+			const load = yield* Atom.modify(issueQueueLoadCacheAtom, (cache) => {
+				const next: IssueLoad = {
+					view,
+					data: page.items,
+					fetchedAt: new Date(),
+					endCursor: page.endCursor,
+					hasNextPage: page.hasNextPage,
+				}
+				return [next, { ...cache, [cacheKey]: next }]
+			})
+			if (cacheViewer) yield* cacheService.writeIssueQueue(cacheViewer, load)
+			return load
 		}),
 	)
 	.pipe(Atom.keepAlive)
+
+// Display source for the Issues tab. Reads the in-memory queue cache first
+// (populated by either the SQLite read or the network response) and falls
+// back to whatever the network atom most recently resolved. Mirrors
+// `pullRequestLoadAtom`.
+export const issueLoadAtom = Atom.make((get) => {
+	const view = get(activeIssueViewAtom)
+	const cacheKey = issueViewCacheKey(view)
+	const cache = get(issueQueueLoadCacheAtom)
+	const result = get(issuesAtom)
+	const resolved = AsyncResult.getOrElse(result, () => null)
+	return cache[cacheKey] ?? (resolved && issueViewCacheKey(resolved.view) === cacheKey ? resolved : null)
+})
+
+export const isLoadingIssueViewAtom = Atom.make((get) => {
+	const cacheKey = issueViewCacheKey(get(activeIssueViewAtom))
+	const resolved = AsyncResult.getOrElse(get(issuesAtom), () => null)
+	return resolved !== null && issueViewCacheKey(resolved.view) !== cacheKey
+})
 
 export const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.addIssueLabel(input.repository, input.number, input.label)),
@@ -48,4 +95,8 @@ export const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string;
 
 export const removeIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.removeIssueLabel(input.repository, input.number, input.label)),
+)
+
+export const closeIssueAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.closeIssue(input.repository, input.number)),
 )

@@ -173,9 +173,12 @@ export interface RepositoryDetails {
 	readonly isPrivate: boolean
 }
 
+export type IssueState = "open" | "closed"
+
 export interface IssueItem {
 	readonly repository: string
 	readonly number: number
+	readonly state: IssueState
 	readonly title: string
 	readonly body: string
 	readonly author: string

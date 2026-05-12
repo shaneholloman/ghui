@@ -10,6 +10,7 @@ const scopeLabels = {
 	Global: "App",
 	View: "View",
 	"Pull request": "Pull Request",
+	Issue: "Issue",
 	Diff: "Diff",
 	Comments: "Comments",
 	Labels: "Labels",

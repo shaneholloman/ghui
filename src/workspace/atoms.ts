@@ -1,5 +1,5 @@
 import * as Atom from "effect/unstable/reactivity/Atom"
-import { CacheService } from "../services/CacheService.js"
+import { CacheService, type RepoRollupRow } from "../services/CacheService.js"
 import { githubRuntime, initialRecentRepositories } from "../services/runtime.js"
 import type { ViewerId, WorkspacePreferences } from "../workspacePreferences.js"
 import type { WorkspaceSurface } from "../workspaceSurfaces.js"
@@ -11,3 +11,13 @@ export const recentRepositoriesAtom = Atom.make<readonly string[]>(initialRecent
 
 export const readWorkspacePreferencesAtom = githubRuntime.fn<ViewerId>()((viewer) => CacheService.use((cache) => cache.readWorkspacePreferences(viewer)))
 export const writeWorkspacePreferencesAtom = githubRuntime.fn<WorkspacePreferences>()((preferences) => CacheService.use((cache) => cache.writeWorkspacePreferences(preferences)))
+
+// Aggregates cached PRs and issues by repository for the given viewer. Lets
+// the Repos tab render counts + last activity from cache before the live PR
+// and issue queues resolve. Returns an empty list if the cache is disabled.
+export const readRepoRollupAtom = githubRuntime.fn<string>()((viewer) => CacheService.use((cache) => cache.readRepoRollup(viewer)))
+
+// Hydrated by `useRepoRollupHydration` once the viewer is known. Consumed by
+// the repo list derivation in `App.tsx` to seed counts + last activity before
+// the live PR/issue queries land.
+export const repoRollupAtom = Atom.make<readonly RepoRollupRow[]>([]).pipe(Atom.keepAlive)

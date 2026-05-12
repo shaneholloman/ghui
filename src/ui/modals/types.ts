@@ -26,6 +26,7 @@ export interface MergeModalState {
 }
 
 export interface CloseModalState {
+	readonly kind: "pullRequest" | "issue"
 	readonly repository: string | null
 	readonly number: number | null
 	readonly title: string
@@ -135,6 +136,7 @@ export const initialMergeModalState: MergeModalState = {
 }
 
 export const initialCloseModalState: CloseModalState = {
+	kind: "pullRequest",
 	repository: null,
 	number: null,
 	title: "",

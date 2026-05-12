@@ -12,7 +12,6 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
-import { config } from "./config.js"
 import {
 	type DiffCommentSide,
 	type IssueItem,
@@ -23,15 +22,17 @@ import {
 	type SubmitPullRequestReviewInput,
 } from "./domain.js"
 import { errorMessage } from "./errors.js"
-import { activePullRequestViews, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewRepository } from "./pullRequestViews.js"
+import { nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals } from "./pullRequestViews.js"
 
 import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
 import { ActiveFilterBar, ACTIVE_FILTER_BAR_HEIGHT } from "./ui/ActiveFilterBar.js"
 import { colors, rowHoverBackground } from "./ui/colors.js"
 import {
 	favoriteRepositoriesAtom,
+	readRepoRollupAtom,
 	readWorkspacePreferencesAtom,
 	recentRepositoriesAtom,
+	repoRollupAtom,
 	selectedRepositoryIndexAtom,
 	workspaceSurfaceAtom,
 	writeWorkspacePreferencesAtom,
@@ -45,7 +46,7 @@ import {
 	pullRequestCommentsAtom,
 	pullRequestCommentsLoadedAtom,
 } from "./ui/comments/atoms.js"
-import { activeIssueViewAtom, addIssueLabelAtom, issuesAtom, issueViewRepository, removeIssueLabelAtom } from "./ui/issues/atoms.js"
+import { activeIssueViewAtom, addIssueLabelAtom, closeIssueAtom, issueLoadAtom, issuesAtom, issueViewRepository, removeIssueLabelAtom } from "./ui/issues/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
 import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
@@ -58,11 +59,15 @@ import {
 	activeViewAtom,
 	addPullRequestLabelAtom,
 	closePullRequestAtom,
+	activeViewsAtom,
 	displayedPullRequestsAtom,
 	groupStartsAtom,
+	hasMorePullRequestsAtom,
 	issueOverridesAtom,
 	labelCacheAtom,
 	listRepoLabelsAtom,
+	loadedPullRequestCountAtom,
+	prewarmRepositoryDetailsAtom,
 	pruneCacheAtom,
 	pullRequestDetailKey,
 	pullRequestLoadAtom,
@@ -76,6 +81,7 @@ import {
 	removePullRequestLabelAtom,
 	retryProgressAtom,
 	selectedPullRequestAtom,
+	selectedRepositoryAtom,
 	toggleDraftAtom,
 	usernameAtom,
 	visibleGroupsAtom,
@@ -96,6 +102,7 @@ import {
 	diffFileIndexAtom,
 	diffFullViewAtom,
 	diffPreferredSideAtom,
+	diffReadyAtom,
 	diffRenderViewAtom,
 	diffScrollTopAtom,
 	diffWhitespaceModeAtom,
@@ -190,13 +197,14 @@ import { IssuesWorkspace } from "./surfaces/IssuesWorkspace.js"
 import { RepoWorkspace } from "./surfaces/RepoWorkspace.js"
 import { WorkspaceModals } from "./surfaces/WorkspaceModals.js"
 import { WorkspaceTabs, workspaceTabSeparatorColumns } from "./ui/WorkspaceTabs.js"
-import { getIssueDetailJunctionRows, issueListRowIndex, issueListVisualLineCount, IssueDetailPane } from "./ui/IssueList.js"
+import { getIssueDetailJunctionRows, issueListRowIndex, issueListVisualLineCount, IssueDetailPane, orderIssuesForDisplay } from "./ui/IssueList.js"
 import { parseIssueReferenceUrl } from "./ui/inlineSegments.js"
 import { singleLineText } from "./ui/singleLineInput.js"
 import { SPINNER_FRAMES } from "./ui/spinner.js"
 import { useClampedIndex } from "./ui/useClampedIndex.js"
 import { usePasteHandler } from "./ui/usePasteHandler.js"
 import { useScrollFollowSelected } from "./ui/useScrollFollowSelected.js"
+import { useScrollPersistence } from "./ui/useScrollPersistence.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
@@ -464,7 +472,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const readWorkspacePreferences = useAtomSet(readWorkspacePreferencesAtom, { mode: "promise" })
 	const writeWorkspacePreferences = useAtomSet(writeWorkspacePreferencesAtom, { mode: "promise" })
 	const pruneCache = useAtomSet(pruneCacheAtom, { mode: "promise" })
+	const prewarmRepositoryDetails = useAtomSet(prewarmRepositoryDetailsAtom, { mode: "promise" })
 	const closePullRequest = useAtomSet(closePullRequestAtom, { mode: "promise" })
+	const closeIssue = useAtomSet(closeIssueAtom, { mode: "promise" })
+	const refreshIssuesAtomRaw = useAtomRefresh(issuesAtom)
 	const submitPullRequestReview = useAtomSet(submitPullRequestReviewAtom, { mode: "promise" })
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
@@ -493,6 +504,11 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const prListScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const issueListScrollRef = useRef<ScrollBoxRenderable | null>(null)
+	// Persisted scrollTop per surface so switching tabs preserves list position.
+	// Detail preview intentionally resets per selection — persisting it would
+	// surprise users who expect to see new content from the top.
+	const prListScrollPersistedRef = useRef(0)
+	const issueListScrollPersistedRef = useRef(0)
 	const suppressNextDiffCommentScrollRef = useRef(false)
 	const headerFooterWidth = Math.max(24, contentWidth - 2)
 
@@ -516,12 +532,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [selectedRepositoryIndex, setSelectedRepositoryIndex] = useAtom(selectedRepositoryIndexAtom)
 	const [favoriteRepositories, setFavoriteRepositories] = useAtom(favoriteRepositoriesAtom)
 	const [recentRepositories, setRecentRepositories] = useAtom(recentRepositoriesAtom)
+	const repoRollup = useAtomValue(repoRollupAtom)
+	const setRepoRollup = useAtomSet(repoRollupAtom)
+	const readRepoRollup = useAtomSet(readRepoRollupAtom, { mode: "promise" })
 	const issuesResult = useAtomValue(issuesAtom)
+	const issueLoad = useAtomValue(issueLoadAtom)
 	const [selectedIssueIndex, setSelectedIssueIndex] = useAtom(selectedIssueIndexAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
 	const pullRequestFetchInFlight = pullRequestResult.waiting
-	const selectedRepository = viewRepository(activeView)
+	const selectedRepository = useAtomValue(selectedRepositoryAtom)
 	const selectedIssueRepository = issueViewRepository(activeIssueView)
 	const pullRequestAuthorFilterActive = selectedRepository !== null && activeView._tag === "Queue" && activeView.mode === "authored"
 	const issueAuthorFilterActive = selectedIssueRepository !== null && activeIssueView._tag === "Queue" && activeIssueView.mode === "authored"
@@ -532,17 +552,34 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const issueOverrides = useAtomValue(issueOverridesAtom)
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
-	const rawIssues = AsyncResult.isSuccess(issuesResult) ? issuesResult.value : []
-	const allIssues = useMemo(() => rawIssues.map((issue) => issueOverrides[issue.url] ?? issue), [rawIssues, issueOverrides])
+	const rawIssues: readonly IssueItem[] = issueLoad?.data ?? []
+	const showIssueRepositoryGroups = selectedRepository === null
+	// Reorder so the array order matches IssueList's grouped display. Otherwise
+	// j/k stepping jumps across groups, since groupBy reorders alphabetically.
+	// Fold in optimistically-closed orphans so freshly-closed issues stay
+	// visible (marked closed) until the next server refresh removes them.
+	const allIssues = useMemo(() => {
+		const seen = new Set<string>()
+		const mapped: IssueItem[] = []
+		for (const issue of rawIssues) {
+			seen.add(issue.url)
+			mapped.push(issueOverrides[issue.url] ?? issue)
+		}
+		const orphans = Object.values(issueOverrides).filter((issue) => !seen.has(issue.url) && issue.state === "closed")
+		const merged = [...mapped, ...orphans].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+		return orderIssuesForDisplay(merged, showIssueRepositoryGroups)
+	}, [rawIssues, issueOverrides, showIssueRepositoryGroups])
 	// Server applies mode-based filtering (authored/assigned/mentioned); no client-side scope filter needed.
-	const issues = useMemo(
-		() => (activeWorkspaceSurface === "issues" ? filterByScore(allIssues, visibleFilterText, issueFilterScore, (issue) => issue.updatedAt.getTime()) : allIssues),
-		[activeWorkspaceSurface, allIssues, visibleFilterText],
-	)
+	// `allIssues` is already ordered by `orderIssuesForDisplay`; filterByScore preserves order when the
+	// query is empty and produces score-then-time order otherwise (re-grouping that is intentional).
+	const issues = useMemo(() => {
+		if (activeWorkspaceSurface !== "issues" || visibleFilterText.trim().length === 0) return allIssues
+		const filtered = filterByScore(allIssues, visibleFilterText, issueFilterScore, (issue) => issue.updatedAt.getTime())
+		return orderIssuesForDisplay(filtered, showIssueRepositoryGroups)
+	}, [activeWorkspaceSurface, allIssues, visibleFilterText, showIssueRepositoryGroups])
 	const issuesStatus: LoadStatus = selectedRepository === null ? "ready" : issuesResult.waiting ? "loading" : AsyncResult.isFailure(issuesResult) ? "error" : "ready"
 	const issuesError = AsyncResult.isFailure(issuesResult) ? errorMessage(Cause.squash(issuesResult.cause)) : null
 	const selectedIssue = issues[Math.max(0, Math.min(selectedIssueIndex, issues.length - 1))] ?? null
-	const showIssueRepositoryGroups = selectedRepository === null
 	const selectedIssueRowIndex = issueListRowIndex(issues, selectedIssueIndex, showIssueRepositoryGroups)
 	pullRequestStatusRef.current = pullRequestStatus
 
@@ -559,8 +596,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			const catalogItem = catalog.get(repository)
 			const item: RepositoryListItem = {
 				repository,
-				pullRequestCount: catalogItem?.pullRequestCount ?? 0,
-				issueCount: catalogItem?.issueCount ?? 0,
+				pullRequestCount: 0,
+				issueCount: 0,
 				current: repository === detectedRepository,
 				favorite: favoriteRepositories[repository] === true,
 				recent: recentRepositories.includes(repository),
@@ -570,23 +607,46 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			byRepository.set(repository, item)
 			return item
 		}
+		// Seed phase: repos surfaced by user state (favorites/recents/cwd) and by
+		// the cached rollup, so the Repos tab can render with counts + activity
+		// dates before the live PR/issue queries return.
 		for (const repository of [...recentRepositories, ...Object.keys(favoriteRepositories), ...(detectedRepository ? [detectedRepository] : [])]) {
 			ensure(repository)
 		}
-		const touch = (repository: string, at: Date, counts: Pick<RepositoryListItem, "pullRequestCount" | "issueCount">) => {
-			const current = ensure(repository)
-			byRepository.set(repository, {
-				...current,
-				pullRequestCount: current.pullRequestCount + counts.pullRequestCount,
-				issueCount: current.issueCount + counts.issueCount,
-				lastActivityAt: current.lastActivityAt && current.lastActivityAt > at ? current.lastActivityAt : at,
+		for (const row of repoRollup) {
+			const item = ensure(row.repository)
+			byRepository.set(row.repository, {
+				...item,
+				pullRequestCount: row.pullRequestCount,
+				issueCount: row.issueCount,
+				lastActivityAt: row.lastActivityAt,
 			})
 		}
+		// Live phase: aggregate per-repo from the currently-loaded PR + issue
+		// arrays, then *override* the seeded counts/activity for repos that have
+		// fresh data. Repos with rollup-only data keep their cached values.
+		const liveCounts = new Map<string, { pullRequestCount: number; issueCount: number; lastActivityAt: Date | null }>()
+		const bumpLive = (repository: string, at: Date, key: "pullRequestCount" | "issueCount") => {
+			const entry = liveCounts.get(repository) ?? { pullRequestCount: 0, issueCount: 0, lastActivityAt: null }
+			entry[key] = entry[key] + 1
+			if (!entry.lastActivityAt || entry.lastActivityAt < at) entry.lastActivityAt = at
+			liveCounts.set(repository, entry)
+		}
 		for (const pullRequest of pullRequests) {
-			touch(pullRequest.repository, pullRequest.updatedAt, { pullRequestCount: 1, issueCount: 0 })
+			bumpLive(pullRequest.repository, pullRequest.updatedAt, "pullRequestCount")
 		}
 		for (const issue of allIssues) {
-			touch(issue.repository, issue.updatedAt, { pullRequestCount: 0, issueCount: 1 })
+			bumpLive(issue.repository, issue.updatedAt, "issueCount")
+		}
+		for (const [repository, entry] of liveCounts) {
+			const current = ensure(repository)
+			const lastActivityAt = entry.lastActivityAt && (!current.lastActivityAt || current.lastActivityAt < entry.lastActivityAt) ? entry.lastActivityAt : current.lastActivityAt
+			byRepository.set(repository, {
+				...current,
+				pullRequestCount: entry.pullRequestCount,
+				issueCount: entry.issueCount,
+				lastActivityAt,
+			})
 		}
 		return [...byRepository.values()].sort((left, right) => {
 			if (left.current !== right.current) return left.current ? -1 : 1
@@ -596,7 +656,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			const rightTime = right.lastActivityAt?.getTime() ?? 0
 			return rightTime - leftTime || left.repository.localeCompare(right.repository)
 		})
-	}, [favoriteRepositories, recentRepositories, pullRequests, allIssues])
+	}, [favoriteRepositories, recentRepositories, pullRequests, allIssues, repoRollup])
 	const repositoryItems = useMemo(
 		() => (activeWorkspaceSurface === "repos" ? allRepositoryItems.filter((repository) => repositoryFilterScore(repository, visibleFilterText) !== null) : allRepositoryItems),
 		[activeWorkspaceSurface, allRepositoryItems, visibleFilterText],
@@ -605,10 +665,10 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const selectedRepositoryDetails = useRepositoryDetails(selectedRepositoryItem?.repository ?? null)
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
-	const activeViews = activePullRequestViews(activeView)
+	const activeViews = useAtomValue(activeViewsAtom)
 	const currentQueueCacheKey = viewCacheKey(activeView)
-	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
-	const hasMorePullRequests = Boolean(pullRequestLoad?.hasNextPage && loadedPullRequestCount < config.prFetchLimit)
+	const loadedPullRequestCount = useAtomValue(loadedPullRequestCountAtom)
+	const hasMorePullRequests = useAtomValue(hasMorePullRequestsAtom)
 	const pullRequestListFilterActive = filterMode || filterQuery.length > 0
 	const visibleHasMorePullRequests = !pullRequestListFilterActive && hasMorePullRequests
 	const { loadMorePullRequests, isLoadingMorePullRequests, resetLoadingMore } = useLoadMore({
@@ -652,6 +712,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const selectedCommentsStatus: DetailCommentsStatus = selectedCommentKey ? (pullRequestCommentsLoaded[selectedCommentKey] ?? "idle") : "idle"
 	const selectedCommentCount = activeWorkspaceSurface === "issues" ? Math.max(selectedIssue?.commentCount ?? 0, selectedComments.length) : selectedComments.length
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
+	const diffReady = useAtomValue(diffReadyAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
 	const readyDiffFiles = useMemo(
 		() => (selectedDiffState?._tag === "Ready" ? (diffWhitespaceMode === "ignore" ? minimizeWhitespaceDiffFiles(selectedDiffState.files) : selectedDiffState.files) : []),
@@ -996,6 +1057,27 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setRecentRepositories,
 	})
 
+	// Hydrate the repo rollup once we know who we are. The rollup seeds the
+	// Repos tab with cached counts and last-activity dates so it can render
+	// before the live PR + issue queries return. Re-runs whenever live queue
+	// loads land so the rollup stays current within the session.
+	useEffect(() => {
+		if (!username) return
+		void readRepoRollup(username)
+			.then((rows) => setRepoRollup(rows))
+			.catch(() => {})
+	}, [username, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, readRepoRollup, setRepoRollup])
+
+	// Background prewarm of `repository_details` for the user's repo set.
+	// Skips fetches with cached rows younger than the in-atom TTL. Fire-and-
+	// forget; failures don't surface to the user.
+	useEffect(() => {
+		if (!username) return
+		const repositories = Array.from(new Set([...recentRepositories, ...Object.keys(favoriteRepositories), ...(detectedRepository ? [detectedRepository] : [])]))
+		if (repositories.length === 0) return
+		void prewarmRepositoryDetails(repositories).catch(() => {})
+	}, [username, recentRepositories, favoriteRepositories, prewarmRepositoryDetails])
+
 	useEffect(() => {
 		setQueueSelection((current) => (current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex }))
 	}, [currentQueueCacheKey, selectedIndex])
@@ -1023,6 +1105,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	useScrollFollowSelected(prListScrollRef, selectedPullRequestRowIndex)
 	useScrollFollowSelected(issueListScrollRef, issues.length === 0 ? null : selectedIssueRowIndex)
 
+	// Keep list scroll position when toggling between surfaces. Each list's
+	// scrollbox remounts on surface switch; without persistence it starts at
+	// scrollTop=0 and useScrollFollowSelected snaps it back to the selected
+	// row — reads as a jump.
+	useScrollPersistence(prListScrollRef, prListScrollPersistedRef, activeWorkspaceSurface === "pullRequests" && !detailFullView && !diffFullView && !commentsViewActive)
+	useScrollPersistence(issueListScrollRef, issueListScrollPersistedRef, activeWorkspaceSurface === "issues" && !detailFullView && !diffFullView && !commentsViewActive)
+
 	useEffect(() => {
 		setDiffFileIndex(0)
 		setDiffScrollTop(0)
@@ -1034,7 +1123,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	useEffect(() => {
 		detailPreviewScrollRef.current?.scrollTo({ x: 0, y: 0 })
-	}, [selectedIssueIndex, selectedRepositoryIndex, activeWorkspaceSurface])
+	}, [selectedIssueIndex, selectedRepositoryIndex])
 
 	useEffect(() => {
 		setDiffFileIndex((current) => safeDiffFileIndex(readyDiffFiles, current))
@@ -1668,8 +1757,22 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	}
 
 	const openCloseModal = () => {
+		if (activeWorkspaceSurface === "issues") {
+			if (!selectedIssue) return
+			setCloseModal({
+				kind: "issue",
+				repository: selectedIssue.repository,
+				number: selectedIssue.number,
+				title: selectedIssue.title,
+				url: selectedIssue.url,
+				running: false,
+				error: null,
+			})
+			return
+		}
 		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
 		setCloseModal({
+			kind: "pullRequest",
 			repository: selectedPullRequest.repository,
 			number: selectedPullRequest.number,
 			title: selectedPullRequest.title,
@@ -1679,21 +1782,30 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	}
 
-	const confirmClosePullRequest = () => {
-		if (!closeModal.repository || closeModal.number === null || !closeModal.url || closeModal.running) return
-		const { repository, number, url } = closeModal
-		const targetPullRequest = pullRequests.find((pullRequest) => pullRequest.url === url)
-		const previousPullRequest = targetPullRequest ?? null
+	const confirmCloseModal = () => {
+		if (!closeModal.repository || closeModal.number === null || !closeModal.url) return
+		const { repository, number, url, kind } = closeModal
+		closeActiveModal()
+		flashNotice(`Closed #${number}`)
 
-		setCloseModal((current) => ({ ...current, running: true, error: null }))
+		if (kind === "issue") {
+			const previousIssue = allIssues.find((issue) => issue.url === url)
+			if (previousIssue) setIssueOverrides((current) => ({ ...current, [url]: { ...previousIssue, state: "closed" } }))
+			void closeIssue({ repository, number })
+				.then(() => refreshIssuesAtomRaw())
+				.catch((error) => {
+					if (previousIssue) setIssueOverrides((current) => ({ ...current, [url]: previousIssue }))
+					flashNotice(errorMessage(error))
+				})
+			return
+		}
+
+		const previousPullRequest = pullRequests.find((pullRequest) => pullRequest.url === url) ?? null
+		if (previousPullRequest) markPullRequestCompleted(previousPullRequest, "closed")
 		void closePullRequest({ repository, number })
-			.then(() => {
-				if (previousPullRequest) markPullRequestCompleted(previousPullRequest, "closed")
-				closeActiveModal()
-				refreshPullRequests(`Closed #${number}`)
-			})
+			.then(() => refreshPullRequests())
 			.catch((error) => {
-				setCloseModal((current) => ({ ...current, running: false, error: errorMessage(error) }))
+				if (previousPullRequest) restoreOptimisticPullRequest(previousPullRequest)
 				flashNotice(errorMessage(error))
 			})
 	}
@@ -1874,7 +1986,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		commentsViewActive,
 		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
 		canEditSelectedComment: canEditComment(selectedOrderedComment, username),
-		diffReady: selectedDiffState?._tag === "Ready",
+		diffReady,
 		effectiveDiffRenderView,
 		diffWrapMode,
 		diffWhitespaceMode,
@@ -2158,7 +2270,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				filterMode ||
 				(themeModalActive && themeModal.filterMode),
 		},
-		closeModal: { closeActiveModal, confirmClosePullRequest },
+		closeModal: { closeActiveModal, confirmCloseModal },
 		pullRequestStateModal: { closeActiveModal, confirmPullRequestStateChange, movePullRequestStateSelection },
 		mergeModal: { mergeModal, cancelOrCloseMergeModal, confirmMergeAction, cycleMergeMethod, moveMergeSelection },
 		commentThreadModal: { halfPage, closeActiveModal, openDiffCommentModal, scrollCommentThread },
@@ -2192,7 +2304,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			alignSelectedDiffCommentAnchor,
 			selectDiffCommentSide,
 		},
-		detail: { halfPage, scrollDetailFullViewBy, scrollDetailFullViewTo, runCommandById },
+		detail: { halfPage, activeSurface: activeWorkspaceSurface, scrollDetailFullViewBy, scrollDetailFullViewTo, runCommandById },
 		commentsView: {
 			halfPage,
 			visibleCount: commentsRowCount,

@@ -19,7 +19,11 @@ export const CloseModal = ({
 	loadingIndicator: string
 }) => {
 	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
-	const title = state.number ? `Close  #${state.number}` : "Close pull request"
+	const isIssue = state.kind === "issue"
+	const kindLabel = isIssue ? "issue" : "pull request"
+	const title = state.number ? `Close  #${state.number}` : `Close ${kindLabel}`
+	const subtitleText = isIssue ? "This will close the issue without resolving it." : "This will close the pull request without merging it."
+	const confirmLabel = isIssue ? "close issue" : "close"
 	const rightText = state.running ? `${loadingIndicator} closing` : "confirm"
 	const repo = state.repository ? shortRepoName(state.repository) : ""
 	const titleLines = [fitCell(repo, contentWidth), fitCell(state.title, contentWidth)]
@@ -35,12 +39,12 @@ export const CloseModal = ({
 			title={title}
 			titleFg={colors.error}
 			headerRight={{ text: rightText, pending: state.running }}
-			subtitle={<PlainLine text={fitCell("This will close the pull request without merging it.", contentWidth)} fg={colors.muted} />}
+			subtitle={<PlainLine text={fitCell(subtitleText, contentWidth)} fg={colors.muted} />}
 			bodyPadding={1}
 			footer={
 				<HintRow
 					items={[
-						{ key: "enter", label: "close" },
+						{ key: "enter", label: confirmLabel },
 						{ key: "esc", label: "cancel" },
 					]}
 				/>

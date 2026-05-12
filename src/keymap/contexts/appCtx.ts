@@ -20,7 +20,7 @@ import { buildThemeModalCtx, type BuildThemeModalCtxInput } from "./themeModalCt
 
 export interface BuildCloseModalCtxInput {
 	readonly closeActiveModal: () => void
-	readonly confirmClosePullRequest: () => void
+	readonly confirmCloseModal: () => void
 }
 
 export interface BuildDeleteCommentModalCtxInput {
@@ -92,7 +92,7 @@ export interface BuildAppCtxInput {
 
 export const buildAppCtx = (input: BuildAppCtxInput): AppCtx => ({
 	...input.flags,
-	closeModal: { closeModal: input.closeModal.closeActiveModal, confirmClose: input.closeModal.confirmClosePullRequest },
+	closeModal: { closeModal: input.closeModal.closeActiveModal, confirmClose: input.closeModal.confirmCloseModal },
 	pullRequestStateModal: buildPullRequestStateModalCtx(input.pullRequestStateModal),
 	mergeModal: buildMergeModalCtx(input.mergeModal),
 	commentThreadModal: buildCommentThreadModalCtx(input.commentThreadModal),

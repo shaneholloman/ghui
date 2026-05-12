@@ -1,13 +1,15 @@
+import type { WorkspaceSurface } from "../../workspaceSurfaces.ts"
 import type { DetailViewCtx } from "../detailView.ts"
 
 export interface BuildDetailViewCtxInput {
 	readonly halfPage: number
+	readonly activeSurface: WorkspaceSurface
 	readonly scrollDetailFullViewBy: (delta: number) => void
 	readonly scrollDetailFullViewTo: (y: number) => void
 	readonly runCommandById: (id: string) => void
 }
 
-export const buildDetailViewCtx = ({ halfPage, scrollDetailFullViewBy, scrollDetailFullViewTo, runCommandById }: BuildDetailViewCtxInput): DetailViewCtx => ({
+export const buildDetailViewCtx = ({ halfPage, activeSurface, scrollDetailFullViewBy, scrollDetailFullViewTo, runCommandById }: BuildDetailViewCtxInput): DetailViewCtx => ({
 	halfPage,
 	scrollBy: scrollDetailFullViewBy,
 	scrollTo: scrollDetailFullViewTo,
@@ -15,7 +17,7 @@ export const buildDetailViewCtx = ({ halfPage, scrollDetailFullViewBy, scrollDet
 	openTheme: () => runCommandById("theme.open"),
 	openDiff: () => runCommandById("diff.open"),
 	openComments: () => runCommandById("comments.open"),
-	closePullRequest: () => runCommandById("pull.close"),
+	closeSelectedItem: () => runCommandById(activeSurface === "issues" ? "issue.close" : "pull.close"),
 	openLabels: () => runCommandById("pull.labels"),
 	openMerge: () => runCommandById("pull.merge"),
 	toggleDraft: () => runCommandById("pull.toggle-draft"),

@@ -108,6 +108,7 @@ const buildMockIssues = (options: MockOptions): readonly IssueItem[] => {
 		return {
 			repository,
 			number,
+			state: "open" as const,
 			title: mockIssueTitle(index),
 			body: mockBody("issue", index),
 			author: index % 2 === 0 ? resolved.username : mockAuthor(index),
@@ -309,6 +310,7 @@ export const MockGitHubService = {
 				getRepositoryMergeMethods: () => Effect.succeed({ squash: true, merge: true, rebase: true }),
 				mergePullRequest: () => Effect.void,
 				closePullRequest: () => Effect.void,
+				closeIssue: () => Effect.void,
 				createPullRequestComment: (input: CreatePullRequestCommentInput) =>
 					Effect.succeed({
 						id: `mock:${Date.now()}`,

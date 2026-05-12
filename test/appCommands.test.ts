@@ -33,6 +33,7 @@ const selectedPullRequest: PullRequestItem = {
 const selectedIssue: IssueItem = {
 	repository: "owner/repo",
 	number: 7,
+	state: "open",
 	title: "Issue UX",
 	body: "",
 	author: "kit",

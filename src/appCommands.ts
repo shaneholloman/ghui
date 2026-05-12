@@ -489,6 +489,16 @@ export const buildAppCommands = ({
 			run: actions.copyIssueMetadata,
 		}),
 		defineCommand({
+			id: "issue.close",
+			title: "Close issue",
+			scope: "Issue",
+			subtitle: selectedIssueLabel,
+			shortcut: "x",
+			keywords: ["close", "resolve"],
+			disabledReason: activeWorkspaceSurface === "issues" && selectedIssue ? null : "Select an issue first.",
+			run: actions.openCloseModal,
+		}),
+		defineCommand({
 			id: "app.quit",
 			title: "Quit ghui",
 			scope: "System",

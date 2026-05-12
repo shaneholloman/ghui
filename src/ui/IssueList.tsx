@@ -15,6 +15,7 @@ import { SubjectMetaLine } from "./SubjectMetaLine.js"
 import { collectUrlPositions, findUrlAt } from "./inlineSegments.js"
 
 const ISSUE_ICON = "⊙"
+const ISSUE_CLOSED_ICON = "×"
 
 // Title width is computed per-row from the actual number width, not from a
 // list-wide max. Padding every short `#7` to align with a stray `#12723` from
@@ -31,6 +32,15 @@ const IssueDetailLine = ({ children, width }: { children: ReactNode; width: numb
 const issueGroups = (issues: readonly IssueItem[], showRepositoryGroups: boolean) => {
 	const indexed = issues.map((issue, index) => ({ issue, index }))
 	return showRepositoryGroups ? groupBy(indexed, ({ issue }) => issue.repository) : ([[null, indexed]] as const)
+}
+
+// Reorder issues so that the array order matches the order rendered by
+// IssueList (grouped by repository when grouping is shown). Without this,
+// j/k navigation steps by raw-array index and jumps across repository
+// groups, since groupBy reorders alphabetically.
+export const orderIssuesForDisplay = (issues: readonly IssueItem[], showRepositoryGroups: boolean): readonly IssueItem[] => {
+	if (!showRepositoryGroups) return issues
+	return groupBy(issues, (issue) => issue.repository).flatMap(([, groupIssues]) => groupIssues)
 }
 
 export const issueListVisualLineCount = (issues: readonly IssueItem[], showRepositoryGroups: boolean) =>
@@ -106,9 +116,13 @@ export const IssueList = ({
 				}
 				for (const { issue, index } of groupIssues) {
 					const selected = index === selectedIndex
+					const closed = issue.state === "closed"
 					const ageText = `${daysOpen(issue.createdAt)}d`
 					const numberText = `#${issue.number}`
 					const titleWidth = issueRowTitleWidth(contentWidth, numberText, ageWidth)
+					const iconFg = selected ? colors.accent : colors.muted
+					const numberFg = selected ? colors.accent : closed ? colors.muted : colors.count
+					const titleFg = selected ? colors.selectedText : closed ? colors.muted : colors.text
 					rows.push(
 						<SelectableRow
 							key={issue.url}
@@ -120,10 +134,10 @@ export const IssueList = ({
 						>
 							{(rowBg) => (
 								<>
-									<TextLine width={contentWidth} fg={selected ? colors.selectedText : colors.text} bg={rowBg}>
-										<span fg={selected ? colors.accent : colors.muted}>{ISSUE_ICON}</span>
+									<TextLine width={contentWidth} fg={titleFg} bg={rowBg}>
+										<span fg={iconFg}>{closed ? ISSUE_CLOSED_ICON : ISSUE_ICON}</span>
 										<span> </span>
-										<span fg={selected ? colors.accent : colors.count} attributes={selected ? TextAttributes.BOLD : 0}>
+										<span fg={numberFg} attributes={selected ? TextAttributes.BOLD : 0}>
 											{numberText}
 										</span>
 										<span> </span>

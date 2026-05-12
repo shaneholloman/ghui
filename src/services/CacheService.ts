@@ -9,12 +9,15 @@ import {
 	checkConclusions,
 	checkRollupStatuses,
 	checkRunStatuses,
+	type IssueItem,
 	pullRequestQueueModes,
 	pullRequestStates,
 	reviewStatuses,
 	type PullRequestItem,
 	type RepositoryDetails,
 } from "../domain.js"
+import type { IssueLoad } from "../issueLoad.js"
+import { type IssueView, issueViewCacheKey } from "../issueViews.js"
 import { mergeCachedDetails } from "../pullRequestCache.js"
 import type { PullRequestLoad } from "../pullRequestLoad.js"
 import { type PullRequestView, viewCacheKey } from "../pullRequestViews.js"
@@ -23,6 +26,18 @@ import { makeWorkspacePreferences, WorkspacePreferences, type ViewerId, type Wor
 export interface PullRequestCacheKey {
 	readonly repository: string
 	readonly number: number
+}
+
+export interface IssueCacheKey {
+	readonly repository: string
+	readonly number: number
+}
+
+export interface RepoRollupRow {
+	readonly repository: string
+	readonly pullRequestCount: number
+	readonly issueCount: number
+	readonly lastActivityAt: Date | null
 }
 
 export class CacheError extends Schema.TaggedErrorClass<CacheError>()("CacheError", {
@@ -79,6 +94,33 @@ const CachedPullRequestViewSchema = Schema.Union([
 	Schema.Struct({ _tag: Schema.tag("Repository"), repository: Schema.String }),
 ])
 
+// IssueView's Queue mode excludes "all" — that mode is reserved for the
+// Repository view (server-side `mode: "all" + repo`). Keep the literals in
+// sync with `IssueView`'s Queue branch in `issueViews.ts`.
+const issueQueueModes = ["authored", "assigned", "mentioned"] as const
+
+const CachedIssueViewSchema = Schema.Union([
+	Schema.Struct({ _tag: Schema.tag("Queue"), mode: Schema.Literals(issueQueueModes), repository: Schema.NullOr(Schema.String) }),
+	Schema.Struct({ _tag: Schema.tag("Repository"), repository: Schema.String }),
+])
+
+const issueStates = ["open", "closed"] as const
+const IssueStateSchema = Schema.Literals(issueStates)
+
+const CachedIssueItemSchema = Schema.Struct({
+	repository: Schema.String,
+	author: Schema.String,
+	number: Schema.Number,
+	state: IssueStateSchema,
+	title: Schema.String,
+	body: Schema.String,
+	labels: Schema.Array(CachedPullRequestLabelSchema),
+	commentCount: Schema.Number,
+	createdAt: Schema.String,
+	updatedAt: Schema.String,
+	url: Schema.String,
+})
+
 const CachedRepositoryDetailsSchema = Schema.Struct({
 	repository: Schema.String,
 	description: Schema.NullOr(Schema.String),
@@ -94,11 +136,23 @@ const CachedRepositoryDetailsSchema = Schema.Struct({
 })
 
 type CachedPullRequestItem = Schema.Schema.Type<typeof CachedPullRequestItemSchema>
+type CachedIssueItem = Schema.Schema.Type<typeof CachedIssueItemSchema>
 type CachedRepositoryDetails = Schema.Schema.Type<typeof CachedRepositoryDetailsSchema>
 
 interface PullRequestRow {
 	readonly pr_key: string
 	readonly data_json: string
+}
+
+interface IssueRow {
+	readonly issue_key: string
+	readonly data_json: string
+}
+
+interface RepoRollupQueryRow {
+	readonly repository: string
+	readonly count: number
+	readonly last_activity_at: string | null
 }
 
 interface QueueSnapshotRow {
@@ -117,7 +171,12 @@ interface RepositoryDetailsRow {
 	readonly data_json: string
 }
 
+interface RepositoryDetailsFetchedAtRow {
+	readonly updated_at: string
+}
+
 export const pullRequestCacheKey = ({ repository, number }: PullRequestCacheKey) => `${repository}#${number}`
+export const issueCacheKey = ({ repository, number }: IssueCacheKey) => `${repository}#${number}`
 
 const parseDate = (value: string) => {
 	const date = new Date(value)
@@ -170,6 +229,40 @@ const cachedPullRequestToDomain = (cached: CachedPullRequestItem): PullRequestIt
 	}
 }
 
+const cachedIssueToDomain = (cached: CachedIssueItem): IssueItem | null => {
+	const createdAt = parseDate(cached.createdAt)
+	if (!createdAt) return null
+	const updatedAt = parseDate(cached.updatedAt)
+	if (!updatedAt) return null
+	return {
+		repository: cached.repository,
+		author: cached.author,
+		number: cached.number,
+		state: cached.state,
+		title: cached.title,
+		body: cached.body,
+		labels: cached.labels,
+		commentCount: cached.commentCount,
+		createdAt,
+		updatedAt,
+		url: cached.url,
+	}
+}
+
+const encodeIssue = (issue: IssueItem): CachedIssueItem => ({
+	repository: issue.repository,
+	author: issue.author,
+	number: issue.number,
+	state: issue.state,
+	title: issue.title,
+	body: issue.body,
+	labels: issue.labels,
+	commentCount: issue.commentCount,
+	createdAt: issue.createdAt.toISOString(),
+	updatedAt: issue.updatedAt.toISOString(),
+	url: issue.url,
+})
+
 const encodePullRequest = (pullRequest: PullRequestItem): CachedPullRequestItem => ({
 	repository: pullRequest.repository,
 	author: pullRequest.author,
@@ -221,6 +314,22 @@ const decodePullRequestViewJson = (json: string): Effect.Effect<PullRequestView,
 	Effect.gen(function* () {
 		const value = yield* parseJson("decodePullRequestView", json)
 		const view = yield* decodeCached("decodePullRequestView", CachedPullRequestViewSchema, value)
+		return view
+	})
+
+const decodeIssueJson = (json: string): Effect.Effect<IssueItem, CacheError> =>
+	Effect.gen(function* () {
+		const value = yield* parseJson("decodeIssue", json)
+		const cached = yield* decodeCached("decodeIssue", CachedIssueItemSchema, value)
+		const issue = cachedIssueToDomain(cached)
+		if (!issue) return yield* new CacheError({ operation: "decodeIssue", cause: "invalid cached date" })
+		return issue
+	})
+
+const decodeIssueViewJson = (json: string): Effect.Effect<IssueView, CacheError> =>
+	Effect.gen(function* () {
+		const value = yield* parseJson("decodeIssueView", json)
+		const view = yield* decodeCached("decodeIssueView", CachedIssueViewSchema, value)
 		return view
 	})
 
@@ -309,6 +418,22 @@ const cacheMigrations = {
 		const sql = yield* SqlClient.SqlClient
 		yield* sql`DELETE FROM queue_snapshots WHERE view_key NOT LIKE 'pullRequest:%' AND view_key NOT LIKE 'issue:%'`
 	}),
+	// Issue queue cache. Mirrors `pull_requests` but with a slimmer row (no
+	// checks/state/headRefOid). The shared `queue_snapshots` table holds the
+	// list ordering — its `pr_keys_json` column is used for both kinds; the
+	// `view_key` prefix (`pullRequest:` vs `issue:`) is the discriminator.
+	"005_issues_table": Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient
+		yield* sql`CREATE TABLE IF NOT EXISTS issues (
+			issue_key TEXT PRIMARY KEY,
+			repository TEXT NOT NULL,
+			number INTEGER NOT NULL,
+			url TEXT NOT NULL,
+			data_json TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`
+		yield* sql`CREATE INDEX IF NOT EXISTS issues_repository_number_idx ON issues (repository, number)`
+	}),
 } satisfies Record<string, Effect.Effect<void, unknown, SqlClient.SqlClient>>
 
 const pullRequestRow = (pullRequest: PullRequestItem, updatedAt = new Date().toISOString()) => ({
@@ -349,6 +474,38 @@ const readPullRequestSql = (sql: SqlClient.SqlClient, key: PullRequestCacheKey) 
 		return yield* decodePullRequestJson(row.data_json)
 	})
 
+const issueRow = (issue: IssueItem, updatedAt = new Date().toISOString()) => ({
+	issue_key: issueCacheKey(issue),
+	repository: issue.repository,
+	number: issue.number,
+	url: issue.url,
+	data_json: JSON.stringify(encodeIssue(issue)),
+	updated_at: updatedAt,
+})
+
+const upsertIssueRowsSql = (sql: SqlClient.SqlClient, issues: readonly IssueItem[]): Effect.Effect<void, SqlError> => {
+	if (issues.length === 0) return Effect.void
+	const updatedAt = new Date().toISOString()
+	const rows = issues.map((issue) => issueRow(issue, updatedAt))
+	return sql`INSERT INTO issues ${sql.insert(rows)}
+		ON CONFLICT(issue_key) DO UPDATE SET
+			repository = excluded.repository,
+			number = excluded.number,
+			url = excluded.url,
+			data_json = excluded.data_json,
+			updated_at = excluded.updated_at`.pipe(Effect.asVoid)
+}
+
+const upsertIssueSql = (sql: SqlClient.SqlClient, issue: IssueItem) => upsertIssueRowsSql(sql, [issue])
+
+const readIssueSql = (sql: SqlClient.SqlClient, key: IssueCacheKey) =>
+	Effect.gen(function* () {
+		const rows = yield* sql<IssueRow>`SELECT issue_key, data_json FROM issues WHERE issue_key = ${issueCacheKey(key)} LIMIT 1`
+		const row = rows[0]
+		if (!row) return null
+		return yield* decodeIssueJson(row.data_json)
+	})
+
 const pruneSql = (sql: SqlClient.SqlClient) => {
 	const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 	return Effect.gen(function* () {
@@ -357,6 +514,13 @@ const pruneSql = (sql: SqlClient.SqlClient) => {
 			WHERE updated_at < ${cutoff}
 			AND pr_key NOT IN (
 				SELECT value FROM queue_snapshots, json_each(queue_snapshots.pr_keys_json)
+				WHERE view_key LIKE 'pullRequest:%'
+			)`
+		yield* sql`DELETE FROM issues
+			WHERE updated_at < ${cutoff}
+			AND issue_key NOT IN (
+				SELECT value FROM queue_snapshots, json_each(queue_snapshots.pr_keys_json)
+				WHERE view_key LIKE 'issue:%'
 			)`
 	}).pipe(Effect.catch(() => Effect.void))
 }
@@ -470,6 +634,151 @@ const liveCacheService = (sql: SqlClient.SqlClient) => {
 		yield* upsertPullRequestSql(sql, pullRequest).pipe(Effect.catch(() => Effect.void))
 	})
 
+	const readIssueQueue = (viewer: string, view: IssueView): Effect.Effect<IssueLoad | null, CacheError> =>
+		Effect.gen(function* () {
+			const rows =
+				yield* sql<QueueSnapshotRow>`SELECT view_json, pr_keys_json, fetched_at, end_cursor, has_next_page FROM queue_snapshots WHERE viewer = ${viewer} AND view_key = ${issueViewCacheKey(view)} LIMIT 1`
+			const snapshot = rows[0]
+			if (!snapshot) return null
+
+			const [cachedView, issueKeys, fetchedAt] = yield* Effect.all([
+				decodeIssueViewJson(snapshot.view_json),
+				decodeStringArrayJson(snapshot.pr_keys_json),
+				dateFromCache("decodeIssueQueue", snapshot.fetched_at),
+			])
+			if (issueViewCacheKey(cachedView) !== issueViewCacheKey(view)) return null
+			if (issueKeys.length === 0) {
+				return {
+					view,
+					data: [],
+					fetchedAt,
+					endCursor: snapshot.end_cursor,
+					hasNextPage: snapshot.has_next_page === 1,
+				} satisfies IssueLoad
+			}
+
+			const issueRows = yield* sql<IssueRow>`SELECT issue_key, data_json FROM issues WHERE issue_key IN ${sql.in(issueKeys)}`
+			const byKey = new Map<string, IssueItem>()
+			for (const row of issueRows) {
+				const decoded = yield* decodeIssueJson(row.data_json).pipe(Effect.catch(() => Effect.succeed(null)))
+				if (decoded) byKey.set(row.issue_key, decoded)
+			}
+			const data = issueKeys.flatMap((key: string) => {
+				const issue = byKey.get(key)
+				return issue ? [issue] : []
+			})
+
+			return {
+				view,
+				data,
+				fetchedAt,
+				endCursor: snapshot.end_cursor,
+				hasNextPage: snapshot.has_next_page === 1,
+			} satisfies IssueLoad
+		}).pipe(Effect.mapError((cause) => toCacheError("readIssueQueue", cause)))
+
+	const writeIssueQueue = Effect.fn("CacheService.writeIssueQueue")(function* (viewer: string, load: IssueLoad) {
+		const fetchedAt = load.fetchedAt ?? new Date()
+		const write = Effect.gen(function* () {
+			if (load.data.length > 0) {
+				yield* upsertIssueRowsSql(sql, load.data)
+			}
+			const snapshot = {
+				viewer,
+				view_key: issueViewCacheKey(load.view),
+				view_json: JSON.stringify(load.view),
+				pr_keys_json: JSON.stringify(load.data.map(issueCacheKey)),
+				fetched_at: fetchedAt.toISOString(),
+				end_cursor: load.endCursor,
+				has_next_page: load.hasNextPage ? 1 : 0,
+			}
+			yield* sql`INSERT INTO queue_snapshots ${sql.insert(snapshot)}
+				ON CONFLICT(viewer, view_key) DO UPDATE SET
+					view_json = excluded.view_json,
+					pr_keys_json = excluded.pr_keys_json,
+					fetched_at = excluded.fetched_at,
+					end_cursor = excluded.end_cursor,
+					has_next_page = excluded.has_next_page`
+		})
+		const wrote = yield* sql.withTransaction(write).pipe(
+			Effect.as(true),
+			Effect.catch(() => Effect.succeed(false)),
+		)
+		if (wrote) yield* pruneSql(sql)
+	})
+
+	const readIssue = (key: IssueCacheKey): Effect.Effect<IssueItem | null, CacheError> => readIssueSql(sql, key).pipe(Effect.mapError((cause) => toCacheError("readIssue", cause)))
+
+	const upsertIssue = Effect.fn("CacheService.upsertIssue")(function* (issue: IssueItem) {
+		yield* upsertIssueSql(sql, issue).pipe(Effect.catch(() => Effect.void))
+	})
+
+	const readRepoRollup = (viewer: string): Effect.Effect<readonly RepoRollupRow[], CacheError> =>
+		Effect.gen(function* () {
+			// Viewer-scoped GROUP BY over the items referenced by this viewer's
+			// queue snapshots. PR + issue tables are aggregated independently then
+			// merged in code so the final row carries both counts and the latest
+			// activity across kinds. `last_activity_at` reads the domain `updatedAt`
+			// from `data_json` (sortable as ISO 8601), not the row write time —
+			// the latter would always reflect "now-ish" since rows are upserted on
+			// every queue write.
+			const prRows = yield* sql<RepoRollupQueryRow>`
+				SELECT pr.repository AS repository,
+					COUNT(*) AS count,
+					MAX(json_extract(pr.data_json, '$.updatedAt')) AS last_activity_at
+				FROM pull_requests pr
+				WHERE pr.pr_key IN (
+					SELECT json_each.value
+					FROM queue_snapshots, json_each(queue_snapshots.pr_keys_json)
+					WHERE viewer = ${viewer} AND view_key LIKE 'pullRequest:%'
+				)
+				GROUP BY pr.repository`
+			const issueRows = yield* sql<RepoRollupQueryRow>`
+				SELECT i.repository AS repository,
+					COUNT(*) AS count,
+					MAX(json_extract(i.data_json, '$.updatedAt')) AS last_activity_at
+				FROM issues i
+				WHERE i.issue_key IN (
+					SELECT json_each.value
+					FROM queue_snapshots, json_each(queue_snapshots.pr_keys_json)
+					WHERE viewer = ${viewer} AND view_key LIKE 'issue:%'
+				)
+				GROUP BY i.repository`
+
+			const byRepository = new Map<string, { pullRequestCount: number; issueCount: number; lastActivityAt: Date | null }>()
+			const ensure = (repository: string) => {
+				const current = byRepository.get(repository)
+				if (current) return current
+				const next = { pullRequestCount: 0, issueCount: 0, lastActivityAt: null as Date | null }
+				byRepository.set(repository, next)
+				return next
+			}
+			const bumpActivity = (entry: { lastActivityAt: Date | null }, raw: string | null) => {
+				if (!raw) return
+				const date = parseDate(raw)
+				if (!date) return
+				if (!entry.lastActivityAt || entry.lastActivityAt < date) entry.lastActivityAt = date
+			}
+			for (const row of prRows) {
+				const entry = ensure(row.repository)
+				entry.pullRequestCount = row.count
+				bumpActivity(entry, row.last_activity_at)
+			}
+			for (const row of issueRows) {
+				const entry = ensure(row.repository)
+				entry.issueCount = row.count
+				bumpActivity(entry, row.last_activity_at)
+			}
+			return [...byRepository.entries()].map(
+				([repository, entry]): RepoRollupRow => ({
+					repository,
+					pullRequestCount: entry.pullRequestCount,
+					issueCount: entry.issueCount,
+					lastActivityAt: entry.lastActivityAt,
+				}),
+			)
+		}).pipe(Effect.mapError((cause) => toCacheError("readRepoRollup", cause)))
+
 	const readRepositoryDetails = (repository: string): Effect.Effect<RepositoryDetails | null, CacheError> =>
 		Effect.gen(function* () {
 			const rows = yield* sql<RepositoryDetailsRow>`SELECT data_json FROM repository_details WHERE repository = ${repository} LIMIT 1`
@@ -477,6 +786,14 @@ const liveCacheService = (sql: SqlClient.SqlClient) => {
 			if (!row) return null
 			return yield* decodeRepositoryDetailsJson(row.data_json)
 		}).pipe(Effect.mapError((cause) => toCacheError("readRepositoryDetails", cause)))
+
+	const readRepositoryDetailsFetchedAt = (repository: string): Effect.Effect<Date | null, CacheError> =>
+		Effect.gen(function* () {
+			const rows = yield* sql<RepositoryDetailsFetchedAtRow>`SELECT updated_at FROM repository_details WHERE repository = ${repository} LIMIT 1`
+			const row = rows[0]
+			if (!row) return null
+			return parseDate(row.updated_at)
+		}).pipe(Effect.mapError((cause) => toCacheError("readRepositoryDetailsFetchedAt", cause)))
 
 	const writeRepositoryDetails = Effect.fn("CacheService.writeRepositoryDetails")(function* (details: RepositoryDetails) {
 		const row = {
@@ -494,7 +811,23 @@ const liveCacheService = (sql: SqlClient.SqlClient) => {
 		yield* pruneSql(sql)
 	})
 
-	return { readQueue, writeQueue, readPullRequest, upsertPullRequest, readRepositoryDetails, writeRepositoryDetails, readWorkspacePreferences, writeWorkspacePreferences, prune }
+	return {
+		readQueue,
+		writeQueue,
+		readPullRequest,
+		upsertPullRequest,
+		readIssueQueue,
+		writeIssueQueue,
+		readIssue,
+		upsertIssue,
+		readRepoRollup,
+		readRepositoryDetails,
+		readRepositoryDetailsFetchedAt,
+		writeRepositoryDetails,
+		readWorkspacePreferences,
+		writeWorkspacePreferences,
+		prune,
+	}
 }
 
 export class CacheService extends Context.Service<
@@ -504,7 +837,13 @@ export class CacheService extends Context.Service<
 		readonly writeQueue: (viewer: string, load: PullRequestLoad) => Effect.Effect<void>
 		readonly readPullRequest: (key: PullRequestCacheKey) => Effect.Effect<PullRequestItem | null, CacheError>
 		readonly upsertPullRequest: (pullRequest: PullRequestItem) => Effect.Effect<void>
+		readonly readIssueQueue: (viewer: string, view: IssueView) => Effect.Effect<IssueLoad | null, CacheError>
+		readonly writeIssueQueue: (viewer: string, load: IssueLoad) => Effect.Effect<void>
+		readonly readIssue: (key: IssueCacheKey) => Effect.Effect<IssueItem | null, CacheError>
+		readonly upsertIssue: (issue: IssueItem) => Effect.Effect<void>
+		readonly readRepoRollup: (viewer: string) => Effect.Effect<readonly RepoRollupRow[], CacheError>
 		readonly readRepositoryDetails: (repository: string) => Effect.Effect<RepositoryDetails | null, CacheError>
+		readonly readRepositoryDetailsFetchedAt: (repository: string) => Effect.Effect<Date | null, CacheError>
 		readonly writeRepositoryDetails: (details: RepositoryDetails) => Effect.Effect<void>
 		readonly readWorkspacePreferences: (viewer: ViewerId) => Effect.Effect<WorkspacePreferences | null, CacheError>
 		readonly writeWorkspacePreferences: (preferences: WorkspacePreferencesInput | WorkspacePreferences) => Effect.Effect<void>
@@ -518,7 +857,13 @@ export class CacheService extends Context.Service<
 			writeQueue: () => Effect.void,
 			readPullRequest: () => Effect.succeed(null),
 			upsertPullRequest: () => Effect.void,
+			readIssueQueue: () => Effect.succeed(null),
+			writeIssueQueue: () => Effect.void,
+			readIssue: () => Effect.succeed(null),
+			upsertIssue: () => Effect.void,
+			readRepoRollup: () => Effect.succeed([]),
 			readRepositoryDetails: () => Effect.succeed(null),
+			readRepositoryDetailsFetchedAt: () => Effect.succeed(null),
 			writeRepositoryDetails: () => Effect.void,
 			readWorkspacePreferences: () => Effect.succeed(null),
 			writeWorkspacePreferences: () => Effect.void,
