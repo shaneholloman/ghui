@@ -2001,21 +2001,16 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			return current >= visiblePullRequests.length - 1 ? 0 : current + 1
 		})
 	}
+	// PR / Issue / Repo lists are long and load lazily; wrapping to the bottom
+	// from the top would jump past loading rows and feel disorienting. Clamp at
+	// 0 instead. (The matching down handler stays as-is — pressing j at the
+	// last loaded item triggers load-more rather than wrapping.)
 	const stepSelectedUpWrap = () =>
 		activeWorkspaceSurface === "repos"
-			? setSelectedRepositoryIndex((current) => {
-					if (repositoryItems.length === 0) return 0
-					return current <= 0 ? repositoryItems.length - 1 : current - 1
-				})
+			? setSelectedRepositoryIndex((current) => Math.max(0, current - 1))
 			: activeWorkspaceSurface === "issues"
-				? setSelectedIssueIndex((current) => {
-						if (issues.length === 0) return 0
-						return current <= 0 ? issues.length - 1 : current - 1
-					})
-				: setSelectedIndex((current) => {
-						if (visiblePullRequests.length === 0) return 0
-						return current <= 0 ? visiblePullRequests.length - 1 : current - 1
-					})
+				? setSelectedIssueIndex((current) => Math.max(0, current - 1))
+				: setSelectedIndex((current) => Math.max(0, current - 1))
 	const handleQuitOrClose = () => {
 		if (themeModalActive) {
 			closeThemeModal(false)

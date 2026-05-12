@@ -1,19 +1,11 @@
-import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react"
-import { type MutableRefObject, useContext } from "react"
+import { RegistryContext, useAtomSet } from "@effect/atom-react"
+import { type MutableRefObject, useContext, useState } from "react"
 import { config } from "../../config.js"
 import { errorMessage } from "../../errors.js"
 import type { PullRequestLoad } from "../../pullRequestLoad.js"
 import { type PullRequestView, viewToListInput } from "../../pullRequestViews.js"
 import { pullRequestPageSize } from "../../services/runtime.js"
-import {
-	appendPullRequestPage,
-	cacheViewerFor,
-	isLoadingMorePullRequestsAtom,
-	listOpenPullRequestPageAtom,
-	loadingMoreKeyAtom,
-	queueLoadCacheAtom,
-	writeQueueCacheAtom,
-} from "./atoms.js"
+import { appendPullRequestPage, cacheViewerFor, listOpenPullRequestPageAtom, queueLoadCacheAtom, writeQueueCacheAtom } from "./atoms.js"
 
 export interface UseLoadMoreInput {
 	readonly activeView: PullRequestView
@@ -59,8 +51,14 @@ export const useLoadMore = ({
 	const registry = useContext(RegistryContext)
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
 	const writeQueueCache = useAtomSet(writeQueueCacheAtom, { mode: "promise" })
-	const setLoadingMoreKey = useAtomSet(loadingMoreKeyAtom)
-	const isLoadingMorePullRequests = useAtomValue(isLoadingMorePullRequestsAtom)
+	// Component-local loading flag: a keepAlive atom would retain the
+	// "in flight" key across hot reloads even though the original Promise
+	// was abandoned mid-flight, leaving the spinner stuck. The atom shadow
+	// in atoms.ts (`loadingMoreKeyAtom` / `isLoadingMorePullRequestsAtom`)
+	// is still exported so commands can read the flag once dispatch is
+	// wired through there — we just don't depend on it here.
+	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
+	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
 
 	const loadMorePullRequests = (): boolean => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
