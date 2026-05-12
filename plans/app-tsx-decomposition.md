@@ -142,4 +142,13 @@ In progress — plan written 2026-05-12.
   - 0b: `loadingMoreKeyAtom` + derived `isLoadingMorePullRequestsAtom`; `useLoadMore` now reads/writes through atoms instead of `useState` (523c4df).
   - 0c: filter scoring → `src/ui/filter/scoring.ts`; diff-comment thread/range helpers → `src/ui/diff/comments.ts`. App.tsx drops ~90 LOC of inline helpers (56be4ef).
 - Phase 1 step 1 shipped 2026-05-12 (a18f1a4): new registry infrastructure under `src/commands/` (`registry.ts`, `dispatch.ts`, `atoms.ts`, `derivations.ts`, `builtins.ts`, `index.ts`). Three commands ported: `command.open`, `filter.open`, `filter.clear`. App.tsx concatenates registered + legacy commands so the palette / keymap / runCommandById path is unchanged through migration.
-- Phase 1 step 2 next: port further batches. Workspace surface switches (5), view switches (5), and detail/diff toggles (8) are next; each requires lifting one or two more derivations to atoms (`workspaceTabSurfacesAtom`, `noticeAtom`, etc.). Hook-local handlers (theme, merge, refresh) come last.
+- Phase 1 step 2 shipped 2026-05-12 (2fb320c): workspace switches (3) + detail/diff close (3) + browser/clipboard (3) — 9 commands. Lifted `workspaceTabSurfacesAtom`, `selectedIssueAtom`, plus ~10 derivation atoms for disabled-reason chains.
+- Phase 1 step 3 shipped 2026-05-12 (b103e83): `repository.open`, `pull.close`, `issue.close` — 3 commands. Pattern: read selection via atom, write modal state via `Atom.set(activeModalAtom, Modal.X({...}))`.
+- Phase 1 step 4 shipped 2026-05-12 (259b2ed): `pull.toggle-draft`, `pull.submit-review`, `comments.new`, `pull.labels` — 4 commands. `pull.labels` calls `GitHubService.use(listRepoLabels)` and atom-updates the modal in-place when the response lands.
+
+Net: 19 commands ported to the new registry. ~17 remain in `buildAppCommands`, all needing either:
+- hook-local helper lift (`preserveCurrentDiffLocation`, `loadPullRequestDiff`, `loadPullRequestComments`/`loadIssueComments`, `refreshGenerationRef`, `useThemeModal`, `useMergeFlow`, `selectDiffFile`)
+- derivation lift (`diffCommentAnchors`, `selectedDiffCommentAnchor`, `diffCommentRangeStartAnchor`, etc.)
+- system access lift (`renderer.destroy()` for `app.quit`)
+
+Phase 1 step 5+ should batch by lift: each lift unblocks several commands. E.g. lifting `preserveCurrentDiffLocation` to an atom-driven hook unblocks the three diff toggles in one go.
