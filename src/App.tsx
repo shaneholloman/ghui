@@ -49,6 +49,7 @@ import {
 import { activeIssueViewAtom, addIssueLabelAtom, closeIssueAtom, issueLoadAtom, issuesAtom, issueViewRepository, removeIssueLabelAtom } from "./ui/issues/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "./ui/detail/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "./ui/filter/atoms.js"
+import { filterByScore, issueFilterScore, repositoryFilterScore } from "./ui/filter/scoring.js"
 import { selectedIndexAtom, selectedIssueIndexAtom } from "./ui/listSelection/atoms.js"
 import { activeModalAtom } from "./ui/modals/atoms.js"
 import { noticeAtom } from "./ui/notice/atoms.js"
@@ -113,6 +114,15 @@ import {
 	selectedDiffKeyAtom,
 	selectedDiffStateAtom,
 } from "./ui/diff/atoms.js"
+import {
+	diffCommentRangeContains,
+	diffCommentRangeLabel,
+	diffCommentRangeSelection,
+	diffCommentThreadMapKey,
+	groupDiffCommentThreads,
+	isLocalDiffComment,
+	sameDiffCommentTarget,
+} from "./ui/diff/comments.js"
 import { useDiffLineColors } from "./ui/diff/useDiffLineColors.js"
 import { useDiffLocationPreservation } from "./ui/diff/useDiffLocationPreservation.js"
 import { useDiffPrefetch } from "./ui/diff/useDiffPrefetch.js"
@@ -124,9 +134,7 @@ import {
 	buildStackedDiffFiles,
 	diffAnchorOnSide,
 	diffCommentAnchorLabel,
-	diffCommentLineLabel,
 	diffCommentLocationKey,
-	diffCommentSideLabel,
 	getStackedDiffCommentAnchors,
 	minimizeWhitespaceDiffFiles,
 	PullRequestDiffState,
@@ -135,7 +143,6 @@ import {
 	scrollTopForVisibleLine,
 	splitPatchFiles,
 	stackedDiffFileIndexAtLine,
-	type DiffCommentAnchor,
 	type StackedDiffCommentAnchor,
 	verticalDiffAnchor,
 } from "./ui/diff.js"
@@ -219,11 +226,6 @@ interface DetailPlaceholderInput {
 	readonly filterText: string
 }
 
-interface DiffCommentRangeSelection {
-	readonly start: StackedDiffCommentAnchor
-	readonly end: StackedDiffCommentAnchor
-}
-
 interface AppProps {
 	readonly systemThemeGeneration?: number
 }
@@ -238,94 +240,11 @@ const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index
 
 const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inner) / 2)
 
-const repositoryFilterScore = (repository: RepositoryListItem, query: string) => {
-	const normalized = query.trim().toLowerCase()
-	if (normalized.length === 0) return 0
-	const fields = [
-		repository.repository.toLowerCase(),
-		repository.description?.toLowerCase() ?? "",
-		repository.current ? "current" : "",
-		repository.favorite ? "favorite" : "",
-		repository.recent ? "recent" : "",
-	]
-	const scores = fields.flatMap((field, index) => {
-		const matchIndex = field.indexOf(normalized)
-		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
-	})
-	return scores.length > 0 ? Math.min(...scores) : null
-}
-
-const issueFilterScore = (issue: IssueItem, query: string) => {
-	const normalized = query.trim().toLowerCase()
-	if (normalized.length === 0) return 0
-	const fields = [
-		issue.title.toLowerCase(),
-		issue.repository.toLowerCase(),
-		String(issue.number),
-		issue.author.toLowerCase(),
-		issue.labels
-			.map((label) => label.name)
-			.join(" ")
-			.toLowerCase(),
-		issue.body.toLowerCase(),
-	]
-	const scores = fields.flatMap((field, index) => {
-		const matchIndex = field.indexOf(normalized)
-		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
-	})
-	return scores.length > 0 ? Math.min(...scores) : null
-}
-
-const filterByScore = <Item,>(items: readonly Item[], query: string, scoreItem: (item: Item, query: string) => number | null, getTime: (item: Item) => number) => {
-	const normalized = query.trim().toLowerCase()
-	if (normalized.length === 0) return items
-	return items
-		.flatMap((item) => {
-			const score = scoreItem(item, normalized)
-			return score === null ? [] : [{ item, score }]
-		})
-		.sort((left, right) => left.score - right.score || getTime(right.item) - getTime(left.item))
-		.map(({ item }) => item)
-}
-
-const diffCommentThreadMapKey = (diffKey: string, location: Pick<PullRequestReviewComment, "path" | "side" | "line">) => `${diffKey}:${diffCommentLocationKey(location)}`
-
-const diffCommentThreadKey = (pullRequest: PullRequestItem, comment: Pick<PullRequestReviewComment, "path" | "side" | "line">) =>
-	diffCommentThreadMapKey(pullRequestDiffKey(pullRequest), comment)
-
-const groupDiffCommentThreads = (pullRequest: PullRequestItem, comments: readonly PullRequestReviewComment[]) => {
-	const threads: Record<string, PullRequestReviewComment[]> = {}
-	for (const comment of comments) {
-		const key = diffCommentThreadKey(pullRequest, comment)
-		const thread = threads[key]
-		if (thread) thread.push(comment)
-		else threads[key] = [comment]
-	}
-	return threads
-}
-
-const isLocalDiffComment = (comment: PullRequestReviewComment) => comment.id.startsWith("local:")
-
 const reviewStatusAfterSubmit = {
 	COMMENT: null,
 	APPROVE: "approved",
 	REQUEST_CHANGES: "changes",
 } satisfies Record<SubmitPullRequestReviewInput["event"], PullRequestItem["reviewStatus"] | null>
-
-const sameDiffCommentTarget = (left: DiffCommentAnchor, right: DiffCommentAnchor) => left.path === right.path && left.side === right.side
-
-const diffCommentRangeSelection = (start: StackedDiffCommentAnchor | null, end: StackedDiffCommentAnchor | null): DiffCommentRangeSelection | null => {
-	if (!start || !end || !sameDiffCommentTarget(start, end)) return null
-	return start.line <= end.line ? { start, end } : { start: end, end: start }
-}
-
-const diffCommentRangeContains = (range: DiffCommentRangeSelection, anchor: StackedDiffCommentAnchor) =>
-	sameDiffCommentTarget(range.start, anchor) && anchor.line >= range.start.line && anchor.line <= range.end.line
-
-const diffCommentRangeLabel = (range: DiffCommentRangeSelection) =>
-	range.start.line === range.end.line
-		? diffCommentAnchorLabel(range.end)
-		: `${diffCommentSideLabel(range.end)} ${diffCommentLineLabel(range.start)}-${diffCommentLineLabel(range.end)}`
 
 const getDetailPlaceholderContent = ({ status, retryProgress, loadingIndicator, visibleCount, filterText }: DetailPlaceholderInput): DetailPlaceholderContent => {
 	if (status === "loading") {
