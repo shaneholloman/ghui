@@ -9,9 +9,9 @@ import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "../ui/filter/a
 import { selectedIssueAtom } from "../ui/issues/atoms.js"
 import { selectedIssueIndexAtom } from "../ui/listSelection/atoms.js"
 import { activeModalAtom } from "../ui/modals/atoms.js"
-import { initialCommandPaletteState, Modal } from "../ui/modals/types.js"
+import { initialCommandPaletteState, initialOpenRepositoryModalState, Modal } from "../ui/modals/types.js"
 import { noticeAtom } from "../ui/notice/atoms.js"
-import { selectedPullRequestAtom } from "../ui/pullRequests/atoms.js"
+import { selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
 import { workspaceSurfaceAtom, workspaceTabSurfacesAtom } from "../workspace/atoms.js"
 import { type WorkspaceSurface, workspaceSurfaceLabels, workspaceSurfaces } from "../workspaceSurfaces.js"
 import {
@@ -20,8 +20,10 @@ import {
 	filterClearDisabledReasonAtom,
 	filterTitleAtom,
 	issueSelectedReasonAtom,
+	noOpenPullRequestReasonAtom,
 	noPullRequestReasonAtom,
 	noSelectedItemReasonAtom,
+	repositoryOpenSubtitleAtom,
 	selectedIssueLabelAtom,
 	selectedItemLabelAtom,
 	selectedPullRequestLabelAtom,
@@ -156,6 +158,68 @@ export const globalCommands: readonly CommandDefinition[] = [
 			yield* Atom.set(diffCommentRangeStartIndexAtom, null)
 		}),
 	}),
+	// === Modal openers (selection-seeded) ===
+	defineCommand({
+		id: "repository.open",
+		title: "Open repository...",
+		scope: "View",
+		subtitle: repositoryOpenSubtitleAtom,
+		keywords: ["repo", "repository", "owner", "github"],
+		run: Effect.gen(function* () {
+			const repository = yield* Atom.get(selectedRepositoryAtom)
+			yield* Atom.set(activeModalAtom, Modal.OpenRepository({ ...initialOpenRepositoryModalState, query: repository ?? "" }))
+		}),
+	}),
+	defineCommand({
+		id: "pull.close",
+		title: "Close pull request",
+		scope: "Pull request",
+		subtitle: selectedPullRequestLabelAtom,
+		shortcut: "x",
+		disabledReason: noOpenPullRequestReasonAtom,
+		run: Effect.gen(function* () {
+			const pr = yield* Atom.get(selectedPullRequestAtom)
+			if (!pr || pr.state !== "open") return
+			yield* Atom.set(
+				activeModalAtom,
+				Modal.Close({
+					kind: "pullRequest",
+					repository: pr.repository,
+					number: pr.number,
+					title: pr.title,
+					url: pr.url,
+					running: false,
+					error: null,
+				}),
+			)
+		}),
+	}),
+	defineCommand({
+		id: "issue.close",
+		title: "Close issue",
+		scope: "Issue",
+		subtitle: selectedIssueLabelAtom,
+		shortcut: "x",
+		keywords: ["close", "resolve"],
+		disabledReason: issueSelectedReasonAtom,
+		run: Effect.gen(function* () {
+			const issue = yield* Atom.get(selectedIssueAtom)
+			if (!issue) return
+			yield* Atom.set(
+				activeModalAtom,
+				Modal.Close({
+					kind: "issue",
+					repository: issue.repository,
+					number: issue.number,
+					title: issue.title,
+					url: issue.url,
+					running: false,
+					error: null,
+				}),
+			)
+		}),
+	}),
+
 	// === System / system-service commands ===
 	defineCommand({
 		id: "pull.open-browser",

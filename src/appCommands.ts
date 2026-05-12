@@ -8,7 +8,6 @@ import type { WorkspaceSurface } from "./workspaceSurfaces.js"
 interface AppCommandActions {
 	readonly refreshPullRequests: (message?: string, options?: { readonly resetTransientState?: boolean }) => void
 	readonly openThemeModal: () => void
-	readonly openRepositoryPicker: () => void
 	readonly loadMorePullRequests: () => void
 	readonly switchViewTo: (view: PullRequestView) => void
 	readonly openDiffView: () => void
@@ -32,13 +31,11 @@ interface AppCommandActions {
 	readonly openPullRequestStateModal: () => void
 	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
-	readonly openCloseModal: () => void
 	readonly quit: () => void
 }
 
 interface BuildAppCommandsInput {
 	readonly pullRequestStatus: LoadStatus
-	readonly selectedRepository: string | null
 	readonly activeWorkspaceSurface: WorkspaceSurface
 	readonly activeViews: readonly PullRequestView[]
 	readonly activeView: PullRequestView
@@ -66,7 +63,6 @@ interface BuildAppCommandsInput {
 
 export const buildAppCommands = ({
 	pullRequestStatus,
-	selectedRepository,
 	activeWorkspaceSurface,
 	activeViews,
 	activeView,
@@ -135,14 +131,6 @@ export const buildAppCommands = ({
 			shortcut: "t",
 			keywords: ["colors", "appearance"],
 			run: actions.openThemeModal,
-		}),
-		defineCommand({
-			id: "repository.open",
-			title: "Open repository...",
-			scope: "View",
-			subtitle: selectedRepository ? `Current repository: ${selectedRepository}` : "Enter owner/name or a GitHub URL",
-			keywords: ["repo", "repository", "owner", "github"],
-			run: actions.openRepositoryPicker,
 		}),
 		...activeViews.map((view) =>
 			defineCommand({
@@ -370,24 +358,6 @@ export const buildAppCommands = ({
 			shortcut: "m",
 			keywords: ["auto merge", "squash"],
 			run: actions.openMergeModal,
-		}),
-		forSelected({
-			id: "pull.close",
-			title: "Close pull request",
-			scope: "Pull request",
-			shortcut: "x",
-			requireOpen: true,
-			run: actions.openCloseModal,
-		}),
-		defineCommand({
-			id: "issue.close",
-			title: "Close issue",
-			scope: "Issue",
-			subtitle: selectedIssueLabel,
-			shortcut: "x",
-			keywords: ["close", "resolve"],
-			disabledReason: activeWorkspaceSurface === "issues" && selectedIssue ? null : "Select an issue first.",
-			run: actions.openCloseModal,
 		}),
 		defineCommand({
 			id: "app.quit",

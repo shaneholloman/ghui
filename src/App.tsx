@@ -360,7 +360,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				return ctor(next)
 			})
 	const setLabelModal = makeModalSetter("Label")
-	const setCloseModal = makeModalSetter("Close")
 	const setPullRequestStateModal = makeModalSetter("PullRequestState")
 	const setMergeModal = makeModalSetter("Merge")
 	const setCommentModal = makeModalSetter("Comment")
@@ -1655,32 +1654,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		})
 	}
 
-	const openCloseModal = () => {
-		if (activeWorkspaceSurface === "issues") {
-			if (!selectedIssue) return
-			setCloseModal({
-				kind: "issue",
-				repository: selectedIssue.repository,
-				number: selectedIssue.number,
-				title: selectedIssue.title,
-				url: selectedIssue.url,
-				running: false,
-				error: null,
-			})
-			return
-		}
-		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
-		setCloseModal({
-			kind: "pullRequest",
-			repository: selectedPullRequest.repository,
-			number: selectedPullRequest.number,
-			title: selectedPullRequest.title,
-			url: selectedPullRequest.url,
-			running: false,
-			error: null,
-		})
-	}
-
 	const confirmCloseModal = () => {
 		if (!closeModal.repository || closeModal.number === null || !closeModal.url) return
 		const { repository, number, url, kind } = closeModal
@@ -1885,7 +1858,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const legacyAppCommands: readonly AppCommand[] = buildAppCommands({
 		pullRequestStatus,
-		selectedRepository,
 		activeWorkspaceSurface,
 		activeViews,
 		activeView,
@@ -1911,7 +1883,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		actions: {
 			refreshPullRequests,
 			openThemeModal,
-			openRepositoryPicker,
 			loadMorePullRequests,
 			switchViewTo,
 			openDiffView,
@@ -1939,7 +1910,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			openPullRequestStateModal,
 			openLabelModal,
 			openMergeModal,
-			openCloseModal,
 			quit: () => renderer.destroy(),
 		},
 	})
