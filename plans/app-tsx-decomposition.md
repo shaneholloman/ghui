@@ -141,4 +141,5 @@ In progress — plan written 2026-05-12.
   - 0a: derived atoms `selectedRepositoryAtom`, `activeViewsAtom`, `loadedPullRequestCountAtom`, `hasMorePullRequestsAtom`, `diffReadyAtom`. App.tsx wires through `useAtomValue` (602b883, 22a8884).
   - 0b: `loadingMoreKeyAtom` + derived `isLoadingMorePullRequestsAtom`; `useLoadMore` now reads/writes through atoms instead of `useState` (523c4df).
   - 0c: filter scoring → `src/ui/filter/scoring.ts`; diff-comment thread/range helpers → `src/ui/diff/comments.ts`. App.tsx drops ~90 LOC of inline helpers (56be4ef).
-- Phase 1 (command registry) next.
+- Phase 1 step 1 shipped 2026-05-12 (a18f1a4): new registry infrastructure under `src/commands/` (`registry.ts`, `dispatch.ts`, `atoms.ts`, `derivations.ts`, `builtins.ts`, `index.ts`). Three commands ported: `command.open`, `filter.open`, `filter.clear`. App.tsx concatenates registered + legacy commands so the palette / keymap / runCommandById path is unchanged through migration.
+- Phase 1 step 2 next: port further batches. Workspace surface switches (5), view switches (5), and detail/diff toggles (8) are next; each requires lifting one or two more derivations to atoms (`workspaceTabSurfacesAtom`, `noticeAtom`, etc.). Hook-local handlers (theme, merge, refresh) come last.
