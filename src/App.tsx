@@ -12,6 +12,8 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
+import { commandSnapshotsAtom } from "./commands/atoms.js"
+import { dispatchCommandAtom } from "./commands/dispatch.js"
 import {
 	type DiffCommentSide,
 	type IssueItem,
@@ -1887,10 +1889,27 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	usePasteHandler({ renderer, onPaste: insertPastedText })
 
-	const appCommands: readonly AppCommand[] = buildAppCommands({
+	const dispatchCommand = useAtomSet(dispatchCommandAtom, { mode: "promise" })
+	const commandSnapshots = useAtomValue(commandSnapshotsAtom)
+	const registeredCommands = useMemo<readonly AppCommand[]>(
+		() =>
+			commandSnapshots.map((snapshot) => ({
+				id: snapshot.id,
+				title: snapshot.title,
+				scope: snapshot.scope,
+				...(snapshot.subtitle !== undefined && { subtitle: snapshot.subtitle }),
+				...(snapshot.shortcut !== undefined && { shortcut: snapshot.shortcut }),
+				...(snapshot.keywords !== undefined && { keywords: snapshot.keywords }),
+				disabledReason: snapshot.disabledReason,
+				run: () => {
+					void dispatchCommand(snapshot.id)
+				},
+			})),
+		[commandSnapshots, dispatchCommand],
+	)
+
+	const legacyAppCommands: readonly AppCommand[] = buildAppCommands({
 		pullRequestStatus,
-		filterQuery,
-		filterMode,
 		selectedRepository,
 		activeWorkspaceSurface,
 		activeViews,
@@ -1978,6 +1997,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			quit: () => renderer.destroy(),
 		},
 	})
+	const appCommands: readonly AppCommand[] = [...registeredCommands, ...legacyAppCommands]
 	const runCommand = (command: AppCommand, options: { readonly notifyDisabled?: boolean; readonly closePalette?: boolean } = {}) => {
 		if (!commandEnabled(command)) {
 			if (options.notifyDisabled && command.disabledReason) flashNotice(command.disabledReason)

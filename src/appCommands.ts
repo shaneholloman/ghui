@@ -48,8 +48,6 @@ interface AppCommandActions {
 
 interface BuildAppCommandsInput {
 	readonly pullRequestStatus: LoadStatus
-	readonly filterQuery: string
-	readonly filterMode: boolean
 	readonly selectedRepository: string | null
 	readonly activeWorkspaceSurface: WorkspaceSurface
 	readonly activeViews: readonly PullRequestView[]
@@ -79,8 +77,6 @@ interface BuildAppCommandsInput {
 
 export const buildAppCommands = ({
 	pullRequestStatus,
-	filterQuery,
-	filterMode,
 	selectedRepository,
 	activeWorkspaceSurface,
 	activeViews,
@@ -110,7 +106,6 @@ export const buildAppCommands = ({
 	const selectedPullRequestLabel = selectedPullRequest ? `#${selectedPullRequest.number} ${selectedPullRequest.repository}` : "No pull request selected"
 	const selectedIssueLabel = selectedIssue ? `#${selectedIssue.number} ${selectedIssue.repository}` : "No issue selected"
 	const selectedItemLabel = activeWorkspaceSurface === "issues" ? selectedIssueLabel : selectedPullRequestLabel
-	const activeSurfaceLabel = workspaceSurfaceLabels[activeWorkspaceSurface].toLowerCase()
 	const pullRequestSurfaceReason = activeWorkspaceSurface === "pullRequests" ? null : "Pull request surface is not active."
 	const noPullRequestReason = pullRequestSurfaceReason ?? (selectedPullRequest ? null : "Select a pull request first.")
 	const noSelectedItemReason = activeWorkspaceSurface === "issues" ? (selectedIssue ? null : "Select an issue first.") : noPullRequestReason
@@ -135,15 +130,6 @@ export const buildAppCommands = ({
 
 	return [
 		defineCommand({
-			id: "command.open",
-			title: "Open command palette",
-			scope: "Global",
-			subtitle: "Search every available route through ghui",
-			shortcut: "ctrl-p/cmd-k/?",
-			keywords: ["palette", "commands", "deck", "help", "keys", "keyboard", "shortcuts"],
-			run: actions.openCommandPalette,
-		}),
-		defineCommand({
 			id: "pull.refresh",
 			title: pullRequestStatus === "error" ? "Retry loading pull requests" : "Refresh pull requests",
 			scope: "Global",
@@ -152,24 +138,6 @@ export const buildAppCommands = ({
 			disabledReason: pullRequestSurfaceReason,
 			keywords: ["reload", "sync"],
 			run: () => actions.refreshPullRequests("Refreshed", { resetTransientState: true }),
-		}),
-		defineCommand({
-			id: "filter.open",
-			title: `Filter ${activeSurfaceLabel}`,
-			scope: "Global",
-			subtitle: "Search the visible surface",
-			shortcut: "/",
-			keywords: ["search"],
-			run: actions.openFilter,
-		}),
-		defineCommand({
-			id: "filter.clear",
-			title: "Clear filter",
-			scope: "Global",
-			subtitle: "Show every item in the current surface",
-			shortcut: "esc",
-			disabledReason: filterQuery.length > 0 || filterMode ? null : "No filter is active.",
-			run: actions.clearFilter,
 		}),
 		defineCommand({
 			id: "theme.open",
