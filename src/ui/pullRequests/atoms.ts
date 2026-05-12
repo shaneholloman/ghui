@@ -290,16 +290,22 @@ export const displayedPullRequestsAtom = Atom.make((get) => {
 	const load = get(pullRequestLoadAtom)
 	const overrides = get(pullRequestOverridesAtom)
 	const recentlyCompleted = get(recentlyCompletedPullRequestsAtom)
-	const source = load?.data ?? []
+	const scope = viewRepository(get(activeViewAtom))
+	// Defensive scope filter: when a repository is selected, only show PRs
+	// for that repo. Without this, stale cache entries or orphans from
+	// `recentlyCompletedPullRequestsAtom` (which is a global url→pr map)
+	// can leak across views and surface PRs from the previous repository
+	// under the new breadcrumb.
+	const inScope = (pullRequest: PullRequestItem) => scope === null || pullRequest.repository === scope
+	const source = (load?.data ?? []).filter(inScope)
 	const seenUrls = new Set<string>()
 	const open = source.map((pullRequest) => {
 		seenUrls.add(pullRequest.url)
 		return recentlyCompleted[pullRequest.url] ?? overrides[pullRequest.url] ?? pullRequest
 	})
-	const orphans = Object.values(recentlyCompleted).filter((pullRequest) => !seenUrls.has(pullRequest.url))
-	// Defensive sort by updatedAt DESC: the server already sorts this way, but
-	// pagination drift across pages and stale cache reads can scramble the
-	// merged list. Sorting client-side guarantees a stable, predictable order.
+	const orphans = Object.values(recentlyCompleted).filter((pullRequest) => inScope(pullRequest) && !seenUrls.has(pullRequest.url))
+	// Sort by updatedAt DESC. Server already sorts this way, but pagination
+	// drift and merged orphans can scramble the order — guarantee it here.
 	return [...open, ...orphans].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
 })
 

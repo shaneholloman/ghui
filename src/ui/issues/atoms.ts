@@ -95,7 +95,11 @@ export const isLoadingIssueViewAtom = Atom.make((get) => {
 export const issueListAtom = Atom.make((get): readonly IssueItem[] => {
 	const load = get(issueLoadAtom)
 	const overrides = get(issueOverridesAtom)
-	const source = load?.data ?? []
+	// Defensive scope filter — see displayedPullRequestsAtom for the same
+	// pattern. Without it, a stale cache entry can surface items from the
+	// previous repository under the new breadcrumb.
+	const scope = issueViewRepository(get(activeIssueViewAtom))
+	const source = (load?.data ?? []).filter((issue) => scope === null || issue.repository === scope)
 	return source.map((issue) => overrides[issue.url] ?? issue)
 })
 
