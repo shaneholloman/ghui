@@ -1,12 +1,15 @@
 import { Effect } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
+import type { IssueItem } from "../../domain.js"
 import { issueQueryToListInput } from "../../item.js"
 import type { IssueLoad } from "../../issueLoad.js"
 import { type IssueView, initialIssueView, issueViewCacheKey, issueViewMode, issueViewRepository, issueViewToQuery } from "../../issueViews.js"
 import { CacheService } from "../../services/CacheService.js"
 import { GitHubService } from "../../services/GitHubService.js"
 import { detectedRepository, githubRuntime, pullRequestPageSize } from "../../services/runtime.js"
+import { selectedIssueIndexAtom } from "../listSelection/atoms.js"
+import { issueOverridesAtom } from "../pullRequests/atoms.js"
 
 // Re-export the view type and helpers for back-compat with existing call sites
 // that import from this module. New code should import directly from
@@ -87,6 +90,20 @@ export const isLoadingIssueViewAtom = Atom.make((get) => {
 	const cacheKey = issueViewCacheKey(get(activeIssueViewAtom))
 	const resolved = AsyncResult.getOrElse(get(issuesAtom), () => null)
 	return resolved !== null && issueViewCacheKey(resolved.view) !== cacheKey
+})
+
+export const issueListAtom = Atom.make((get): readonly IssueItem[] => {
+	const load = get(issueLoadAtom)
+	const overrides = get(issueOverridesAtom)
+	const source = load?.data ?? []
+	return source.map((issue) => overrides[issue.url] ?? issue)
+})
+
+export const selectedIssueAtom = Atom.make((get): IssueItem | null => {
+	const issues = get(issueListAtom)
+	if (issues.length === 0) return null
+	const index = Math.max(0, Math.min(get(selectedIssueIndexAtom), issues.length - 1))
+	return issues[index] ?? null
 })
 
 export const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>

@@ -3,22 +3,15 @@ import { defineCommand } from "./commands.js"
 import type { IssueItem, LoadStatus, PullRequestItem, PullRequestReviewEvent } from "./domain.js"
 import type { DiffView, DiffWhitespaceMode, DiffWrapMode } from "./ui/diff.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
-import { workspaceSurfaceLabels, workspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
+import type { WorkspaceSurface } from "./workspaceSurfaces.js"
 
 interface AppCommandActions {
-	readonly openCommandPalette: () => void
 	readonly refreshPullRequests: (message?: string, options?: { readonly resetTransientState?: boolean }) => void
-	readonly openFilter: () => void
-	readonly clearFilter: () => void
 	readonly openThemeModal: () => void
 	readonly openRepositoryPicker: () => void
-	readonly switchWorkspaceSurface: (surface: WorkspaceSurface) => void
 	readonly loadMorePullRequests: () => void
 	readonly switchViewTo: (view: PullRequestView) => void
-	readonly openDetails: () => void
-	readonly closeDetails: () => void
 	readonly openDiffView: () => void
-	readonly closeDiffView: () => void
 	readonly openCommentsView: () => void
 	readonly closeCommentsView: () => void
 	readonly openNewIssueCommentModal: () => void
@@ -40,9 +33,6 @@ interface AppCommandActions {
 	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
 	readonly openCloseModal: () => void
-	readonly openPullRequestInBrowser: () => void
-	readonly copyPullRequestMetadata: () => void
-	readonly copyIssueMetadata: () => void
 	readonly quit: () => void
 }
 
@@ -57,7 +47,6 @@ interface BuildAppCommandsInput {
 	readonly isLoadingMorePullRequests: boolean
 	readonly selectedPullRequest: PullRequestItem | null
 	readonly selectedIssue: IssueItem | null
-	readonly detailFullView: boolean
 	readonly diffFullView: boolean
 	readonly commentsViewActive: boolean
 	readonly hasSelectedComment: boolean
@@ -86,7 +75,6 @@ export const buildAppCommands = ({
 	isLoadingMorePullRequests,
 	selectedPullRequest,
 	selectedIssue,
-	detailFullView,
 	diffFullView,
 	commentsViewActive,
 	hasSelectedComment,
@@ -156,18 +144,6 @@ export const buildAppCommands = ({
 			keywords: ["repo", "repository", "owner", "github"],
 			run: actions.openRepositoryPicker,
 		}),
-		...workspaceSurfaces.map((surface, index) =>
-			defineCommand({
-				id: `workspace.${surface}`,
-				title: `Show ${workspaceSurfaceLabels[surface]}`,
-				scope: "View" as const,
-				subtitle: activeWorkspaceSurface === surface ? "Already showing this surface" : "Switch project surface",
-				shortcut: `${index + 1}`,
-				keywords: [workspaceSurfaceLabels[surface], "workspace", "surface", "tab"],
-				disabledReason: activeWorkspaceSurface === surface ? "Already showing this surface." : null,
-				run: () => actions.switchWorkspaceSurface(surface),
-			}),
-		),
 		...activeViews.map((view) =>
 			defineCommand({
 				id: view._tag === "Repository" ? "view.repository" : `view.${view.mode}`,
@@ -187,24 +163,6 @@ export const buildAppCommands = ({
 			disabledReason: pullRequestSurfaceReason ?? loadMoreDisabledReason,
 			keywords: ["next page", "pagination", "more"],
 			run: actions.loadMorePullRequests,
-		}),
-		defineCommand({
-			id: "detail.open",
-			title: "Open details",
-			scope: "View",
-			subtitle: selectedItemLabel,
-			shortcut: "enter",
-			disabledReason: noSelectedItemReason,
-			run: actions.openDetails,
-		}),
-		defineCommand({
-			id: "detail.close",
-			title: "Close details view",
-			scope: "Pull request",
-			subtitle: "Return to the queue",
-			shortcut: "esc",
-			disabledReason: detailFullView ? null : "Details view is not open.",
-			run: actions.closeDetails,
 		}),
 		forSelected({
 			id: "diff.open",
@@ -263,15 +221,6 @@ export const buildAppCommands = ({
 			disabledReason: ownCommentReason,
 			keywords: ["remove", "destroy"],
 			run: actions.openDeleteSelectedComment,
-		}),
-		defineCommand({
-			id: "diff.close",
-			title: "Close diff view",
-			scope: "Diff",
-			subtitle: "Return to the queue or detail view",
-			shortcut: "esc",
-			disabledReason: diffFullView ? null : "Diff view is not open.",
-			run: actions.closeDiffView,
 		}),
 		defineCommand({
 			id: "diff.reload",
@@ -429,32 +378,6 @@ export const buildAppCommands = ({
 			shortcut: "x",
 			requireOpen: true,
 			run: actions.openCloseModal,
-		}),
-		forSelected({
-			id: "pull.open-browser",
-			title: "Open pull request in browser",
-			scope: "Pull request",
-			shortcut: "o",
-			keywords: ["github", "web"],
-			run: actions.openPullRequestInBrowser,
-		}),
-		forSelected({
-			id: "pull.copy-metadata",
-			title: "Copy pull request metadata",
-			scope: "Pull request",
-			shortcut: "y",
-			keywords: ["clipboard", "url", "title"],
-			run: actions.copyPullRequestMetadata,
-		}),
-		defineCommand({
-			id: "issue.copy-metadata",
-			title: "Copy issue metadata",
-			scope: "Comments",
-			subtitle: selectedIssueLabel,
-			shortcut: "y",
-			keywords: ["clipboard", "url", "title"],
-			disabledReason: activeWorkspaceSurface === "issues" && selectedIssue ? null : "Select an issue first.",
-			run: actions.copyIssueMetadata,
 		}),
 		defineCommand({
 			id: "issue.close",

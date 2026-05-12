@@ -96,7 +96,7 @@ import { useLoadMore } from "./ui/pullRequests/useLoadMore.js"
 import { useFilterModal } from "./ui/filter/useFilterModal.js"
 import { useRefreshCompletionToast } from "./ui/pullRequests/useRefreshCompletionToast.js"
 import { useRepositoryDetails } from "./ui/pullRequests/useRepositoryDetails.js"
-import { copyToClipboardAtom, openInBrowserAtom, openUrlAtom, submitPullRequestReviewAtom } from "./services/systemAtoms.js"
+import { openUrlAtom, submitPullRequestReviewAtom } from "./services/systemAtoms.js"
 import {
 	diffCommentAnchorIndexAtom,
 	diffCommentRangeStartIndexAtom,
@@ -197,7 +197,6 @@ import {
 	type SubmitReviewModalState,
 	type ThemeModalState,
 } from "./ui/modals.js"
-import { issueMetadataText, pullRequestMetadataText } from "./ui/pullRequests.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, pullRequestListVisualLineCount, PullRequestList } from "./ui/PullRequestList.js"
@@ -398,8 +397,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const closeIssue = useAtomSet(closeIssueAtom, { mode: "promise" })
 	const refreshIssuesAtomRaw = useAtomRefresh(issuesAtom)
 	const submitPullRequestReview = useAtomSet(submitPullRequestReviewAtom, { mode: "promise" })
-	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
-	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
 	const openUrl = useAtomSet(openUrlAtom, { mode: "promise" })
 	const terminalWidth = width ?? 100
 	const terminalHeight = height ?? 24
@@ -1564,12 +1561,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			})
 	}
 
-	const openSelectedPullRequestInBrowser = (pullRequest: PullRequestItem) => {
-		void openInBrowser(pullRequest)
-			.then(() => flashNotice(`Opened #${pullRequest.number} in browser`))
-			.catch((error) => flashNotice(errorMessage(error)))
-	}
-
 	const navigateIssueReference = (repository: string, number: number) => {
 		const issueIndex = issues.findIndex((issue) => issue.repository === repository && issue.number === number)
 		if (issueIndex >= 0) {
@@ -1618,19 +1609,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		if (issueReference && navigateIssueReference(issueReference.repository, issueReference.number)) return
 		void openUrl(targetUrl)
 			.then(() => flashNotice(`Opened ${targetUrl}`))
-			.catch((error) => flashNotice(errorMessage(error)))
-	}
-
-	const copySelectedPullRequestMetadata = () => {
-		if (!selectedPullRequest) return
-		void copyToClipboard(pullRequestMetadataText(selectedPullRequest))
-			.then(() => flashNotice(`Copied #${selectedPullRequest.number} metadata`))
-			.catch((error) => flashNotice(errorMessage(error)))
-	}
-	const copySelectedIssueMetadata = () => {
-		if (!selectedIssue) return
-		void copyToClipboard(issueMetadataText(selectedIssue))
-			.then(() => flashNotice(`Copied #${selectedIssue.number} metadata`))
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
@@ -1834,9 +1812,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		}
 	}
 
-	const openCommandPalette = () => {
-		setCommandPalette(initialCommandPaletteState)
-	}
 	const openRepositoryPicker = () => {
 		setOpenRepositoryModal({ query: selectedRepository ?? "", error: null })
 	}
@@ -1919,7 +1894,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		isLoadingMorePullRequests,
 		selectedPullRequest,
 		selectedIssue,
-		detailFullView,
 		diffFullView,
 		commentsViewActive,
 		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
@@ -1935,35 +1909,12 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		selectedDiffCommentThreadCount: selectedDiffCommentThread.length,
 		hasDiffCommentThreads: diffCommentThreadAnchors.length > 0,
 		actions: {
-			openCommandPalette,
 			refreshPullRequests,
-			openFilter: () => {
-				setFilterDraft(filterQuery)
-				setFilterMode(true)
-			},
-			clearFilter: () => {
-				setFilterQuery("")
-				setFilterDraft("")
-				setFilterMode(false)
-			},
 			openThemeModal,
 			openRepositoryPicker,
-			switchWorkspaceSurface,
 			loadMorePullRequests,
 			switchViewTo,
-			openDetails: () => {
-				setDetailFullView(true)
-				setDetailScrollOffset(0)
-			},
-			closeDetails: () => {
-				setDetailFullView(false)
-				setDetailScrollOffset(0)
-			},
 			openDiffView,
-			closeDiffView: () => {
-				setDiffFullView(false)
-				setDiffCommentRangeStartIndex(null)
-			},
 			openCommentsView,
 			closeCommentsView,
 			openNewIssueCommentModal,
@@ -1989,11 +1940,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			openLabelModal,
 			openMergeModal,
 			openCloseModal,
-			openPullRequestInBrowser: () => {
-				if (selectedPullRequest) openSelectedPullRequestInBrowser(selectedPullRequest)
-			},
-			copyPullRequestMetadata: copySelectedPullRequestMetadata,
-			copyIssueMetadata: copySelectedIssueMetadata,
 			quit: () => renderer.destroy(),
 		},
 	})

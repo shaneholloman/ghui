@@ -49,8 +49,6 @@ const noop = () => {}
 const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]> = {}) =>
 	buildAppCommands({
 		pullRequestStatus: "ready",
-		filterQuery: "",
-		filterMode: false,
 		selectedRepository: null,
 		activeWorkspaceSurface: "pullRequests",
 		activeViews: [activeView],
@@ -60,7 +58,6 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 		isLoadingMorePullRequests: false,
 		selectedPullRequest,
 		selectedIssue: null,
-		detailFullView: false,
 		diffFullView: true,
 		commentsViewActive: false,
 		hasSelectedComment: false,
@@ -76,19 +73,12 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 		selectedDiffCommentThreadCount: 0,
 		hasDiffCommentThreads: false,
 		actions: {
-			openCommandPalette: noop,
 			refreshPullRequests: noop,
-			openFilter: noop,
-			clearFilter: noop,
 			openThemeModal: noop,
 			openRepositoryPicker: noop,
 			loadMorePullRequests: noop,
 			switchViewTo: noop,
-			switchWorkspaceSurface: noop,
-			openDetails: noop,
-			closeDetails: noop,
 			openDiffView: noop,
-			closeDiffView: noop,
 			openCommentsView: noop,
 			closeCommentsView: noop,
 			openNewIssueCommentModal: noop,
@@ -110,8 +100,6 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 			openLabelModal: noop,
 			openMergeModal: noop,
 			openCloseModal: noop,
-			openPullRequestInBrowser: noop,
-			copyPullRequestMetadata: noop,
 			quit: noop,
 		},
 		...overrides,
@@ -223,11 +211,11 @@ describe("review UX commands", () => {
 		expect(commandById("pull.labels", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
 	})
 
-	test("details command is available for selected issues", () => {
-		expect(commandById("detail.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
-	})
-
 	test("issue comments require an issue selection", () => {
 		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue: null }).disabledReason).toBe("Select an issue first.")
 	})
+
+	// `detail.open` migrated to `src/commands/builtins.ts`. Its disabledReason
+	// logic now lives in `noSelectedItemReasonAtom` (see
+	// `src/commands/derivations.ts`); a registry-level test follows in 1.6.
 })
