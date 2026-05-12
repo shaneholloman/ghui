@@ -1,11 +1,19 @@
-import { RegistryContext, useAtomSet } from "@effect/atom-react"
-import { type MutableRefObject, useContext, useState } from "react"
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react"
+import { type MutableRefObject, useContext } from "react"
 import { config } from "../../config.js"
 import { errorMessage } from "../../errors.js"
 import type { PullRequestLoad } from "../../pullRequestLoad.js"
 import { type PullRequestView, viewToListInput } from "../../pullRequestViews.js"
 import { pullRequestPageSize } from "../../services/runtime.js"
-import { appendPullRequestPage, cacheViewerFor, listOpenPullRequestPageAtom, queueLoadCacheAtom, writeQueueCacheAtom } from "./atoms.js"
+import {
+	appendPullRequestPage,
+	cacheViewerFor,
+	isLoadingMorePullRequestsAtom,
+	listOpenPullRequestPageAtom,
+	loadingMoreKeyAtom,
+	queueLoadCacheAtom,
+	writeQueueCacheAtom,
+} from "./atoms.js"
 
 export interface UseLoadMoreInput {
 	readonly activeView: PullRequestView
@@ -51,8 +59,8 @@ export const useLoadMore = ({
 	const registry = useContext(RegistryContext)
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
 	const writeQueueCache = useAtomSet(writeQueueCacheAtom, { mode: "promise" })
-	const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null)
-	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
+	const setLoadingMoreKey = useAtomSet(loadingMoreKeyAtom)
+	const isLoadingMorePullRequests = useAtomValue(isLoadingMorePullRequestsAtom)
 
 	const loadMorePullRequests = (): boolean => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false

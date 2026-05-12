@@ -276,6 +276,16 @@ export const hasMorePullRequestsAtom = Atom.make((get) => {
 	return Boolean(load?.hasNextPage && load.data.length < config.prFetchLimit)
 })
 
+// Queue cache key currently being load-more'd, or null if no fetch is in
+// flight. Lives in atom-land so command bodies + commands.disabledReason can
+// read the loading state without going through the useLoadMore hook return.
+export const loadingMoreKeyAtom = Atom.make<string | null>(null).pipe(Atom.keepAlive)
+
+export const isLoadingMorePullRequestsAtom = Atom.make((get) => {
+	const key = get(loadingMoreKeyAtom)
+	return key !== null && key === viewCacheKey(get(activeViewAtom))
+})
+
 export const displayedPullRequestsAtom = Atom.make((get) => {
 	const load = get(pullRequestLoadAtom)
 	const overrides = get(pullRequestOverridesAtom)
