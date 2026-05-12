@@ -2,10 +2,8 @@ import { Context, Effect, Layer, Schema, Stream } from "effect"
 import * as Option from "effect/Option"
 import { config } from "../config.js"
 import {
-	type IssueItem,
-	type CheckItem,
 	type CreatePullRequestCommentInput,
-	type Mergeable,
+	type IssueItem,
 	type PullRequestComment,
 	type PullRequestItem,
 	type PullRequestMergeAction,
@@ -13,26 +11,37 @@ import {
 	type PullRequestReviewComment,
 	type RepositoryDetails,
 	type RepositoryMergeMethods,
-	type ReviewStatus,
 	type SubmitPullRequestReviewInput,
 } from "../domain.js"
 import { type ItemListInput, type ItemPage, searchQualifier } from "../item.js"
 import { mergeActionCliArgs } from "../mergeActions.js"
 import { CommandError, CommandRunner, commandTelemetryAttributes, type JsonParseError } from "./CommandRunner.js"
 import {
+	fallbackCreatedComment,
+	fallbackEditedReviewComment,
+	fallbackReplyComment,
+	itemPage,
+	parseIssueComment,
+	parseIssueComments,
+	parseIssueSearchNode,
+	parsePullRequest,
+	parsePullRequestComment,
+	parsePullRequestComments,
+	parsePullRequestFiles,
+	parsePullRequestMergeInfo,
+	parsePullRequestSummary,
+	parseRepositoryDetails,
+	parseRepositoryMergeMethods,
+	pullRequestFilesToPatch,
+	reviewCommentAsComment,
+	sortComments,
+} from "./githubNormalize.js"
+import {
 	CommentsResponseSchema,
 	issueSearchQuery,
 	MergeInfoResponseSchema,
-	type PullRequestConnection,
 	PullRequestAdminMergeResponseSchema,
 	PullRequestCommentSchema,
-	type RawCheckContext,
-	RawCheckContextSchema,
-	type RawIssueSearchNode,
-	type RawPullRequestComment,
-	type RawPullRequestFile,
-	type RawPullRequestNode,
-	type RawPullRequestSummaryNode,
 	pullRequestDetailQuery,
 	PullRequestDetailResponseSchema,
 	PullRequestFilesResponseSchema,
@@ -51,286 +60,12 @@ import {
 } from "./githubSchemas.js"
 export { isGitHubRateLimitError } from "./githubRateLimit.js"
 
-const normalizeDate = (value: string | null | undefined) => {
-	if (!value || value.startsWith("0001-01-01")) return null
-	return new Date(value)
-}
-
-const getPullRequestState = (item: { readonly state: string; readonly merged: boolean }): PullRequestItem["state"] =>
-	item.merged ? "merged" : item.state.toLowerCase() === "open" ? "open" : "closed"
-
-const REVIEW_STATUS_BY_DECISION: Record<string, ReviewStatus> = {
-	APPROVED: "approved",
-	CHANGES_REQUESTED: "changes",
-	REVIEW_REQUIRED: "review",
-}
-
-const getReviewStatus = (item: { readonly isDraft: boolean; readonly reviewDecision: string | null }): ReviewStatus => {
-	if (item.isDraft) return "draft"
-	if (item.reviewDecision) return REVIEW_STATUS_BY_DECISION[item.reviewDecision] ?? "none"
-	return "none"
-}
-
-const CHECK_STATUS_BY_RAW: Record<string, CheckItem["status"]> = {
-	COMPLETED: "completed",
-	IN_PROGRESS: "in_progress",
-	QUEUED: "queued",
-}
-
-const CHECK_CONCLUSION_BY_RAW: Record<string, NonNullable<CheckItem["conclusion"]>> = {
-	SUCCESS: "success",
-	FAILURE: "failure",
-	ERROR: "failure",
-	NEUTRAL: "neutral",
-	SKIPPED: "skipped",
-	CANCELLED: "cancelled",
-	TIMED_OUT: "timed_out",
-}
-
-const normalizeCheckStatus = (raw: string | null | undefined): CheckItem["status"] => (raw ? (CHECK_STATUS_BY_RAW[raw] ?? "pending") : "pending")
-
-const normalizeCheckConclusion = (raw: string | null | undefined): CheckItem["conclusion"] => (raw ? (CHECK_CONCLUSION_BY_RAW[raw] ?? null) : null)
-
-const getContextStatus = (context: RawCheckContext): CheckItem["status"] =>
-	RawCheckContextSchema.match(context, {
-		CheckRun: (run) => normalizeCheckStatus(run.status),
-		StatusContext: (status) => (status.state === "PENDING" ? "in_progress" : "completed"),
-	})
-
-const STATUS_CONTEXT_CONCLUSION: Record<string, NonNullable<CheckItem["conclusion"]>> = {
-	SUCCESS: "success",
-	FAILURE: "failure",
-	ERROR: "failure",
-}
-
-const getContextConclusion = (context: RawCheckContext): CheckItem["conclusion"] =>
-	RawCheckContextSchema.match(context, {
-		CheckRun: (run) => normalizeCheckConclusion(run.conclusion),
-		StatusContext: (status) => (status.state ? STATUS_CONTEXT_CONCLUSION[status.state] : null) ?? null,
-	})
-
-const getCheckInfoFromContexts = (contexts: readonly RawCheckContext[]): Pick<PullRequestItem, "checkStatus" | "checkSummary" | "checks"> => {
-	if (contexts.length === 0) {
-		return { checkStatus: "none", checkSummary: null, checks: [] }
-	}
-
-	let completed = 0
-	let successful = 0
-	let pending = false
-	let failing = false
-	const checks: CheckItem[] = []
-
-	for (const check of contexts) {
-		const name = check.__typename === "CheckRun" ? (check.name ?? "check") : (check.context ?? "check")
-		const status = getContextStatus(check)
-		const conclusion = getContextConclusion(check)
-
-		checks.push({ name, status, conclusion })
-
-		if (status === "completed") {
-			completed += 1
-		} else {
-			pending = true
-		}
-
-		if (conclusion === "success" || conclusion === "neutral" || conclusion === "skipped") {
-			successful += 1
-		} else if (conclusion) {
-			failing = true
-		}
-	}
-
-	if (pending) {
-		return { checkStatus: "pending", checkSummary: `checks ${completed}/${contexts.length}`, checks }
-	}
-
-	if (failing) {
-		return { checkStatus: "failing", checkSummary: `checks ${successful}/${contexts.length}`, checks }
-	}
-
-	return { checkStatus: "passing", checkSummary: `checks ${successful}/${contexts.length}`, checks }
-}
-
-const parsePullRequestSummary = (item: RawPullRequestSummaryNode): PullRequestItem => {
-	const checkInfo = getCheckInfoFromContexts(item.statusCheckRollup?.contexts.nodes ?? [])
-	return {
-		repository: item.repository.nameWithOwner,
-		author: item.author.login,
-		headRefOid: item.headRefOid,
-		headRefName: item.headRefName,
-		baseRefName: item.baseRefName,
-		defaultBranchName: item.repository.defaultBranchRef?.name ?? item.baseRefName,
-		number: item.number,
-		title: item.title,
-		body: "",
-		labels: [],
-		additions: 0,
-		deletions: 0,
-		changedFiles: 0,
-		state: getPullRequestState(item),
-		reviewStatus: getReviewStatus(item),
-		checkStatus: checkInfo.checkStatus,
-		checkSummary: checkInfo.checkSummary,
-		checks: checkInfo.checks,
-		autoMergeEnabled: item.autoMergeRequest !== null,
-		detailLoaded: false,
-		createdAt: new Date(item.createdAt),
-		updatedAt: new Date(item.updatedAt),
-		closedAt: normalizeDate(item.closedAt),
-		url: item.url,
-	}
-}
-
-const parsePullRequest = (item: RawPullRequestNode): PullRequestItem => {
-	const checkInfo = getCheckInfoFromContexts(item.statusCheckRollup?.contexts.nodes ?? [])
-	return {
-		...parsePullRequestSummary(item),
-		body: item.body,
-		labels: item.labels.nodes.map((label) => ({
-			name: label.name,
-			color: label.color ? `#${label.color}` : null,
-		})),
-		additions: item.additions,
-		deletions: item.deletions,
-		changedFiles: item.changedFiles,
-		checkStatus: checkInfo.checkStatus,
-		checkSummary: checkInfo.checkSummary,
-		checks: checkInfo.checks,
-		detailLoaded: true,
-	}
-}
-
-const parseIssueSearchNode = (item: RawIssueSearchNode): IssueItem => ({
-	repository: item.repository.nameWithOwner,
-	number: item.number,
-	title: item.title,
-	body: item.body,
-	author: item.author.login,
-	labels: item.labels.nodes.map((label) => ({
-		name: label.name,
-		color: label.color ? `#${label.color.replace(/^#/, "")}` : null,
-	})),
-	commentCount: item.comments.totalCount,
-	createdAt: new Date(item.createdAt),
-	updatedAt: new Date(item.updatedAt),
-	url: item.url,
-})
-
-const itemPage = <Raw, Item>(connection: PullRequestConnection<Raw>, parse: (node: Raw) => Item): ItemPage<Item> => ({
-	items: connection.nodes.flatMap((node) => (node ? [parse(node)] : [])),
-	endCursor: connection.pageInfo.endCursor,
-	hasNextPage: connection.pageInfo.hasNextPage && connection.pageInfo.endCursor !== null,
-})
-
 const repositoryParts = (repository: string) => {
 	const [owner, name] = repository.split("/")
 	return owner && name ? { owner, name } : null
 }
 
-// Pull the numeric REST comment id out of the raw payload, falling back to the
-// URL (e.g. `/pulls/comments/123456789` or `#discussion_r123456789`) when the
-// `id` field itself is missing. The /replies endpoint only accepts the REST
-// integer id — node_id (`PRRC_…`) is a 404.
-const restCommentId = (comment: RawPullRequestComment): string | null => {
-	if (typeof comment.id === "number") return String(comment.id)
-	if (typeof comment.id === "string" && /^\d+$/.test(comment.id)) return comment.id
-	const fromApiUrl = comment.url?.match(/\/comments\/(\d+)/)?.[1]
-	if (fromApiUrl) return fromApiUrl
-	const fromHtmlUrl = comment.html_url?.match(/#(?:discussion_r|issuecomment-)(\d+)/)?.[1]
-	if (fromHtmlUrl) return fromHtmlUrl
-	return null
-}
-
-const rawCommentFields = (comment: RawPullRequestComment, fallbackId: string) => ({
-	id: restCommentId(comment) ?? comment.node_id ?? fallbackId,
-	author: comment.user?.login ?? "unknown",
-	body: comment.body ?? "",
-	createdAt: comment.created_at ? new Date(comment.created_at) : null,
-	url: comment.html_url ?? comment.url ?? null,
-})
-
-const parsePullRequestComment = (comment: RawPullRequestComment): PullRequestReviewComment | null => {
-	const line = comment.line ?? comment.original_line
-	if (!comment.path || !line || (comment.side !== "LEFT" && comment.side !== "RIGHT")) return null
-	const inReplyTo = comment.in_reply_to_id != null ? String(comment.in_reply_to_id) : null
-	return {
-		...rawCommentFields(comment, `${comment.path}:${comment.side}:${line}:${comment.created_at ?? ""}:${comment.body ?? ""}`),
-		path: comment.path,
-		line,
-		side: comment.side,
-		inReplyTo,
-	}
-}
-
-const parsePullRequestComments = (response: Schema.Schema.Type<typeof CommentsResponseSchema>): readonly PullRequestReviewComment[] => {
-	return flattenSlurpedPages(response).flatMap((comment) => {
-		const parsed = parsePullRequestComment(comment)
-		return parsed ? [parsed] : []
-	})
-}
-
-const parseIssueComment = (comment: RawPullRequestComment): PullRequestComment => ({
-	_tag: "comment",
-	...rawCommentFields(comment, `${comment.created_at ?? ""}:${comment.body ?? ""}`),
-})
-
-const reviewCommentAsComment = (comment: PullRequestReviewComment): PullRequestComment => ({
-	_tag: "review-comment",
-	...comment,
-})
-
-const commentTime = (item: PullRequestComment) => item.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER
-
-const sortComments = (items: readonly PullRequestComment[]) => [...items].sort((left, right) => commentTime(left) - commentTime(right) || left.id.localeCompare(right.id))
-
-const parseIssueComments = (response: Schema.Schema.Type<typeof CommentsResponseSchema>): readonly PullRequestComment[] => flattenSlurpedPages(response).map(parseIssueComment)
-
-const flattenSlurpedPages = <Item>(response: readonly Item[] | readonly (readonly Item[])[]): readonly Item[] =>
-	Array.isArray(response[0]) ? (response as readonly (readonly Item[])[]).flat() : (response as readonly Item[])
-
-const parsePullRequestFiles = (response: Schema.Schema.Type<typeof PullRequestFilesResponseSchema>): readonly RawPullRequestFile[] => flattenSlurpedPages(response)
-
-const diffPath = (path: string) => (/\s|"/.test(path) ? JSON.stringify(path) : path)
-
-const prefixedDiffPath = (prefix: "a" | "b", path: string) => diffPath(`${prefix}/${path}`)
-
-const fileHeaderPatch = (file: RawPullRequestFile) => {
-	const oldPath = file.previous_filename ?? file.filename
-	const newPath = file.filename
-	const oldRef = file.status === "added" ? "/dev/null" : prefixedDiffPath("a", oldPath)
-	const newRef = file.status === "removed" ? "/dev/null" : prefixedDiffPath("b", newPath)
-	const lines = [
-		`diff --git ${prefixedDiffPath("a", oldPath)} ${prefixedDiffPath("b", newPath)}`,
-		...(file.status === "renamed" && file.previous_filename ? [`rename from ${oldPath}`, `rename to ${newPath}`] : []),
-		`--- ${oldRef}`,
-		`+++ ${newRef}`,
-	]
-	if (file.patch) lines.push(file.patch.trimEnd())
-	return lines.join("\n")
-}
-
-export const pullRequestFilesToPatch = (files: readonly RawPullRequestFile[]) => files.map(fileHeaderPatch).join("\n")
-
-const fallbackCreatedComment = (input: CreatePullRequestCommentInput): PullRequestReviewComment => ({
-	id: `created:${input.repository}:${input.number}:${input.path}:${input.side}:${input.line}:${Date.now()}`,
-	path: input.path,
-	line: input.line,
-	side: input.side,
-	author: "you",
-	body: input.body,
-	createdAt: new Date(),
-	url: null,
-	inReplyTo: null,
-})
-
 export type GitHubError = CommandError | JsonParseError | Schema.SchemaError
-
-const MERGEABLE_BY_RAW: Record<string, Mergeable> = {
-	MERGEABLE: "mergeable",
-	CONFLICTING: "conflicting",
-}
-
-const normalizeMergeable = (value: string): Mergeable => MERGEABLE_BY_RAW[value] ?? "unknown"
 
 const REVIEW_EVENT_CLI_FLAG = {
 	COMMENT: "--comment",
@@ -356,6 +91,7 @@ export class GitHubService extends Context.Service<
 		readonly getRepositoryMergeMethods: (repository: string) => Effect.Effect<RepositoryMergeMethods, GitHubError>
 		readonly mergePullRequest: (repository: string, number: number, action: PullRequestMergeAction) => Effect.Effect<void, CommandError>
 		readonly closePullRequest: (repository: string, number: number) => Effect.Effect<void, CommandError>
+		readonly closeIssue: (repository: string, number: number) => Effect.Effect<void, CommandError>
 		readonly createPullRequestComment: (input: CreatePullRequestCommentInput) => Effect.Effect<PullRequestReviewComment, GitHubError>
 		readonly createPullRequestIssueComment: (repository: string, number: number, body: string) => Effect.Effect<PullRequestComment, GitHubError>
 		readonly replyToReviewComment: (repository: string, number: number, inReplyTo: string, body: string) => Effect.Effect<PullRequestComment, GitHubError>
@@ -538,19 +274,7 @@ export class GitHubService extends Context.Service<
 				if (!node) {
 					return yield* new CommandError({ command: "gh", args: [], detail: `Repository not found: ${repository}`, cause: repository })
 				}
-				return {
-					repository,
-					description: node.description,
-					url: node.url,
-					stargazerCount: node.stargazerCount,
-					forkCount: node.forkCount,
-					openIssueCount: node.openIssues.totalCount,
-					openPullRequestCount: node.openPRs.totalCount,
-					defaultBranch: node.defaultBranchRef?.name ?? null,
-					pushedAt: normalizeDate(node.pushedAt),
-					isArchived: node.isArchived,
-					isPrivate: node.isPrivate,
-				} satisfies RepositoryDetails
+				return parseRepositoryDetails(repository, node)
 			})
 
 			const getPullRequestDiff = (repository: string, number: number) =>
@@ -590,7 +314,6 @@ export class GitHubService extends Context.Service<
 					"--json",
 					"number,title,state,isDraft,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup",
 				])
-				const checkInfo = getCheckInfoFromContexts(info.statusCheckRollup)
 				const repo = repositoryParts(repository)
 				const adminInfo = repo
 					? yield* ghJson("getPullRequestAdminMergeInfo", PullRequestAdminMergeResponseSchema, [
@@ -607,19 +330,7 @@ export class GitHubService extends Context.Service<
 						])
 					: null
 
-				return {
-					repository,
-					number: info.number,
-					title: info.title,
-					state: info.state.toLowerCase() === "open" ? "open" : "closed",
-					isDraft: info.isDraft,
-					mergeable: normalizeMergeable(info.mergeable),
-					reviewStatus: getReviewStatus(info),
-					checkStatus: checkInfo.checkStatus,
-					checkSummary: checkInfo.checkSummary,
-					autoMergeEnabled: info.autoMergeRequest !== null,
-					viewerCanMergeAsAdmin: adminInfo?.data.repository.pullRequest?.viewerCanMergeAsAdmin ?? false,
-				} satisfies PullRequestMergeInfo
+				return parsePullRequestMergeInfo(repository, info, adminInfo?.data.repository.pullRequest?.viewerCanMergeAsAdmin ?? false)
 			})
 
 			const getRepositoryMergeMethods = Effect.fn("GitHubService.getRepositoryMergeMethods")(function* (repository: string) {
@@ -630,17 +341,15 @@ export class GitHubService extends Context.Service<
 					"--json",
 					"squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed",
 				])
-				return {
-					squash: response.squashMergeAllowed,
-					merge: response.mergeCommitAllowed,
-					rebase: response.rebaseMergeAllowed,
-				} satisfies RepositoryMergeMethods
+				return parseRepositoryMergeMethods(response)
 			})
 
 			const mergePullRequest = (repository: string, number: number, action: PullRequestMergeAction) =>
 				ghVoid("mergePullRequest", ["pr", "merge", String(number), "--repo", repository, ...mergeActionCliArgs(action)])
 
 			const closePullRequest = (repository: string, number: number) => ghVoid("closePullRequest", ["pr", "close", String(number), "--repo", repository])
+
+			const closeIssue = (repository: string, number: number) => ghVoid("closeIssue", ["issue", "close", String(number), "--repo", repository])
 
 			const createPullRequestIssueComment = Effect.fn("GitHubService.createPullRequestIssueComment")(function* (repository: string, number: number, body: string) {
 				const response = yield* command.runSchema(PullRequestCommentSchema, "gh", [
@@ -664,20 +373,7 @@ export class GitHubService extends Context.Service<
 					`body=${body}`,
 				])
 				const review = parsePullRequestComment(response)
-				if (!review) {
-					return {
-						_tag: "review-comment" as const,
-						id: `reply:${inReplyTo}:${Date.now()}`,
-						path: "",
-						line: 0,
-						side: "RIGHT" as const,
-						author: "you",
-						body,
-						createdAt: new Date(),
-						url: null,
-						inReplyTo,
-					}
-				}
+				if (!review) return fallbackReplyComment(inReplyTo, body)
 				return reviewCommentAsComment({ ...review, inReplyTo: review.inReplyTo ?? inReplyTo })
 			})
 
@@ -724,23 +420,7 @@ export class GitHubService extends Context.Service<
 					`body=${body}`,
 				])
 				const review = parsePullRequestComment(response)
-				if (!review) {
-					// PATCH on a non-line review comment (e.g. file-level) can return a
-					// payload that lacks `path`/`line` — keep our cached id and side
-					// stable so the caller can still swap the body in place.
-					return {
-						_tag: "review-comment" as const,
-						id: commentId,
-						path: "",
-						line: 0,
-						side: "RIGHT" as const,
-						author: "you",
-						body,
-						createdAt: new Date(),
-						url: null,
-						inReplyTo: null,
-					}
-				}
+				if (!review) return fallbackEditedReviewComment(commentId, body)
 				return reviewCommentAsComment(review)
 			})
 
@@ -789,6 +469,7 @@ export class GitHubService extends Context.Service<
 				getRepositoryMergeMethods,
 				mergePullRequest,
 				closePullRequest,
+				closeIssue,
 				createPullRequestComment,
 				createPullRequestIssueComment,
 				replyToReviewComment,

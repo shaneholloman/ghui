@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { pullRequestFilesToPatch } from "../src/services/GitHubService.ts"
+import { pullRequestFilesToPatch } from "../src/services/githubNormalize.ts"
 import { splitPatchFiles } from "../src/ui/diff.ts"
 
 describe("pullRequestFilesToPatch", () => {
