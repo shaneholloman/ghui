@@ -30,7 +30,7 @@ const selectedPullRequest: PullRequestItem = {
 	url: "https://github.com/owner/repo/pull/42",
 }
 
-const selectedIssue: IssueItem = {
+const _selectedIssue: IssueItem = {
 	repository: "owner/repo",
 	number: 7,
 	state: "open",
@@ -48,14 +48,9 @@ const noop = () => {}
 
 const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]> = {}) =>
 	buildAppCommands({
-		pullRequestStatus: "ready",
-		selectedRepository: null,
 		activeWorkspaceSurface: "pullRequests",
 		activeViews: [activeView],
 		activeView,
-		loadedPullRequestCount: 1,
-		hasMorePullRequests: false,
-		isLoadingMorePullRequests: false,
 		selectedPullRequest,
 		selectedIssue: null,
 		diffFullView: true,
@@ -70,15 +65,8 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 		selectedDiffCommentThreadCount: 0,
 		hasDiffCommentThreads: false,
 		actions: {
-			refreshPullRequests: noop,
-			openThemeModal: noop,
-			openRepositoryPicker: noop,
-			loadMorePullRequests: noop,
 			switchViewTo: noop,
-			openDiffView: noop,
-			openCommentsView: noop,
 			closeCommentsView: noop,
-			openNewIssueCommentModal: noop,
 			openReplyToSelectedComment: noop,
 			openEditSelectedComment: noop,
 			openDeleteSelectedComment: noop,
@@ -89,11 +77,6 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 			toggleDiffCommentRange: noop,
 			moveDiffCommentThread: noop,
 			openDiffCommentModal: noop,
-			openSubmitReviewModal: noop,
-			openPullRequestStateModal: noop,
-			openLabelModal: noop,
-			openMergeModal: noop,
-			openCloseModal: noop,
 		},
 		...overrides,
 	})
@@ -181,13 +164,9 @@ describe("review UX commands", () => {
 		).toBe("Only your own (synced) comments can be edited or deleted.")
 	})
 
-	test("comments.open is available for selected issues", () => {
-		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue }).disabledReason).toBeFalsy()
-	})
-
-	test("issue comments require an issue selection", () => {
-		expect(commandById("comments.open", { activeWorkspaceSurface: "issues", selectedPullRequest: null, selectedIssue: null }).disabledReason).toBe("Select an issue first.")
-	})
+	// comments.open moved to src/commands/builtins.ts; the issue-selection
+	// gating now lives in `noSelectedItemReasonAtom` (covered by registry
+	// tests in phase 1.6).
 
 	// `detail.open` and `pull.labels` migrated to `src/commands/builtins.ts`.
 	// Their disabledReason logic now lives in `noSelectedItemReasonAtom`

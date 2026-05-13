@@ -26,9 +26,13 @@ import {
 	filterClearDisabledReasonAtom,
 	filterTitleAtom,
 	issueSelectedReasonAtom,
+	loadMoreDisabledReasonAtom,
+	loadMoreSubtitleAtom,
 	noOpenPullRequestReasonAtom,
 	noPullRequestReasonAtom,
 	noSelectedItemReasonAtom,
+	pullRequestRefreshTitleAtom,
+	pullRequestSurfaceReasonAtom,
 	repositoryOpenSubtitleAtom,
 	selectedCommentSubjectAtom,
 	selectedIssueLabelAtom,
@@ -37,8 +41,7 @@ import {
 	workspaceSurfaceAlreadyActiveReasonAtom,
 	workspaceSurfaceSubtitleAtom,
 } from "./derivations.js"
-import { requestQuit } from "./appLifecycle.js"
-import { requestPreserveDiffLocation } from "./diffLocationPreservation.js"
+import { invokeHandoff } from "./handoffs.js"
 import { defineCommand, type CommandDefinition } from "./registry.js"
 
 // Most commands fall into one of three shapes:
@@ -161,7 +164,7 @@ export const globalCommands: readonly CommandDefinition[] = [
 	}),
 	// === Diff render-mode toggles ===
 	// These three preserve the user's scroll position across the re-render
-	// they trigger by calling requestPreserveDiffLocation() *synchronously*
+	// they trigger by calling the "preserveDiffLocation" handoff *synchronously*
 	// before the atom write. The diff-location-preservation hook captured
 	// the pre-mutation anchor + screenOffset at that moment.
 	defineCommand({
@@ -172,7 +175,7 @@ export const globalCommands: readonly CommandDefinition[] = [
 		shortcut: "shift-v",
 		disabledReason: diffOpenRequiredReasonAtom,
 		run: Effect.gen(function* () {
-			yield* Effect.sync(requestPreserveDiffLocation)
+			yield* Effect.sync(() => invokeHandoff("preserveDiffLocation"))
 			yield* Atom.update(diffRenderViewAtom, (current) => (current === "split" ? "unified" : "split"))
 		}),
 	}),
@@ -184,7 +187,7 @@ export const globalCommands: readonly CommandDefinition[] = [
 		shortcut: "w",
 		disabledReason: diffOpenRequiredReasonAtom,
 		run: Effect.gen(function* () {
-			yield* Effect.sync(requestPreserveDiffLocation)
+			yield* Effect.sync(() => invokeHandoff("preserveDiffLocation"))
 			yield* Atom.update(diffWrapModeAtom, (current) => (current === "none" ? "word" : "none"))
 		}),
 	}),
@@ -196,7 +199,7 @@ export const globalCommands: readonly CommandDefinition[] = [
 		disabledReason: diffOpenRequiredReasonAtom,
 		keywords: ["whitespace", "spacing", "ignore", "show"],
 		run: Effect.gen(function* () {
-			yield* Effect.sync(requestPreserveDiffLocation)
+			yield* Effect.sync(() => invokeHandoff("preserveDiffLocation"))
 			const current = yield* Atom.get(diffWhitespaceModeAtom)
 			const next = current === "ignore" ? "show" : "ignore"
 			yield* Atom.set(diffWhitespaceModeAtom, next)
@@ -442,6 +445,70 @@ export const globalCommands: readonly CommandDefinition[] = [
 		}),
 	}),
 
+	// === Pull-request lifecycle (hook-bound via handoff) ===
+	defineCommand({
+		id: "pull.refresh",
+		title: pullRequestRefreshTitleAtom,
+		scope: "Global",
+		subtitle: "Fetch the latest queue from GitHub",
+		shortcut: "r",
+		disabledReason: pullRequestSurfaceReasonAtom,
+		keywords: ["reload", "sync"],
+		run: Effect.sync(() => invokeHandoff("refreshPullRequests")),
+	}),
+	defineCommand({
+		id: "pull.load-more",
+		title: "Load more pull requests",
+		scope: "Navigation",
+		subtitle: loadMoreSubtitleAtom,
+		disabledReason: loadMoreDisabledReasonAtom,
+		keywords: ["next page", "pagination", "more"],
+		run: Effect.sync(() => invokeHandoff("loadMorePullRequests")),
+	}),
+	defineCommand({
+		id: "pull.merge",
+		title: "Merge pull request",
+		scope: "Pull request",
+		subtitle: selectedPullRequestLabelAtom,
+		shortcut: "m",
+		disabledReason: noPullRequestReasonAtom,
+		keywords: ["auto merge", "squash"],
+		run: Effect.sync(() => invokeHandoff("openMergeModal")),
+	}),
+
+	// === Theme / repository pickers ===
+	defineCommand({
+		id: "theme.open",
+		title: "Choose theme",
+		scope: "Global",
+		subtitle: "Preview and persist a terminal color theme",
+		shortcut: "t",
+		keywords: ["colors", "appearance"],
+		run: Effect.sync(() => invokeHandoff("openThemeModal")),
+	}),
+
+	// === Comments / diff entry points (hook-bound) ===
+	defineCommand({
+		id: "comments.open",
+		title: "Open comments",
+		scope: "Comments",
+		subtitle: selectedItemLabelAtom,
+		shortcut: "c",
+		keywords: ["conversation", "discussion", "review"],
+		disabledReason: noSelectedItemReasonAtom,
+		run: Effect.sync(() => invokeHandoff("openCommentsView")),
+	}),
+	defineCommand({
+		id: "diff.open",
+		title: "Open diff",
+		scope: "Diff",
+		subtitle: selectedPullRequestLabelAtom,
+		shortcut: "d",
+		disabledReason: noPullRequestReasonAtom,
+		keywords: ["files", "patch"],
+		run: Effect.sync(() => invokeHandoff("openDiffView")),
+	}),
+
 	defineCommand({
 		id: "app.quit",
 		title: "Quit ghui",
@@ -449,6 +516,6 @@ export const globalCommands: readonly CommandDefinition[] = [
 		subtitle: "Leave the terminal UI",
 		shortcut: "q",
 		keywords: ["exit"],
-		run: Effect.sync(requestQuit),
+		run: Effect.sync(() => invokeHandoff("quit")),
 	}),
 ]

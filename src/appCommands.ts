@@ -1,16 +1,11 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
-import type { IssueItem, LoadStatus, PullRequestItem } from "./domain.js"
+import type { IssueItem, PullRequestItem } from "./domain.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
 import type { WorkspaceSurface } from "./workspaceSurfaces.js"
 
 interface AppCommandActions {
-	readonly refreshPullRequests: (message?: string, options?: { readonly resetTransientState?: boolean }) => void
-	readonly openThemeModal: () => void
-	readonly loadMorePullRequests: () => void
 	readonly switchViewTo: (view: PullRequestView) => void
-	readonly openDiffView: () => void
-	readonly openCommentsView: () => void
 	readonly closeCommentsView: () => void
 	readonly openReplyToSelectedComment: () => void
 	readonly openEditSelectedComment: () => void
@@ -22,17 +17,12 @@ interface AppCommandActions {
 	readonly toggleDiffCommentRange: () => void
 	readonly moveDiffCommentThread: (delta: 1 | -1) => void
 	readonly openDiffCommentModal: () => void
-	readonly openMergeModal: () => void
 }
 
 interface BuildAppCommandsInput {
-	readonly pullRequestStatus: LoadStatus
 	readonly activeWorkspaceSurface: WorkspaceSurface
 	readonly activeViews: readonly PullRequestView[]
 	readonly activeView: PullRequestView
-	readonly loadedPullRequestCount: number
-	readonly hasMorePullRequests: boolean
-	readonly isLoadingMorePullRequests: boolean
 	readonly selectedPullRequest: PullRequestItem | null
 	readonly selectedIssue: IssueItem | null
 	readonly diffFullView: boolean
@@ -50,13 +40,9 @@ interface BuildAppCommandsInput {
 }
 
 export const buildAppCommands = ({
-	pullRequestStatus,
 	activeWorkspaceSurface,
 	activeViews,
 	activeView,
-	loadedPullRequestCount,
-	hasMorePullRequests,
-	isLoadingMorePullRequests,
 	selectedPullRequest,
 	selectedIssue,
 	diffFullView,
@@ -78,7 +64,6 @@ export const buildAppCommands = ({
 	const pullRequestSurfaceReason = activeWorkspaceSurface === "pullRequests" ? null : "Pull request surface is not active."
 	const noPullRequestReason = pullRequestSurfaceReason ?? (selectedPullRequest ? null : "Select a pull request first.")
 	const noSelectedItemReason = activeWorkspaceSurface === "issues" ? (selectedIssue ? null : "Select an issue first.") : noPullRequestReason
-	const noOpenPullRequestReason = selectedPullRequest?.state === "open" ? null : selectedPullRequest ? "Pull request is not open." : noPullRequestReason
 	const diffReadyReason = selectedPullRequest ? (diffReady ? null : "Load the diff before running this command.") : noPullRequestReason
 	const diffOpenReadyReason = diffFullView ? diffReadyReason : "Open a diff first."
 	const selectedDiffLineReason = diffFullView && diffReady ? (selectedDiffCommentAnchorLabel ? null : "No diff line selected.") : diffOpenReadyReason
@@ -86,37 +71,7 @@ export const buildAppCommands = ({
 	const changedFilesReason = diffFullView && diffReady ? (readyDiffFileCount > 0 ? null : "No changed files loaded.") : diffOpenReadyReason
 	const selectedCommentReason = noSelectedItemReason ?? (commentsViewActive ? (hasSelectedComment ? null : "No comment selected.") : "Open comments first.")
 	const ownCommentReason = selectedCommentReason ?? (canEditSelectedComment ? null : "Only your own (synced) comments can be edited or deleted.")
-	const loadMoreDisabledReason = isLoadingMorePullRequests ? "Already loading more pull requests." : hasMorePullRequests ? null : "No more pull requests loaded by this view."
-
-	const forSelected = (command: Omit<AppCommand, "subtitle" | "disabledReason"> & { readonly requireOpen?: boolean }): AppCommand => {
-		const { requireOpen, ...rest } = command
-		return defineCommand({
-			...rest,
-			subtitle: selectedPullRequestLabel,
-			disabledReason: requireOpen ? noOpenPullRequestReason : noPullRequestReason,
-		})
-	}
-
 	return [
-		defineCommand({
-			id: "pull.refresh",
-			title: pullRequestStatus === "error" ? "Retry loading pull requests" : "Refresh pull requests",
-			scope: "Global",
-			subtitle: "Fetch the latest queue from GitHub",
-			shortcut: "r",
-			disabledReason: pullRequestSurfaceReason,
-			keywords: ["reload", "sync"],
-			run: () => actions.refreshPullRequests("Refreshed", { resetTransientState: true }),
-		}),
-		defineCommand({
-			id: "theme.open",
-			title: "Choose theme",
-			scope: "Global",
-			subtitle: "Preview and persist a terminal color theme",
-			shortcut: "t",
-			keywords: ["colors", "appearance"],
-			run: actions.openThemeModal,
-		}),
 		...activeViews.map((view) =>
 			defineCommand({
 				id: view._tag === "Repository" ? "view.repository" : `view.${view.mode}`,
@@ -128,33 +83,6 @@ export const buildAppCommands = ({
 				run: () => actions.switchViewTo(view),
 			}),
 		),
-		defineCommand({
-			id: "pull.load-more",
-			title: "Load more pull requests",
-			scope: "Navigation",
-			subtitle: `${loadedPullRequestCount} loaded`,
-			disabledReason: pullRequestSurfaceReason ?? loadMoreDisabledReason,
-			keywords: ["next page", "pagination", "more"],
-			run: actions.loadMorePullRequests,
-		}),
-		forSelected({
-			id: "diff.open",
-			title: "Open diff",
-			scope: "Diff",
-			shortcut: "d",
-			keywords: ["files", "patch"],
-			run: actions.openDiffView,
-		}),
-		defineCommand({
-			id: "comments.open",
-			title: "Open comments",
-			scope: "Comments",
-			subtitle: selectedItemLabel,
-			shortcut: "c",
-			keywords: ["conversation", "discussion", "review"],
-			disabledReason: noSelectedItemReason,
-			run: actions.openCommentsView,
-		}),
 		defineCommand({
 			id: "comments.reply",
 			title: "Reply to comment",
@@ -271,14 +199,6 @@ export const buildAppCommands = ({
 			disabledReason: selectedDiffLineReason,
 			keywords: ["review", "reply"],
 			run: actions.openDiffCommentModal,
-		}),
-		forSelected({
-			id: "pull.merge",
-			title: "Merge pull request",
-			scope: "Pull request",
-			shortcut: "m",
-			keywords: ["auto merge", "squash"],
-			run: actions.openMergeModal,
 		}),
 	]
 }

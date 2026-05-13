@@ -213,7 +213,7 @@ import { useScrollPersistence } from "./ui/useScrollPersistence.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
-import { setQuitImpl } from "./commands/appLifecycle.js"
+import { registerHandoff } from "./commands/handoffs.js"
 import { issueViewForPullRequestView } from "./viewSync.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath } from "./services/runtime.js"
@@ -288,10 +288,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	// Hand the renderer's destroy() to the new command registry so the
 	// `app.quit` command can fire without going through buildAppCommands.
-	useEffect(() => {
-		setQuitImpl(() => renderer.destroy())
-		return () => setQuitImpl(null)
-	}, [renderer])
+	useEffect(() => registerHandoff("quit", () => renderer.destroy()), [renderer])
 	const pullRequestResult = useAtomValue(pullRequestsAtom)
 	const refreshPullRequestsAtomRaw = useAtomRefresh(pullRequestsAtom)
 	const refreshPullRequestsAtom = useCallback(() => {
@@ -1789,14 +1786,20 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		[commandSnapshots, dispatchCommand],
 	)
 
+	// Hand hook-bound imperative actions to the new command registry. Each
+	// entry registers a no-arg fn closing over current state; the new-style
+	// commands invoke them via Effect.sync(() => invokeHandoff(key)).
+	useEffect(() => registerHandoff("refreshPullRequests", () => refreshPullRequests("Refreshed", { resetTransientState: true })), [refreshPullRequests])
+	useEffect(() => registerHandoff("loadMorePullRequests", () => void loadMorePullRequests()), [loadMorePullRequests])
+	useEffect(() => registerHandoff("openThemeModal", openThemeModal), [openThemeModal])
+	useEffect(() => registerHandoff("openMergeModal", openMergeModal), [openMergeModal])
+	useEffect(() => registerHandoff("openCommentsView", openCommentsView), [openCommentsView])
+	useEffect(() => registerHandoff("openDiffView", openDiffView), [openDiffView])
+
 	const legacyAppCommands: readonly AppCommand[] = buildAppCommands({
-		pullRequestStatus,
 		activeWorkspaceSurface,
 		activeViews,
 		activeView,
-		loadedPullRequestCount,
-		hasMorePullRequests,
-		isLoadingMorePullRequests,
 		selectedPullRequest,
 		selectedIssue,
 		diffFullView,
@@ -1811,12 +1814,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		selectedDiffCommentThreadCount: selectedDiffCommentThread.length,
 		hasDiffCommentThreads: diffCommentThreadAnchors.length > 0,
 		actions: {
-			refreshPullRequests,
-			openThemeModal,
-			loadMorePullRequests,
 			switchViewTo,
-			openDiffView,
-			openCommentsView,
 			closeCommentsView,
 			openReplyToSelectedComment,
 			openEditSelectedComment,
@@ -1832,7 +1830,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			toggleDiffCommentRange,
 			moveDiffCommentThread,
 			openDiffCommentModal,
-			openMergeModal,
 		},
 	})
 	const appCommands: readonly AppCommand[] = [...registeredCommands, ...legacyAppCommands]

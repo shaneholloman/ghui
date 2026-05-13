@@ -4,7 +4,14 @@ import { commentsViewActiveAtom } from "../ui/comments/atoms.js"
 import { detailFullViewAtom } from "../ui/detail/atoms.js"
 import { diffFullViewAtom } from "../ui/diff/atoms.js"
 import { selectedIssueAtom } from "../ui/issues/atoms.js"
-import { pullRequestStatusAtom, selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
+import {
+	hasMorePullRequestsAtom,
+	isLoadingMorePullRequestsAtom,
+	loadedPullRequestCountAtom,
+	pullRequestStatusAtom,
+	selectedPullRequestAtom,
+	selectedRepositoryAtom,
+} from "../ui/pullRequests/atoms.js"
 import { workspaceSurfaceAtom } from "../workspace/atoms.js"
 import { type WorkspaceSurface, workspaceSurfaceLabels } from "../workspaceSurfaces.js"
 
@@ -92,3 +99,15 @@ export const selectedCommentSubjectAtom = Atom.make((get) => {
 	if (surface === "pullRequests") return get(selectedPullRequestAtom)
 	return null
 })
+
+// Load-more gating: enabled only when we're on the PR surface, there are more
+// pages, and a fetch isn't already in flight.
+export const loadMoreDisabledReasonAtom = Atom.make((get) => {
+	const surface = get(pullRequestSurfaceReasonAtom)
+	if (surface !== null) return surface
+	if (get(isLoadingMorePullRequestsAtom)) return "Already loading more pull requests."
+	if (!get(hasMorePullRequestsAtom)) return "No more pull requests loaded by this view."
+	return null
+})
+
+export const loadMoreSubtitleAtom = Atom.make((get) => `${get(loadedPullRequestCountAtom)} loaded`)
