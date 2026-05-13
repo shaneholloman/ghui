@@ -26,7 +26,6 @@ import {
 import { errorMessage } from "./errors.js"
 import { nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals } from "./pullRequestViews.js"
 
-import { saveStoredDiffWhitespaceMode } from "./themeStore.js"
 import { ActiveFilterBar, ACTIVE_FILTER_BAR_HEIGHT } from "./ui/ActiveFilterBar.js"
 import { colors, rowHoverBackground } from "./ui/colors.js"
 import {
@@ -308,8 +307,8 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const [diffFileIndex, setDiffFileIndex] = useAtom(diffFileIndexAtom)
 	const [diffScrollTop, setDiffScrollTop] = useAtom(diffScrollTopAtom)
 	const [diffRenderView, setDiffRenderView] = useAtom(diffRenderViewAtom)
-	const [diffWrapMode, setDiffWrapMode] = useAtom(diffWrapModeAtom)
-	const [diffWhitespaceMode, setDiffWhitespaceMode] = useAtom(diffWhitespaceModeAtom)
+	const diffWrapMode = useAtomValue(diffWrapModeAtom)
+	const diffWhitespaceMode = useAtomValue(diffWhitespaceModeAtom)
 	const [diffCommentAnchorIndex, setDiffCommentAnchorIndex] = useAtom(diffCommentAnchorIndexAtom)
 	const [diffPreferredSide, setDiffPreferredSide] = useAtom(diffPreferredSideAtom)
 	const [diffCommentRangeStartIndex, setDiffCommentRangeStartIndex] = useAtom(diffCommentRangeStartIndexAtom)
@@ -1064,7 +1063,7 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		setDiffFileIndex((current) => (current === selectedDiffCommentAnchor.fileIndex ? current : selectedDiffCommentAnchor.fileIndex))
 	}, [diffFullView, selectedDiffCommentAnchor?.fileIndex])
 
-	const { preserveCurrentDiffLocation } = useDiffLocationPreservation({
+	useDiffLocationPreservation({
 		diffFullView,
 		selectedDiffCommentAnchor,
 		diffCommentAnchors,
@@ -1654,23 +1653,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 
 	const { openThemeModal, closeThemeModal, moveThemeSelection, updateThemeQuery, toggleThemeTone, toggleThemeMode, editThemeQuery } = themeModalActions
 
-	const toggleDiffRenderView = () => {
-		preserveCurrentDiffLocation()
-		setDiffRenderView((current) => (current === "unified" ? "split" : "unified"))
-	}
-
-	const toggleDiffWrapMode = () => {
-		preserveCurrentDiffLocation()
-		setDiffWrapMode((current) => (current === "none" ? "word" : "none"))
-	}
-
-	const toggleDiffWhitespaceMode = () => {
-		const next = diffWhitespaceMode === "ignore" ? "show" : "ignore"
-		preserveCurrentDiffLocation()
-		setDiffWhitespaceMode(next)
-		void Effect.runPromise(saveStoredDiffWhitespaceMode(next)).catch((error) => flashNotice(errorMessage(error)))
-	}
-
 	const { openMergeModal, cancelOrCloseMergeModal, confirmMergeAction, cycleMergeMethod, moveMergeSelection } = useMergeFlow({
 		mergeModal,
 		setMergeModal,
@@ -1814,9 +1796,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
 		canEditSelectedComment: canEditComment(selectedOrderedComment, username),
 		diffReady,
-		effectiveDiffRenderView,
-		diffWrapMode,
-		diffWhitespaceMode,
 		readyDiffFileCount: readyDiffFiles.length,
 		diffFileIndex,
 		diffRangeActive: diffCommentRangeActive,
@@ -1839,9 +1818,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 				loadPullRequestDiff(selectedPullRequest, { force: true, includeComments: true })
 				flashNotice(`Refreshing diff for #${selectedPullRequest.number}`)
 			},
-			toggleDiffRenderView,
-			toggleDiffWrapMode,
-			toggleDiffWhitespaceMode,
 			openChangedFilesModal,
 			jumpDiffFile,
 			openSelectedDiffComment,

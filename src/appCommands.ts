@@ -1,7 +1,6 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
 import type { IssueItem, LoadStatus, PullRequestItem } from "./domain.js"
-import type { DiffView, DiffWhitespaceMode, DiffWrapMode } from "./ui/diff.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
 import type { WorkspaceSurface } from "./workspaceSurfaces.js"
 
@@ -17,9 +16,6 @@ interface AppCommandActions {
 	readonly openEditSelectedComment: () => void
 	readonly openDeleteSelectedComment: () => void
 	readonly reloadDiff: () => void
-	readonly toggleDiffRenderView: () => void
-	readonly toggleDiffWrapMode: () => void
-	readonly toggleDiffWhitespaceMode: () => void
 	readonly openChangedFilesModal: () => void
 	readonly jumpDiffFile: (delta: 1 | -1) => void
 	readonly openSelectedDiffComment: () => void
@@ -45,9 +41,6 @@ interface BuildAppCommandsInput {
 	readonly hasSelectedComment: boolean
 	readonly canEditSelectedComment: boolean
 	readonly diffReady: boolean
-	readonly effectiveDiffRenderView: DiffView
-	readonly diffWrapMode: DiffWrapMode
-	readonly diffWhitespaceMode: DiffWhitespaceMode
 	readonly readyDiffFileCount: number
 	readonly diffFileIndex: number
 	readonly diffRangeActive: boolean
@@ -72,9 +65,6 @@ export const buildAppCommands = ({
 	hasSelectedComment,
 	canEditSelectedComment,
 	diffReady,
-	effectiveDiffRenderView,
-	diffWrapMode,
-	diffWhitespaceMode,
 	readyDiffFileCount,
 	diffFileIndex,
 	diffRangeActive,
@@ -205,33 +195,6 @@ export const buildAppCommands = ({
 			disabledReason: diffFullView && selectedPullRequest ? null : "Open a pull request diff first.",
 			keywords: ["refresh", "comments"],
 			run: actions.reloadDiff,
-		}),
-		defineCommand({
-			id: "diff.toggle-view",
-			title: "Toggle diff split/unified view",
-			scope: "Diff",
-			subtitle: effectiveDiffRenderView === "split" ? "Switch to unified view" : "Switch to split view",
-			shortcut: "shift-v",
-			disabledReason: diffFullView ? null : "Open a diff first.",
-			run: actions.toggleDiffRenderView,
-		}),
-		defineCommand({
-			id: "diff.toggle-wrap",
-			title: "Toggle diff word wrap",
-			scope: "Diff",
-			subtitle: diffWrapMode === "none" ? "Wrap long diff lines" : "Keep diff lines unwrapped",
-			shortcut: "w",
-			disabledReason: diffFullView ? null : "Open a diff first.",
-			run: actions.toggleDiffWrapMode,
-		}),
-		defineCommand({
-			id: "diff.toggle-whitespace",
-			title: diffWhitespaceMode === "ignore" ? "Show whitespace changes" : "Ignore whitespace changes",
-			scope: "Diff",
-			subtitle: diffWhitespaceMode === "ignore" ? "Display the original GitHub patch" : "Hide whitespace-only line changes",
-			disabledReason: diffFullView ? null : "Open a diff first.",
-			keywords: ["whitespace", "spacing", "ignore", "show"],
-			run: actions.toggleDiffWhitespaceMode,
 		}),
 		defineCommand({
 			id: "diff.changed-files",

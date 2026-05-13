@@ -3,9 +3,10 @@ import * as Atom from "effect/unstable/reactivity/Atom"
 import { BrowserOpener } from "../services/BrowserOpener.js"
 import { Clipboard } from "../services/Clipboard.js"
 import { GitHubService } from "../services/GitHubService.js"
+import { saveStoredDiffWhitespaceMode } from "../themeStore.js"
 import { commentsViewActiveAtom } from "../ui/comments/atoms.js"
 import { detailFullViewAtom, detailScrollOffsetAtom } from "../ui/detail/atoms.js"
-import { diffCommentRangeStartIndexAtom, diffFullViewAtom } from "../ui/diff/atoms.js"
+import { diffCommentRangeStartIndexAtom, diffFullViewAtom, diffRenderViewAtom, diffWhitespaceModeAtom, diffWrapModeAtom } from "../ui/diff/atoms.js"
 import { filterDraftAtom, filterModeAtom, filterQueryAtom } from "../ui/filter/atoms.js"
 import { selectedIssueAtom } from "../ui/issues/atoms.js"
 import { selectedIssueIndexAtom } from "../ui/listSelection/atoms.js"
@@ -21,6 +22,7 @@ import { type WorkspaceSurface, workspaceSurfaceLabels, workspaceSurfaces } from
 import {
 	detailCloseDisabledReasonAtom,
 	diffCloseDisabledReasonAtom,
+	diffOpenRequiredReasonAtom,
 	filterClearDisabledReasonAtom,
 	filterTitleAtom,
 	issueSelectedReasonAtom,
@@ -35,6 +37,7 @@ import {
 	workspaceSurfaceAlreadyActiveReasonAtom,
 	workspaceSurfaceSubtitleAtom,
 } from "./derivations.js"
+import { requestPreserveDiffLocation } from "./diffLocationPreservation.js"
 import { defineCommand, type CommandDefinition } from "./registry.js"
 
 // Most commands fall into one of three shapes:
@@ -155,6 +158,51 @@ export const globalCommands: readonly CommandDefinition[] = [
 			yield* Atom.set(detailScrollOffsetAtom, 0)
 		}),
 	}),
+	// === Diff render-mode toggles ===
+	// These three preserve the user's scroll position across the re-render
+	// they trigger by calling requestPreserveDiffLocation() *synchronously*
+	// before the atom write. The diff-location-preservation hook captured
+	// the pre-mutation anchor + screenOffset at that moment.
+	defineCommand({
+		id: "diff.toggle-view",
+		title: "Toggle diff split/unified view",
+		scope: "Diff",
+		subtitle: Atom.make((get) => (get(diffRenderViewAtom) === "split" ? "Switch to unified view" : "Switch to split view")),
+		shortcut: "shift-v",
+		disabledReason: diffOpenRequiredReasonAtom,
+		run: Effect.gen(function* () {
+			yield* Effect.sync(requestPreserveDiffLocation)
+			yield* Atom.update(diffRenderViewAtom, (current) => (current === "split" ? "unified" : "split"))
+		}),
+	}),
+	defineCommand({
+		id: "diff.toggle-wrap",
+		title: "Toggle diff word wrap",
+		scope: "Diff",
+		subtitle: Atom.make((get) => (get(diffWrapModeAtom) === "none" ? "Wrap long diff lines" : "Keep diff lines unwrapped")),
+		shortcut: "w",
+		disabledReason: diffOpenRequiredReasonAtom,
+		run: Effect.gen(function* () {
+			yield* Effect.sync(requestPreserveDiffLocation)
+			yield* Atom.update(diffWrapModeAtom, (current) => (current === "none" ? "word" : "none"))
+		}),
+	}),
+	defineCommand({
+		id: "diff.toggle-whitespace",
+		title: Atom.make((get) => (get(diffWhitespaceModeAtom) === "ignore" ? "Show whitespace changes" : "Ignore whitespace changes")),
+		scope: "Diff",
+		subtitle: Atom.make((get) => (get(diffWhitespaceModeAtom) === "ignore" ? "Display the original GitHub patch" : "Hide whitespace-only line changes")),
+		disabledReason: diffOpenRequiredReasonAtom,
+		keywords: ["whitespace", "spacing", "ignore", "show"],
+		run: Effect.gen(function* () {
+			yield* Effect.sync(requestPreserveDiffLocation)
+			const current = yield* Atom.get(diffWhitespaceModeAtom)
+			const next = current === "ignore" ? "show" : "ignore"
+			yield* Atom.set(diffWhitespaceModeAtom, next)
+			yield* saveStoredDiffWhitespaceMode(next)
+		}),
+	}),
+
 	defineCommand({
 		id: "diff.close",
 		title: "Close diff view",

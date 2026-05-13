@@ -1,5 +1,6 @@
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { type MutableRefObject, useEffect, useRef } from "react"
+import { setDiffLocationPreserver } from "../../commands/diffLocationPreservation.js"
 import { nearestDiffAnchorForLocation, type StackedDiffCommentAnchor } from "../diff.js"
 
 const DIFF_LAYOUT_RETRY_MS = 16
@@ -116,6 +117,19 @@ export const useDiffLocationPreservation = ({
 			}
 		}
 	}
+
+	// Expose to command Effects: diff toggles inside `commands/builtins.ts`
+	// call `requestPreserveDiffLocation()` synchronously *before* the atom
+	// write that triggers a re-render, so we capture the pre-mutation
+	// scrollTop / anchor.renderLine here.
+	useEffect(() => {
+		setDiffLocationPreserver(preserveCurrentDiffLocation)
+		return () => setDiffLocationPreserver(null)
+		// preserveCurrentDiffLocation closes over fresh values via the deps
+		// it reads (diffFullView, selectedDiffCommentAnchor, diffScrollRef,
+		// wideBodyHeight) — re-register when those change so the snapshot
+		// reflects the live state.
+	}, [diffFullView, selectedDiffCommentAnchor, diffScrollRef, wideBodyHeight])
 
 	return { preserveCurrentDiffLocation }
 }
