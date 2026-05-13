@@ -37,6 +37,11 @@ type Handoff =
 	| "openSelectedDiffComment"
 	| "toggleDiffCommentRange"
 	| "openDiffCommentModal"
+	| "viewRepository"
+	| "viewAuthored"
+	| "viewReview"
+	| "viewAssigned"
+	| "viewMentioned"
 
 const slots: Partial<Record<Handoff, () => void>> = {}
 

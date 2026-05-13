@@ -15,14 +15,25 @@ import { activeModalAtom } from "../ui/modals/atoms.js"
 import { submitReviewOptions } from "../ui/modals/shared.js"
 import { initialCommandPaletteState, initialCommentModalState, initialOpenRepositoryModalState, Modal } from "../ui/modals/types.js"
 import { noticeAtom } from "../ui/notice/atoms.js"
+import type { PullRequestUserQueueMode } from "../domain.js"
+import { pullRequestQueueModes } from "../domain.js"
 import { activeViewAtom, labelCacheAtom, selectedPullRequestAtom, selectedRepositoryAtom } from "../ui/pullRequests/atoms.js"
 import { issueViewForPullRequestView } from "../viewSync.js"
 import { workspaceSurfaceAtom, workspaceTabSurfacesAtom } from "../workspace/atoms.js"
 import { type WorkspaceSurface, workspaceSurfaceLabels, workspaceSurfaces } from "../workspaceSurfaces.js"
 import {
+	changedFilesReasonAtom,
+	changedFilesSubtitleAtom,
 	detailCloseDisabledReasonAtom,
 	diffCloseDisabledReasonAtom,
+	diffCommentAnchorSubtitleAtom,
+	diffFileSubtitleAtom,
+	diffOpenCommentTargetTitleAtom,
 	diffOpenRequiredReasonAtom,
+	diffReloadDisabledReasonAtom,
+	diffThreadReasonAtom,
+	diffThreadSubtitleAtom,
+	diffToggleRangeTitleAtom,
 	filterClearDisabledReasonAtom,
 	filterTitleAtom,
 	issueSelectedReasonAtom,
@@ -31,13 +42,23 @@ import {
 	noOpenPullRequestReasonAtom,
 	noPullRequestReasonAtom,
 	noSelectedItemReasonAtom,
+	ownCommentReasonAtom,
 	pullRequestRefreshTitleAtom,
 	pullRequestSurfaceReasonAtom,
 	repositoryOpenSubtitleAtom,
+	selectedCommentReasonAtom,
 	selectedCommentSubjectAtom,
+	selectedDiffLineReasonAtom,
 	selectedIssueLabelAtom,
 	selectedItemLabelAtom,
 	selectedPullRequestLabelAtom,
+	queueViewAlreadyActiveReasonAtom,
+	queueViewSubtitleAtom,
+	queueViewTitleFor,
+	repositoryViewAlreadyActiveReasonAtom,
+	repositoryViewAvailableAtom,
+	repositoryViewSubtitleAtom,
+	repositoryViewTitleAtom,
 	workspaceSurfaceAlreadyActiveReasonAtom,
 	workspaceSurfaceSubtitleAtom,
 } from "./derivations.js"
@@ -52,6 +73,22 @@ import { defineCommand, type CommandDefinition } from "./registry.js"
 //
 // Everything is dispatchable by id and depends only on atoms — no closures
 // over component-local state.
+
+const queueModeHandoffKey = (mode: PullRequestUserQueueMode) =>
+	mode === "authored" ? ("viewAuthored" as const) : mode === "review" ? ("viewReview" as const) : mode === "assigned" ? ("viewAssigned" as const) : ("viewMentioned" as const)
+
+const queueViewCommands = pullRequestQueueModes.map(
+	(mode): CommandDefinition =>
+		defineCommand({
+			id: `view.${mode}`,
+			title: queueViewTitleFor(mode),
+			scope: "View",
+			subtitle: queueViewSubtitleAtom(mode),
+			keywords: [mode, "queue", "view"],
+			disabledReason: queueViewAlreadyActiveReasonAtom(mode),
+			run: Effect.sync(() => invokeHandoff(queueModeHandoffKey(mode))),
+		}),
+)
 
 const workspaceSurfaceCommands = workspaceSurfaces.map((surface, index): CommandDefinition => {
 	const subtitleAtom = workspaceSurfaceSubtitleAtom(surface)
@@ -507,6 +544,140 @@ export const globalCommands: readonly CommandDefinition[] = [
 		disabledReason: noPullRequestReasonAtom,
 		keywords: ["files", "patch"],
 		run: Effect.sync(() => invokeHandoff("openDiffView")),
+	}),
+
+	// === View switches ===
+	defineCommand({
+		id: "view.repository",
+		title: repositoryViewTitleAtom,
+		scope: "View",
+		subtitle: repositoryViewSubtitleAtom,
+		keywords: ["repository", "queue", "view"],
+		when: repositoryViewAvailableAtom,
+		disabledReason: repositoryViewAlreadyActiveReasonAtom,
+		run: Effect.sync(() => invokeHandoff("viewRepository")),
+	}),
+	...queueViewCommands,
+
+	// === Diff cluster ===
+	defineCommand({
+		id: "diff.reload",
+		title: "Reload diff",
+		scope: "Diff",
+		subtitle: selectedPullRequestLabelAtom,
+		shortcut: "r",
+		disabledReason: diffReloadDisabledReasonAtom,
+		keywords: ["refresh", "comments"],
+		run: Effect.sync(() => invokeHandoff("reloadDiff")),
+	}),
+	defineCommand({
+		id: "diff.changed-files",
+		title: "Open changed files navigator",
+		scope: "Diff",
+		subtitle: changedFilesSubtitleAtom,
+		shortcut: "f",
+		disabledReason: changedFilesReasonAtom,
+		keywords: ["files", "navigator", "search"],
+		run: Effect.sync(() => invokeHandoff("openChangedFilesModal")),
+	}),
+	defineCommand({
+		id: "diff.next-file",
+		title: "Next diff file",
+		scope: "Diff",
+		subtitle: diffFileSubtitleAtom,
+		shortcut: "]",
+		disabledReason: changedFilesReasonAtom,
+		run: Effect.sync(() => invokeHandoff("jumpDiffFileNext")),
+	}),
+	defineCommand({
+		id: "diff.previous-file",
+		title: "Previous diff file",
+		scope: "Diff",
+		subtitle: diffFileSubtitleAtom,
+		shortcut: "[",
+		disabledReason: changedFilesReasonAtom,
+		run: Effect.sync(() => invokeHandoff("jumpDiffFilePrevious")),
+	}),
+	defineCommand({
+		id: "diff.open-comment-target",
+		title: diffOpenCommentTargetTitleAtom,
+		scope: "Diff",
+		subtitle: diffCommentAnchorSubtitleAtom,
+		shortcut: "enter",
+		disabledReason: selectedDiffLineReasonAtom,
+		keywords: ["review", "comment", "thread", "line"],
+		run: Effect.sync(() => invokeHandoff("openSelectedDiffComment")),
+	}),
+	defineCommand({
+		id: "diff.toggle-range",
+		title: diffToggleRangeTitleAtom,
+		scope: "Diff",
+		subtitle: diffCommentAnchorSubtitleAtom,
+		shortcut: "v",
+		disabledReason: selectedDiffLineReasonAtom,
+		keywords: ["review", "comment", "range", "visual"],
+		run: Effect.sync(() => invokeHandoff("toggleDiffCommentRange")),
+	}),
+	defineCommand({
+		id: "diff.next-thread",
+		title: "Next diff thread",
+		scope: "Diff",
+		subtitle: diffThreadSubtitleAtom,
+		shortcut: "n",
+		disabledReason: diffThreadReasonAtom,
+		keywords: ["review", "comment", "thread"],
+		run: Effect.sync(() => invokeHandoff("moveDiffCommentThreadNext")),
+	}),
+	defineCommand({
+		id: "diff.previous-thread",
+		title: "Previous diff thread",
+		scope: "Diff",
+		subtitle: diffThreadSubtitleAtom,
+		shortcut: "p",
+		disabledReason: diffThreadReasonAtom,
+		keywords: ["review", "comment", "thread"],
+		run: Effect.sync(() => invokeHandoff("moveDiffCommentThreadPrevious")),
+	}),
+	defineCommand({
+		id: "diff.add-comment",
+		title: "Add comment on selected diff line",
+		scope: "Diff",
+		subtitle: diffCommentAnchorSubtitleAtom,
+		disabledReason: selectedDiffLineReasonAtom,
+		keywords: ["review", "reply"],
+		run: Effect.sync(() => invokeHandoff("openDiffCommentModal")),
+	}),
+
+	// === Comment mutations ===
+	defineCommand({
+		id: "comments.reply",
+		title: "Reply to comment",
+		scope: "Comments",
+		subtitle: selectedItemLabelAtom,
+		shortcut: "shift-r",
+		disabledReason: selectedCommentReasonAtom,
+		keywords: ["respond", "thread"],
+		run: Effect.sync(() => invokeHandoff("openReplyToSelectedComment")),
+	}),
+	defineCommand({
+		id: "comments.edit",
+		title: "Edit comment",
+		scope: "Comments",
+		subtitle: selectedItemLabelAtom,
+		shortcut: "e",
+		disabledReason: ownCommentReasonAtom,
+		keywords: ["update", "modify", "rewrite"],
+		run: Effect.sync(() => invokeHandoff("openEditSelectedComment")),
+	}),
+	defineCommand({
+		id: "comments.delete",
+		title: "Delete comment",
+		scope: "Comments",
+		subtitle: selectedItemLabelAtom,
+		shortcut: "x",
+		disabledReason: ownCommentReasonAtom,
+		keywords: ["remove", "destroy"],
+		run: Effect.sync(() => invokeHandoff("openDeleteSelectedComment")),
 	}),
 
 	defineCommand({

@@ -9,7 +9,6 @@ import { Cause, Effect } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
-import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
 import { commandSnapshotsAtom } from "./commands/atoms.js"
@@ -102,7 +101,6 @@ import {
 	diffFileIndexAtom,
 	diffFullViewAtom,
 	diffPreferredSideAtom,
-	diffReadyAtom,
 	diffRenderViewAtom,
 	diffScrollTopAtom,
 	diffWhitespaceModeAtom,
@@ -214,6 +212,7 @@ import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
 import { registerHandoff } from "./commands/handoffs.js"
+import { commandRuntimeAtom } from "./commands/runtimeAtom.js"
 import { issueViewForPullRequestView } from "./viewSync.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath } from "./services/runtime.js"
@@ -630,7 +629,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const selectedCommentsStatus: DetailCommentsStatus = selectedCommentKey ? (pullRequestCommentsLoaded[selectedCommentKey] ?? "idle") : "idle"
 	const selectedCommentCount = activeWorkspaceSurface === "issues" ? Math.max(selectedIssue?.commentCount ?? 0, selectedComments.length) : selectedComments.length
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
-	const diffReady = useAtomValue(diffReadyAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
 	const readyDiffFiles = useMemo(
 		() => (selectedDiffState?._tag === "Ready" ? (diffWhitespaceMode === "ignore" ? minimizeWhitespaceDiffFiles(selectedDiffState.files) : selectedDiffState.files) : []),
@@ -1795,44 +1793,66 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	useEffect(() => registerHandoff("openMergeModal", openMergeModal), [openMergeModal])
 	useEffect(() => registerHandoff("openCommentsView", openCommentsView), [openCommentsView])
 	useEffect(() => registerHandoff("openDiffView", openDiffView), [openDiffView])
-
-	const legacyAppCommands: readonly AppCommand[] = buildAppCommands({
-		activeWorkspaceSurface,
-		activeViews,
-		activeView,
-		selectedPullRequest,
-		selectedIssue,
-		diffFullView,
-		commentsViewActive,
-		hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
-		canEditSelectedComment: canEditComment(selectedOrderedComment, username),
-		diffReady,
-		readyDiffFileCount: readyDiffFiles.length,
-		diffFileIndex,
-		diffRangeActive: diffCommentRangeActive,
-		selectedDiffCommentAnchorLabel: selectedDiffCommentLabel,
-		selectedDiffCommentThreadCount: selectedDiffCommentThread.length,
-		hasDiffCommentThreads: diffCommentThreadAnchors.length > 0,
-		actions: {
-			switchViewTo,
-			closeCommentsView,
-			openReplyToSelectedComment,
-			openEditSelectedComment,
-			openDeleteSelectedComment,
-			reloadDiff: () => {
+	useEffect(
+		() =>
+			registerHandoff("reloadDiff", () => {
 				if (!selectedPullRequest) return
 				loadPullRequestDiff(selectedPullRequest, { force: true, includeComments: true })
 				flashNotice(`Refreshing diff for #${selectedPullRequest.number}`)
-			},
-			openChangedFilesModal,
-			jumpDiffFile,
-			openSelectedDiffComment,
-			toggleDiffCommentRange,
-			moveDiffCommentThread,
-			openDiffCommentModal,
-		},
-	})
-	const appCommands: readonly AppCommand[] = [...registeredCommands, ...legacyAppCommands]
+			}),
+		[selectedPullRequest, loadPullRequestDiff, flashNotice],
+	)
+	useEffect(() => registerHandoff("openChangedFilesModal", openChangedFilesModal), [openChangedFilesModal])
+	useEffect(() => registerHandoff("jumpDiffFileNext", () => jumpDiffFile(1)), [jumpDiffFile])
+	useEffect(() => registerHandoff("jumpDiffFilePrevious", () => jumpDiffFile(-1)), [jumpDiffFile])
+	useEffect(() => registerHandoff("moveDiffCommentThreadNext", () => moveDiffCommentThread(1)), [moveDiffCommentThread])
+	useEffect(() => registerHandoff("moveDiffCommentThreadPrevious", () => moveDiffCommentThread(-1)), [moveDiffCommentThread])
+	useEffect(() => registerHandoff("openSelectedDiffComment", openSelectedDiffComment), [openSelectedDiffComment])
+	useEffect(() => registerHandoff("toggleDiffCommentRange", toggleDiffCommentRange), [toggleDiffCommentRange])
+	useEffect(() => registerHandoff("openDiffCommentModal", openDiffCommentModal), [openDiffCommentModal])
+	useEffect(() => registerHandoff("openReplyToSelectedComment", openReplyToSelectedComment), [openReplyToSelectedComment])
+	useEffect(() => registerHandoff("openEditSelectedComment", openEditSelectedComment), [openEditSelectedComment])
+	useEffect(() => registerHandoff("openDeleteSelectedComment", openDeleteSelectedComment), [openDeleteSelectedComment])
+	useEffect(
+		() => registerHandoff("viewRepository", () => selectedRepository !== null && switchViewTo({ _tag: "Repository", repository: selectedRepository })),
+		[selectedRepository, switchViewTo],
+	)
+	useEffect(() => registerHandoff("viewAuthored", () => switchViewTo({ _tag: "Queue", mode: "authored", repository: selectedRepository })), [selectedRepository, switchViewTo])
+	useEffect(() => registerHandoff("viewReview", () => switchViewTo({ _tag: "Queue", mode: "review", repository: selectedRepository })), [selectedRepository, switchViewTo])
+	useEffect(() => registerHandoff("viewAssigned", () => switchViewTo({ _tag: "Queue", mode: "assigned", repository: selectedRepository })), [selectedRepository, switchViewTo])
+	useEffect(() => registerHandoff("viewMentioned", () => switchViewTo({ _tag: "Queue", mode: "mentioned", repository: selectedRepository })), [selectedRepository, switchViewTo])
+
+	// Snapshot per-render computed values into commandRuntimeAtom so command
+	// derivation atoms (selectedDiffLineReasonAtom, etc.) can read them.
+	// Some of these underlying values come from useMemo over contentWidth +
+	// diff layout state that isn't yet atom-driven; this is the transitional
+	// seam until those derivations move into pure atom land.
+	const setCommandRuntime = useAtomSet(commandRuntimeAtom)
+	useEffect(() => {
+		setCommandRuntime({
+			readyDiffFileCount: readyDiffFiles.length,
+			diffFileIndex,
+			selectedDiffCommentAnchorLabel: selectedDiffCommentLabel,
+			selectedDiffCommentThreadCount: selectedDiffCommentThread.length,
+			hasDiffCommentThreads: diffCommentThreadAnchors.length > 0,
+			diffRangeActive: diffCommentRangeActive,
+			hasSelectedComment: selectedCommentsStatus === "ready" && selectedOrderedComment !== null,
+			canEditSelectedComment: canEditComment(selectedOrderedComment, username),
+		})
+	}, [
+		setCommandRuntime,
+		readyDiffFiles.length,
+		diffFileIndex,
+		selectedDiffCommentLabel,
+		selectedDiffCommentThread.length,
+		diffCommentThreadAnchors.length,
+		diffCommentRangeActive,
+		selectedCommentsStatus,
+		selectedOrderedComment,
+		username,
+	])
+
+	const appCommands = registeredCommands
 	const runCommand = (command: AppCommand, options: { readonly notifyDisabled?: boolean; readonly closePalette?: boolean } = {}) => {
 		if (!commandEnabled(command)) {
 			if (options.notifyDisabled && command.disabledReason) flashNotice(command.disabledReason)

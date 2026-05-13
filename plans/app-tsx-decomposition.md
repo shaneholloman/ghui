@@ -145,10 +145,9 @@ In progress — plan written 2026-05-12.
 - Phase 1 step 2 shipped 2026-05-12 (2fb320c): workspace switches (3) + detail/diff close (3) + browser/clipboard (3) — 9 commands. Lifted `workspaceTabSurfacesAtom`, `selectedIssueAtom`, plus ~10 derivation atoms for disabled-reason chains.
 - Phase 1 step 3 shipped 2026-05-12 (b103e83): `repository.open`, `pull.close`, `issue.close` — 3 commands. Pattern: read selection via atom, write modal state via `Atom.set(activeModalAtom, Modal.X({...}))`.
 - Phase 1 step 4 shipped 2026-05-12 (259b2ed): `pull.toggle-draft`, `pull.submit-review`, `comments.new`, `pull.labels` — 4 commands. `pull.labels` calls `GitHubService.use(listRepoLabels)` and atom-updates the modal in-place when the response lands.
+- Phase 1 step 5 shipped 2026-05-12 (c486716): diff render-mode toggles (3) via the diff-location-preservation handoff.
+- Phase 1 step 6 shipped 2026-05-12 (a2f8b0e): `app.quit` via lifecycle handoff.
+- Phase 1 step 7 shipped 2026-05-12 (1edd6b1): pull.refresh, pull.load-more, pull.merge, theme.open, comments.open, diff.open via consolidated handoffs.
+- Phase 1 final shipped 2026-05-12: remaining 17 commands (diff cluster, comment mutations, view.*) plus the per-render commandRuntimeAtom snapshot for derivations that depend on layout-bound state. `appCommands.ts` and the legacy test deleted. App.tsx no longer constructs a closure-bag.
 
-Net: 19 commands ported to the new registry. ~17 remain in `buildAppCommands`, all needing either:
-- hook-local helper lift (`preserveCurrentDiffLocation`, `loadPullRequestDiff`, `loadPullRequestComments`/`loadIssueComments`, `refreshGenerationRef`, `useThemeModal`, `useMergeFlow`, `selectDiffFile`)
-- derivation lift (`diffCommentAnchors`, `selectedDiffCommentAnchor`, `diffCommentRangeStartAnchor`, etc.)
-- system access lift (`renderer.destroy()` for `app.quit`)
-
-Phase 1 step 5+ should batch by lift: each lift unblocks several commands. E.g. lifting `preserveCurrentDiffLocation` to an atom-driven hook unblocks the three diff toggles in one go.
+**Phase 1 done.** All commands flow through the new registry. Next: Phase 2 (PullRequestSurface extraction).
