@@ -23,7 +23,6 @@ interface AppCommandActions {
 	readonly moveDiffCommentThread: (delta: 1 | -1) => void
 	readonly openDiffCommentModal: () => void
 	readonly openMergeModal: () => void
-	readonly quit: () => void
 }
 
 interface BuildAppCommandsInput {
@@ -280,15 +279,6 @@ export const buildAppCommands = ({
 			shortcut: "m",
 			keywords: ["auto merge", "squash"],
 			run: actions.openMergeModal,
-		}),
-		defineCommand({
-			id: "app.quit",
-			title: "Quit ghui",
-			scope: "System",
-			subtitle: "Leave the terminal UI",
-			shortcut: "q",
-			keywords: ["exit"],
-			run: actions.quit,
 		}),
 	]
 }

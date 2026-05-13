@@ -94,7 +94,6 @@ const buildCommands = (overrides: Partial<Parameters<typeof buildAppCommands>[0]
 			openLabelModal: noop,
 			openMergeModal: noop,
 			openCloseModal: noop,
-			quit: noop,
 		},
 		...overrides,
 	})

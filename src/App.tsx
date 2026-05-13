@@ -213,6 +213,7 @@ import { useScrollPersistence } from "./ui/useScrollPersistence.js"
 import { useSpinnerFrame } from "./ui/useSpinnerFrame.js"
 import { useTerminalFocus } from "./ui/useTerminalFocus.js"
 import { useTextInputDispatcher } from "./ui/useTextInputDispatcher.js"
+import { setQuitImpl } from "./commands/appLifecycle.js"
 import { issueViewForPullRequestView } from "./viewSync.js"
 import { nextWorkspaceSurface, repositoryWorkspaceSurfaces, userWorkspaceSurfaces, type WorkspaceSurface } from "./workspaceSurfaces.js"
 import { detectedRepository, mockRepositoryCatalog, mockWorkspacePreferencesPath } from "./services/runtime.js"
@@ -284,6 +285,13 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 	const renderer = useRenderer()
 	const { width, height } = useTerminalDimensions()
 	const registry = useContext(RegistryContext)
+
+	// Hand the renderer's destroy() to the new command registry so the
+	// `app.quit` command can fire without going through buildAppCommands.
+	useEffect(() => {
+		setQuitImpl(() => renderer.destroy())
+		return () => setQuitImpl(null)
+	}, [renderer])
 	const pullRequestResult = useAtomValue(pullRequestsAtom)
 	const refreshPullRequestsAtomRaw = useAtomRefresh(pullRequestsAtom)
 	const refreshPullRequestsAtom = useCallback(() => {
@@ -1825,7 +1833,6 @@ export const App = ({ systemThemeGeneration = 0 }: AppProps) => {
 			moveDiffCommentThread,
 			openDiffCommentModal,
 			openMergeModal,
-			quit: () => renderer.destroy(),
 		},
 	})
 	const appCommands: readonly AppCommand[] = [...registeredCommands, ...legacyAppCommands]

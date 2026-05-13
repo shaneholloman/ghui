@@ -37,6 +37,7 @@ import {
 	workspaceSurfaceAlreadyActiveReasonAtom,
 	workspaceSurfaceSubtitleAtom,
 } from "./derivations.js"
+import { requestQuit } from "./appLifecycle.js"
 import { requestPreserveDiffLocation } from "./diffLocationPreservation.js"
 import { defineCommand, type CommandDefinition } from "./registry.js"
 
@@ -439,5 +440,15 @@ export const globalCommands: readonly CommandDefinition[] = [
 				Effect.catch(flashErrorEffect),
 			)
 		}),
+	}),
+
+	defineCommand({
+		id: "app.quit",
+		title: "Quit ghui",
+		scope: "System",
+		subtitle: "Leave the terminal UI",
+		shortcut: "q",
+		keywords: ["exit"],
+		run: Effect.sync(requestQuit),
 	}),
 ]
